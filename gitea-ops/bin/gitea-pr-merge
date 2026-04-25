@@ -1,0 +1,126 @@
+#!/bin/sh
+# Merge a Gitea PR, delete the remote branch, and clean up the local worktree.
+#
+# Usage:
+#   gitea-pr-merge <PR#> [options]
+#
+# Options:
+#   --method <merge|squash|rebase>   Merge strategy (default: merge)
+#   --keep-branch                    Keep remote head branch after merge
+#   --keep-worktree                  Keep local worktree after merge
+#   --worktree <path>                Explicit worktree path (default: auto-detect)
+#   -r owner/repo                    Override target repo
+#   -u URL                           Override Gitea base URL
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq git
+
+PR=""
+METHOD="merge"
+KEEP_BRANCH="false"
+KEEP_WORKTREE="false"
+WORKTREE=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --method) METHOD="$2"; shift 2 ;;
+        --keep-branch) KEEP_BRANCH="true"; shift ;;
+        --keep-worktree) KEEP_WORKTREE="true"; shift ;;
+        --worktree) WORKTREE="$2"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "unexpected positional: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# required"
+case "$METHOD" in
+    merge|squash|rebase) ;;
+    *) die "invalid --method: $METHOD (use merge|squash|rebase)" ;;
+esac
+
+resolve_remote
+
+# 1. Fetch PR meta.
+pr_json="$(gitea_get "/repos/$GITEA_REPO/pulls/$PR")"
+merged="$(printf '%s' "$pr_json" | jq -r '.merged // false')"
+head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')"
+html_url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
+
+[ -n "$head_ref" ] || die "PR #$PR not found or missing head.ref"
+
+if [ "$merged" = "true" ]; then
+    printf '[gitea-pr-merge] PR #%s (%s) already merged — skipping merge call\n' "$PR" "$head_ref" >&2
+    # Fall through to branch/worktree cleanup below so re-runs are idempotent.
+else
+    # 2. Call merge endpoint.
+    body_json="$(jq -nc --arg do "$METHOD" '{Do:$do}')"
+    resp="$(printf '%s' "$body_json" | api_json POST "/repos/$GITEA_REPO/pulls/$PR/merge")"
+    # Gitea returns empty body on 200; non-empty body usually = error JSON.
+    if [ -n "$resp" ]; then
+        err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
+        if [ -n "$err_msg" ]; then
+            die "merge failed: $err_msg"
+        fi
+        # Some success responses include benign payloads — only treat as error if .message present.
+    fi
+    printf '[gitea-pr-merge] PR #%s merged (%s, branch %s)\n' "$PR" "$METHOD" "$head_ref" >&2
+fi
+
+if [ -n "$html_url" ]; then
+    printf '%s\n' "$html_url"
+fi
+
+# 3. Delete remote branch unless suppressed.
+if [ "$KEEP_BRANCH" != "true" ]; then
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if ! git push origin --delete "$head_ref"; then
+            printf '[gitea-pr-merge] warning: could not delete remote branch %s — see git error above\n' "$head_ref" >&2
+        else
+            printf '[gitea-pr-merge] deleted remote branch %s\n' "$head_ref" >&2
+        fi
+    else
+        printf '[gitea-pr-merge] not in a git work tree; skipping branch delete\n' >&2
+    fi
+fi
+
+# 4. Worktree cleanup unless suppressed.
+if [ "$KEEP_WORKTREE" != "true" ]; then
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        printf '[gitea-pr-merge] not in a git work tree; skipping worktree cleanup\n' >&2
+        exit 0
+    fi
+
+    current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    if [ "$current_branch" != "$head_ref" ]; then
+        printf '[gitea-pr-merge] cwd not on head branch (%s != %s); skipping worktree cleanup\n' "$current_branch" "$head_ref" >&2
+        exit 0
+    fi
+
+    # Determine worktree to remove.
+    target_wt="${WORKTREE:-$(pwd -P)}"
+
+    # Find main worktree (first entry of `git worktree list --porcelain`).
+    main_wt="$(git worktree list --porcelain 2>/dev/null \
+        | awk '/^worktree /{print $2; exit}')"
+    [ -n "$main_wt" ] || die "could not determine main worktree"
+
+    if [ "$main_wt" = "$target_wt" ]; then
+        printf '[gitea-pr-merge] cwd is the main worktree; refusing self-removal\n' >&2
+        exit 0
+    fi
+
+    cd "$main_wt" || die "cannot cd to main worktree: $main_wt"
+    trap 'printf "[gitea-pr-merge] cleanup aborted mid-sequence — worktree %s not removed\n" "$target_wt" >&2' EXIT
+    git fetch --prune
+    git checkout main
+    git pull
+    git worktree remove "$target_wt"
+    printf '[gitea-pr-merge] removed worktree %s\n' "$target_wt" >&2
+    trap - EXIT
+fi
