@@ -46,5 +46,34 @@ esac
 
 resolve_remote
 
-# (subsequent tasks add: PR fetch, merge call, branch delete, worktree cleanup)
-die "not implemented yet"
+# 1. Fetch PR meta.
+pr_json="$(gitea_get "/repos/$GITEA_REPO/pulls/$PR")"
+merged="$(printf '%s' "$pr_json" | jq -r '.merged // false')"
+head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')"
+html_url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
+
+[ -n "$head_ref" ] || die "PR #$PR not found or missing head.ref"
+
+if [ "$merged" = "true" ]; then
+    printf '[gitea-pr-merge] PR #%s (%s) already merged — skipping merge call\n' "$PR" "$head_ref" >&2
+    # Fall through to branch/worktree cleanup below so re-runs are idempotent.
+else
+    # 2. Call merge endpoint.
+    body_json="$(jq -nc --arg do "$METHOD" '{Do:$do}')"
+    resp="$(printf '%s' "$body_json" | api_json POST "/repos/$GITEA_REPO/pulls/$PR/merge")"
+    # Gitea returns empty body on 200; non-empty body usually = error JSON.
+    if [ -n "$resp" ]; then
+        err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
+        if [ -n "$err_msg" ]; then
+            die "merge failed: $err_msg"
+        fi
+        # Some success responses include benign payloads — only treat as error if .message present.
+    fi
+    printf '[gitea-pr-merge] PR #%s merged (%s, branch %s)\n' "$PR" "$METHOD" "$head_ref" >&2
+fi
+
+if [ -n "$html_url" ]; then
+    printf '%s\n' "$html_url"
+fi
+
+# (subsequent tasks add: branch deletion + worktree cleanup)
