@@ -22,7 +22,12 @@ prev_release_meta() {
 build_pr_section() {
     prev_tag="$1"
     prev_created="$2"
-    pulls_json="$(gitea_get "/repos/$GITEA_REPO/pulls?state=closed&base=main&sort=updated&direction=desc&limit=50")"
+    pulls_json="$(gitea_get "/repos/$GITEA_REPO/pulls?state=closed&sort=updated&direction=desc&limit=50")"
+
+    raw_count="$(printf '%s' "$pulls_json" | jq 'length')"
+    if [ "$raw_count" = "50" ]; then
+        printf '[gitea-release] warning: pulls page limit reached (50); some PRs may be missing from notes\n' >&2
+    fi
 
     if [ -n "$prev_tag" ] && [ -n "$prev_created" ]; then
         filtered="$(printf '%s' "$pulls_json" \
@@ -38,7 +43,7 @@ build_pr_section() {
     [ "$count" = "0" ] && { printf ''; return; }
 
     items="$(printf '%s' "$filtered" \
-        | jq -r '.[] | "- #\(.number) \(.title)"')"
+        | jq -r '.[] | "- #\(.number) \(.title | gsub("\n"; " "))"')"
     printf '%s\n\n%s\n' "$header" "$items"
 }
 
