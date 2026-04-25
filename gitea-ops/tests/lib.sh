@@ -77,13 +77,25 @@ fix="${FIXTURE_DIR:?FIXTURE_DIR unset}"
 method="GET"
 url=""
 data=""
-data_at=""
+read_stdin=0
 prev=""
 for a in "$@"; do
     case "$prev" in
         -X) method="$a" ;;
-        --data) data="$a" ;;
-        --data-binary) data="$a" ;;
+        --data)
+            if [ "$a" = "@-" ]; then
+                read_stdin=1
+            else
+                data="$a"
+            fi
+            ;;
+        --data-binary)
+            if [ "$a" = "@-" ]; then
+                read_stdin=1
+            else
+                data="$a"
+            fi
+            ;;
         -F) ;;
         -H) ;;
     esac
@@ -94,9 +106,12 @@ for a in "$@"; do
 done
 
 # Stdin body for `--data @-`
-if printf '%s' "$*" | grep -q -- '--data @-'; then
+if [ "$read_stdin" = "1" ]; then
     data="$(cat)"
 fi
+
+# Escape newlines/tabs in body so each call stays on one log line.
+data="$(printf '%s' "$data" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {printf "%s", $0}' | sed 's/\t/\\t/g')"
 
 # Log: METHOD\turl\tbody
 printf '%s\t%s\t%s\n' "$method" "$url" "$data" >>"$log"
