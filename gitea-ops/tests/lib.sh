@@ -117,7 +117,7 @@ data="$(printf '%s' "$data" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {printf "%s"
 printf '%s\t%s\t%s\n' "$method" "$url" "$data" >>"$log"
 
 # Look up fixture by method + url path.
-path="$(printf '%s' "$url" | sed -e 's|^https\?://[^/]*||')"
+path="$(printf '%s' "$url" | sed -e 's|^https\?://[^/]*||' -e 's|?.*$||')"
 key="$(printf '%s_%s' "$method" "$path" | tr '/?&=' '____')"
 body_file="$fix/$key.body"
 if [ -r "$body_file" ]; then
