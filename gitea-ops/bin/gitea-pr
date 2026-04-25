@@ -1,0 +1,78 @@
+#!/bin/sh
+# Open a pull request on Gitea.
+#
+# Usage:
+#   gitea-pr --title "..." --body "..." --head BRANCH [--base main]
+#            [--draft] [--assignee USER]... [--label LABEL]...
+#            [-r owner/repo] [-u URL]
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq git
+
+TITLE=""
+BODY=""
+HEAD=""
+BASE="main"
+DRAFT="false"
+ASSIGNEES_JSON="[]"
+LABELS_JSON="[]"
+
+append_json_array() {
+    # $1 = current json array literal, $2 = string to append
+    echo "$1" | jq --arg v "$2" '. + [$v]'
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --title) TITLE="$2"; shift 2 ;;
+        --body)  BODY="$2"; shift 2 ;;
+        --head)  HEAD="$2"; shift 2 ;;
+        --base)  BASE="$2"; shift 2 ;;
+        --draft) DRAFT="true"; shift ;;
+        --assignee)
+            ASSIGNEES_JSON="$(append_json_array "$ASSIGNEES_JSON" "$2")"; shift 2 ;;
+        --label)
+            LABELS_JSON="$(append_json_array "$LABELS_JSON" "$2")"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+        *) die "unknown arg: $1" ;;
+    esac
+done
+
+[ -n "$TITLE" ] || die "--title required"
+[ -n "$HEAD" ]  || die "--head required"
+resolve_remote
+
+# Push head branch if local-only
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if git show-ref --verify --quiet "refs/heads/$HEAD"; then
+        if ! git ls-remote --heads origin "$HEAD" | grep -q "$HEAD"; then
+            printf '[gitea-pr] pushing branch %s\n' "$HEAD" >&2
+            git push -u origin "$HEAD"
+        fi
+    fi
+fi
+
+# Build body JSON
+body_json="$(jq -n \
+    --arg title "$TITLE" \
+    --arg body "$BODY" \
+    --arg head "$HEAD" \
+    --arg base "$BASE" \
+    --argjson draft "$DRAFT" \
+    --argjson assignees "$ASSIGNEES_JSON" \
+    --argjson labels "$LABELS_JSON" \
+    '{title:$title, body:$body, head:$head, base:$base, draft:$draft, assignees:$assignees, labels:$labels}')"
+
+resp="$(printf '%s' "$body_json" | api_json POST "/repos/$GITEA_REPO/pulls")"
+
+num="$(printf '%s' "$resp" | jq -r '.number // empty')"
+url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"
+if [ -z "$num" ]; then
+    printf '[gitea-pr] failed:\n%s\n' "$resp" >&2
+    exit 1
+fi
+printf '[gitea-pr] #%s %s\n' "$num" "$url" >&2
+printf '%s\n' "$url"

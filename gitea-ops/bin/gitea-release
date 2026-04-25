@@ -1,0 +1,129 @@
+#!/bin/sh
+# Create a Gitea release and upload assets (with auto sha256 + optional minisign).
+#
+# Usage:
+#   gitea-release <TAG> [--name TITLE] [--notes TEXT | --notes-file PATH]
+#                 [--draft] [--prerelease] [--target COMMITISH]
+#                 [--asset PATH]... [--sign KEYPATH]
+#                 [-r owner/repo] [-u URL]
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq git sha256sum
+
+TAG=""
+NAME=""
+NOTES=""
+NOTES_FILE=""
+DRAFT="false"
+PRE="false"
+TARGET=""
+ASSETS=""   # newline-separated
+SIGN_KEY=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --name) NAME="$2"; shift 2 ;;
+        --notes) NOTES="$2"; shift 2 ;;
+        --notes-file) NOTES_FILE="$2"; shift 2 ;;
+        --draft) DRAFT="true"; shift ;;
+        --prerelease) PRE="true"; shift ;;
+        --target) TARGET="$2"; shift 2 ;;
+        --asset) ASSETS="$ASSETS$2
+"; shift 2 ;;
+        --sign) SIGN_KEY="$2"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url) GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            [ -z "$TAG" ] || die "unexpected positional: $1"
+            TAG="$1"; shift ;;
+    esac
+done
+
+[ -n "$TAG" ] || die "TAG required"
+[ -n "$SIGN_KEY" ] && require_cmd minisign
+resolve_remote
+: "${NAME:=$TAG}"
+
+if [ -z "$NOTES" ] && [ -n "$NOTES_FILE" ]; then
+    NOTES="$(cat "$NOTES_FILE")"
+fi
+
+# Push tag if local-only.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+        if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            printf '[gitea-release] pushing tag %s\n' "$TAG" >&2
+            git push origin "$TAG"
+        fi
+    fi
+fi
+
+# Create release
+body_json="$(jq -n \
+    --arg tag "$TAG" \
+    --arg name "$NAME" \
+    --arg body "$NOTES" \
+    --arg target "$TARGET" \
+    --argjson draft "$DRAFT" \
+    --argjson pre "$PRE" \
+    '{tag_name:$tag, name:$name, body:$body, draft:$draft, prerelease:$pre}
+     + (if $target != "" then {target_commitish:$target} else {} end)')"
+
+resp="$(printf '%s' "$body_json" | api_json POST "/repos/$GITEA_REPO/releases")"
+
+rel_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
+html_url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"
+if [ -z "$rel_id" ] || [ "$rel_id" = "null" ]; then
+    printf '[gitea-release] failed to create release:\n%s\n' "$resp" >&2
+    exit 1
+fi
+printf '[gitea-release] created id=%s url=%s\n' "$rel_id" "$html_url" >&2
+
+# Upload assets
+if [ -n "$ASSETS" ]; then
+    token="$(load_token)"
+    printf '%s' "$ASSETS" | while IFS= read -r asset; do
+        [ -n "$asset" ] || continue
+        [ -r "$asset" ] || die "asset missing: $asset"
+
+        # asset itself
+        base="$(basename "$asset")"
+        printf '[gitea-release] upload %s\n' "$base" >&2
+        curl -sS -X POST \
+            -H "Authorization: token $token" \
+            -F "attachment=@$asset;filename=$base" \
+            "$GITEA_URL/api/v1/repos/$GITEA_REPO/releases/$rel_id/assets?name=$base" \
+            >/dev/null
+
+        # sha256
+        sha_file="$(mktemp)"
+        (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")") > "$sha_file"
+        sha_name="$base.sha256"
+        printf '[gitea-release] upload %s\n' "$sha_name" >&2
+        curl -sS -X POST \
+            -H "Authorization: token $token" \
+            -F "attachment=@$sha_file;filename=$sha_name" \
+            "$GITEA_URL/api/v1/repos/$GITEA_REPO/releases/$rel_id/assets?name=$sha_name" \
+            >/dev/null
+        rm -f "$sha_file"
+
+        # minisig
+        if [ -n "$SIGN_KEY" ]; then
+            sig_file="$asset.minisig"
+            minisign -Sm "$asset" -s "$SIGN_KEY" >/dev/null 2>&1 \
+                || die "minisign failed for $asset"
+            sig_name="$base.minisig"
+            printf '[gitea-release] upload %s\n' "$sig_name" >&2
+            curl -sS -X POST \
+                -H "Authorization: token $token" \
+                -F "attachment=@$sig_file;filename=$sig_name" \
+                "$GITEA_URL/api/v1/repos/$GITEA_REPO/releases/$rel_id/assets?name=$sig_name" \
+                >/dev/null
+        fi
+    done
+fi
+
+printf '%s\n' "$html_url"
