@@ -118,3 +118,14 @@ require_cmd() {
 
 # Shell-escape a value for JSON string use via jq
 jq_str() { printf '%s' "$1" | jq -Rs . ; }
+
+# GET helper — same auth/url, always GET, no body.
+gitea_get() {
+    path="$1"
+    token="$(load_token)"
+    url="$GITEA_URL/api/v1$path"
+    curl -sS -X GET \
+         -H "Authorization: token $token" \
+         -H "Accept: application/json" \
+         "$url"
+}
