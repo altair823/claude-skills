@@ -79,8 +79,8 @@ fi
 # 3. Delete remote branch unless suppressed.
 if [ "$KEEP_BRANCH" != "true" ]; then
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        if ! git push origin --delete "$head_ref" 2>/dev/null; then
-            printf '[gitea-pr-merge] warning: could not delete remote branch %s (already gone?)\n' "$head_ref" >&2
+        if ! git push origin --delete "$head_ref"; then
+            printf '[gitea-pr-merge] warning: could not delete remote branch %s — see git error above\n' "$head_ref" >&2
         else
             printf '[gitea-pr-merge] deleted remote branch %s\n' "$head_ref" >&2
         fi
