@@ -65,4 +65,15 @@ body2="$(nth_call 2 | cut -f3)"
 assert_contains "$body2" '"Do":"squash"' "squash method propagates"
 teardown
 
+# --- merge endpoint returns error JSON → script dies with message ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 '{"number":42,"merged":false,"head":{"ref":"feat/topic"}}'
+fixture POST /api/v1/repos/owner/repo/pulls/42/merge '{"message":"Pull request is not mergeable"}'
+if "$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree 2>"$TEST_TMP/err"; then
+    echo "FAIL: expected non-zero on merge error" >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "not mergeable" "error message propagated"
+teardown
+
 echo OK
