@@ -116,9 +116,11 @@ if [ "$KEEP_WORKTREE" != "true" ]; then
     fi
 
     cd "$main_wt" || die "cannot cd to main worktree: $main_wt"
+    trap 'printf "[gitea-pr-merge] cleanup aborted mid-sequence — worktree %s not removed\n" "$target_wt" >&2' EXIT
     git fetch --prune
     git checkout main
     git pull
     git worktree remove "$target_wt"
     printf '[gitea-pr-merge] removed worktree %s\n' "$target_wt" >&2
+    trap - EXIT
 fi

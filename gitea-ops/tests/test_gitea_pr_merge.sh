@@ -223,4 +223,38 @@ if [ -e "$GIT_LOG" ] && grep -q "worktree remove" "$GIT_LOG"; then
 fi
 teardown
 
+# --- self-removal refusal: cwd IS the main worktree → skip with warning, exit 0 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 '{"number":42,"merged":false,"state":"open","head":{"ref":"feat/topic"},"base":{"ref":"main"}}'
+fixture POST /api/v1/repos/owner/repo/pulls/42/merge ''
+GIT_LOG="$TEST_TMP/git.log"; export GIT_LOG
+
+WT_MAIN="$TEST_TMP/wt/main"
+mkdir -p "$WT_MAIN"
+cd "$WT_MAIN"
+
+cat >"$STUB_DIR/git" <<GIT_EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"$GIT_LOG"
+case "\$*" in
+    "rev-parse --is-inside-work-tree") echo true; exit 0 ;;
+    "rev-parse --abbrev-ref HEAD") echo feat/topic; exit 0 ;;
+    "worktree list --porcelain")
+        printf 'worktree %s\nHEAD abc\nbranch refs/heads/main\n' "$WT_MAIN"; exit 0 ;;
+    *) exit 0 ;;
+esac
+GIT_EOF
+chmod +x "$STUB_DIR/git"
+
+out="$("$BIN/gitea-pr-merge" 42 --keep-branch 2>&1)"
+exit_code=$?
+assert_eq "$exit_code" "0" "self-removal refusal exits 0"
+assert_contains "$out" "refusing self-removal" "warns about self-removal"
+if [ -e "$GIT_LOG" ] && grep -q "worktree remove" "$GIT_LOG"; then
+    echo "FAIL: self-removal must not call worktree remove" >&2; exit 1
+fi
+cd /tmp || cd /
+teardown
+
 echo OK
