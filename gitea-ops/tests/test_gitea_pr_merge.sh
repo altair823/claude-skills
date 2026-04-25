@@ -76,4 +76,69 @@ fi
 assert_file_contains "$TEST_TMP/err" "not mergeable" "error message propagated"
 teardown
 
+# --- branch deletion: default behavior calls `git push origin --delete <head>` ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 '{"number":42,"merged":false,"state":"open","head":{"ref":"feat/topic"},"base":{"ref":"main"}}'
+fixture POST /api/v1/repos/owner/repo/pulls/42/merge ''
+
+# git stub: log all args; treat `rev-parse --is-inside-work-tree` as inside, everything else success.
+GIT_LOG="$TEST_TMP/git.log"; export GIT_LOG
+cat >"$STUB_DIR/git" <<'GIT_EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$GIT_LOG"
+case "$*" in
+    "rev-parse --is-inside-work-tree") echo true; exit 0 ;;
+    *) exit 0 ;;
+esac
+GIT_EOF
+chmod +x "$STUB_DIR/git"
+
+"$BIN/gitea-pr-merge" 42 --keep-worktree >/dev/null 2>&1
+assert_file_contains "$GIT_LOG" "push origin --delete feat/topic" "deletes remote branch"
+teardown
+
+# --- --keep-branch suppresses deletion ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 '{"number":42,"merged":false,"state":"open","head":{"ref":"feat/topic"},"base":{"ref":"main"}}'
+fixture POST /api/v1/repos/owner/repo/pulls/42/merge ''
+GIT_LOG="$TEST_TMP/git.log"; export GIT_LOG
+cat >"$STUB_DIR/git" <<'GIT_EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$GIT_LOG"
+case "$*" in
+    "rev-parse --is-inside-work-tree") echo true; exit 0 ;;
+    *) exit 0 ;;
+esac
+GIT_EOF
+chmod +x "$STUB_DIR/git"
+
+"$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree >/dev/null 2>&1
+if [ -e "$GIT_LOG" ] && grep -q "push origin --delete" "$GIT_LOG"; then
+    echo "FAIL: --keep-branch should suppress deletion" >&2; exit 1
+fi
+teardown
+
+# --- branch delete failure is non-fatal ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 '{"number":42,"merged":false,"state":"open","head":{"ref":"feat/topic"},"base":{"ref":"main"}}'
+fixture POST /api/v1/repos/owner/repo/pulls/42/merge ''
+cat >"$STUB_DIR/git" <<'GIT_EOF'
+#!/bin/sh
+case "$*" in
+    "rev-parse --is-inside-work-tree") echo true; exit 0 ;;
+    "push origin --delete feat/topic") exit 1 ;;
+    *) exit 0 ;;
+esac
+GIT_EOF
+chmod +x "$STUB_DIR/git"
+
+# Should still exit 0 even though `git push --delete` failed.
+"$BIN/gitea-pr-merge" 42 --keep-worktree >"$TEST_TMP/out" 2>&1
+assert_eq "$?" "0" "delete failure does not abort"
+assert_file_contains "$TEST_TMP/out" "could not delete remote branch" "warns on failure"
+teardown
+
 echo OK
