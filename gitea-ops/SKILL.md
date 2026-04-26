@@ -46,15 +46,18 @@ gitea-pr-merge 42                   # passes gate, merges, cleans up
    When `origin` remote matches the Gitea URL these are auto-derived.
 4. **Reviewer token** (separate Gitea account, repo write scope): generate at
    `https://<host>/user/settings/applications` while logged in as the reviewer
-   account. Store at `~/.config/gitea-ops/reviewer-token` (mode 0600) **or**
-   `GITEA_REVIEWER_TOKEN` env. Required only by `gitea-pr-review`. Run once
-   to create an empty placeholder:
+   account. Required only by `gitea-pr-review`.
+
+   Create the file (one-time):
    ```sh
    mkdir -p ~/.config/gitea-ops
    touch ~/.config/gitea-ops/reviewer-token
    chmod 600 ~/.config/gitea-ops/reviewer-token
+   # then: paste the token string into ~/.config/gitea-ops/reviewer-token
    ```
-   Then paste the token into the file.
+
+   Or set `GITEA_REVIEWER_TOKEN` env. An empty placeholder file is rejected by
+   `gitea-pr-review` until a token is pasted in.
 
 ## Scripts
 
@@ -113,10 +116,12 @@ gitea-pr-diff 42 > /tmp/pr-42.txt   # 분석용 dump
 
 ```
 gitea-pr-review <PR#> --event <APPROVE|REQUEST_CHANGES|COMMENT>
-                      --body "..." | --body -
+                      [--body "..." | --body -]
                       [--inline FILE | --inline -]
                       [-r owner/repo] [-u URL]
 ```
+
+`--body` 또는 `--inline` 중 최소 하나는 필요하다 (둘 다 지정 가능).
 
 reviewer token (separate from main token) 강제. Body는 `--body -`로 stdin에서, inline comments는 JSON file 또는 `--inline -` stdin.
 
