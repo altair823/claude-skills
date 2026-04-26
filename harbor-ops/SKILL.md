@@ -44,6 +44,16 @@ non-Harbor registries (Docker Hub, GHCR, ECR have different APIs).
    secrets are inline. If you sync dotfiles, use the `_HARBOR_SECRET_FILE`
    variant and exclude the secret file from version control.
 
+   **Quote values that contain `$`.** Robot account names look like
+   `robot$<name>` and many secrets include `$`. Bash interprets unquoted
+   `$foo` as a parameter expansion, which silently corrupts the credential.
+   Always wrap such values in single quotes:
+
+   ```
+   prod_HARBOR_USER='robot$harbor-ls-readonly'
+   prod_HARBOR_SECRET='abc$xyz'
+   ```
+
 3. Symlink the skill into Claude Code's skills dir:
 
    ```sh
