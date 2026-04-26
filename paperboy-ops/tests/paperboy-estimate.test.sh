@@ -53,6 +53,35 @@ test_blank_line_counts_as_one() {
   assert_eq "$(jq -r .physical_lines <<<"$out")" "3" "blank_line_counts_as_one: physical_lines"
 }
 
+test_hangul_one_line_no_wrap() {
+  # 5 Hangul chars = 10 EUC-KR bytes, fits in 42-col line → 1 physical line
+  local out rc
+  out=$(printf '안녕하세요' | bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "hangul_one_line_no_wrap: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "1" "hangul_one_line_no_wrap: physical_lines"
+}
+
+test_ascii_wraps_past_42_cols() {
+  # 50 'x' chars → ceil(50/42) = 2 physical lines
+  local out rc input
+  input=$(printf 'x%.0s' {1..50})
+  out=$(printf '%s' "$input" | bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "ascii_wraps_past_42_cols: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "2" "ascii_wraps_past_42_cols: physical_lines"
+}
+
+test_hangul_wraps_past_21_chars() {
+  # 22 Hangul chars = 44 EUC-KR bytes → ceil(44/42) = 2 physical lines
+  local out rc input
+  input=$(printf '가%.0s' {1..22})
+  out=$(printf '%s' "$input" | bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "hangul_wraps_past_21_chars: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "2" "hangul_wraps_past_21_chars: physical_lines"
+}
+
 # ---- runner ----
 
 for fn in $(declare -F | awk '$3 ~ /^test_/ {print $3}'); do

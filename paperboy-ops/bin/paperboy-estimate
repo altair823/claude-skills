@@ -33,12 +33,24 @@ done
 
 input=$(cat)
 
-# Minimal: count newline-separated lines. No wrap, no size, no feed.
-# Subsequent tasks expand the math.
+# EUC-KR byte width + 42-col wrap
 if [[ -z "$input" ]]; then
   physical=0
 else
-  physical=$(printf '%s' "$input" | awk 'END{print NR}')
+  effective_cols=$(( PRINTER_WIDTH_ASCII / SIZE_W ))
+  if (( effective_cols < 1 )); then effective_cols=1; fi
+
+  physical=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    bytes=$(printf '%s' "$line" | iconv -f UTF-8 -t EUC-KR 2>/dev/null | wc -c)
+    bytes=${bytes// /}
+    if (( bytes == 0 )); then
+      wrapped=1
+    else
+      wrapped=$(( (bytes + effective_cols - 1) / effective_cols ))
+    fi
+    physical=$(( physical + wrapped ))
+  done <<<"$input"
 fi
 
 cm=$(awk -v p="$physical" -v c="$CM_PER_LINE" 'BEGIN{printf "%.2f", p*c}')
