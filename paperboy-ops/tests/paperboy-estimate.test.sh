@@ -110,6 +110,33 @@ test_feed_lines_added() {
   assert_eq "$(jq -r .physical_lines <<<"$out")" "5" "feed_lines_added: physical_lines"
 }
 
+test_under_threshold_exit_zero() {
+  local out rc
+  out=$(printf 'a\nb\nc' | bin/paperboy-estimate --threshold 5)
+  rc=$?
+  assert_eq "$rc" "0" "under_threshold_exit_zero: exit code"
+  assert_eq "$(jq -r .over_threshold <<<"$out")" "false" "under_threshold_exit_zero: over_threshold"
+}
+
+test_over_threshold_exit_one() {
+  local out rc lines
+  lines=$(printf 'x\n%.0s' {1..20})  # 20 lines
+  out=$(printf '%s' "$lines" | bin/paperboy-estimate --threshold 15)
+  rc=$?
+  assert_eq "$rc" "1" "over_threshold_exit_one: exit code"
+  assert_eq "$(jq -r .over_threshold <<<"$out")" "true" "over_threshold_exit_one: over_threshold"
+  assert_eq "$(jq -r .threshold <<<"$out")" "15" "over_threshold_exit_one: threshold"
+}
+
+test_env_threshold_default() {
+  local out rc lines
+  lines=$(printf 'x\n%.0s' {1..20})
+  out=$(PAPERBOY_LINE_THRESHOLD=25 printf '%s' "$lines" | PAPERBOY_LINE_THRESHOLD=25 bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "env_threshold_default: exit code (env override raises ceiling)"
+  assert_eq "$(jq -r .threshold <<<"$out")" "25" "env_threshold_default: threshold from env"
+}
+
 # ---- runner ----
 
 for fn in $(declare -F | awk '$3 ~ /^test_/ {print $3}'); do
