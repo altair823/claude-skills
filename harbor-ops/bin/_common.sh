@@ -283,3 +283,60 @@ detect_project() {
     echo "project not detected from manifests; pass <project> explicitly or use --no-detect" >&2
     exit 3
 }
+
+# Bytes → IEC string. Falls back to "<n>B" when numfmt is missing.
+format_size() {
+    local n="$1"
+    if [ -z "$n" ] || [ "$n" = "null" ]; then
+        printf -- '-'
+        return 0
+    fi
+    if command -v numfmt >/dev/null 2>&1; then
+        numfmt --to=iec-i --suffix=B --format='%.1f' -- "$n"
+    else
+        printf '%sB' "$n"
+    fi
+}
+
+# render_json: pipe stdin (a JSON array) → stdout (compact).
+render_json() {
+    jq -c .
+}
+
+# render_table: pipe stdin (JSON array) → stdout (aligned table).
+# Args: "HEADER=<jq-expr>" pairs. Empty input prints header row + "(no results)" stderr.
+render_table() {
+    local input
+    input="$(cat)"
+    local headers=() exprs=()
+    local pair name expr
+    for pair in "$@"; do
+        name="${pair%%=*}"
+        expr="${pair#*=}"
+        headers+=("$name")
+        exprs+=("$expr")
+    done
+
+    local hdr_line
+    hdr_line="$(IFS=$'\t'; printf '%s' "${headers[*]}")"
+
+    local row_filter=""
+    local i
+    for i in "${!exprs[@]}"; do
+        if [ "$i" -gt 0 ]; then row_filter+=' + "\t" + '; fi
+        row_filter+="(${exprs[$i]} | tostring)"
+    done
+
+    local count
+    count="$(printf '%s' "$input" | jq 'length')"
+    if [ "$count" -eq 0 ]; then
+        printf '%s\n' "$hdr_line"
+        echo "(no results)" >&2
+        return 0
+    fi
+
+    {
+        printf '%s\n' "$hdr_line"
+        printf '%s' "$input" | jq -r ".[] | $row_filter"
+    } | column -t -s "$(printf '\t')"
+}
