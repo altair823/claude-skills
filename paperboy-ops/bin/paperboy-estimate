@@ -31,6 +31,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Clamp size args to >= 1 to avoid div-by-zero in effective_cols and a
+# zero-physical-count when SIZE_H=0.
+if (( SIZE_W < 1 )); then SIZE_W=1; fi
+if (( SIZE_H < 1 )); then SIZE_H=1; fi
+
 input=$(cat)
 
 # EUC-KR byte width + 42-col wrap
@@ -53,6 +58,7 @@ else
   done <<<"$input"
 fi
 
+physical=$(( physical * SIZE_H + FEED_LINES ))
 cm=$(awk -v p="$physical" -v c="$CM_PER_LINE" 'BEGIN{printf "%.2f", p*c}')
 over=$(awk -v p="$physical" -v t="$THRESHOLD" 'BEGIN{print (p>t)?"true":"false"}')
 

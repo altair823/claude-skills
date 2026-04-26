@@ -82,6 +82,34 @@ test_hangul_wraps_past_21_chars() {
   assert_eq "$(jq -r .physical_lines <<<"$out")" "2" "hangul_wraps_past_21_chars: physical_lines"
 }
 
+test_size_height_doubles_lines() {
+  # 3 ASCII lines × H=2 = 6 physical lines
+  local out rc
+  out=$(printf 'a\nb\nc' | bin/paperboy-estimate --size 1,2)
+  rc=$?
+  assert_eq "$rc" "0" "size_height_doubles_lines: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "6" "size_height_doubles_lines: physical_lines"
+}
+
+test_size_width_halves_effective_cols() {
+  # 30 'x' chars at W=2 → effective_cols=21 → ceil(30/21)=2 lines, ×H=1 = 2
+  local out rc input
+  input=$(printf 'x%.0s' {1..30})
+  out=$(printf '%s' "$input" | bin/paperboy-estimate --size 2,1)
+  rc=$?
+  assert_eq "$rc" "0" "size_width_halves_effective_cols: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "2" "size_width_halves_effective_cols: physical_lines"
+}
+
+test_feed_lines_added() {
+  # 1 line + feed_lines=4 = 5 physical
+  local out rc
+  out=$(printf 'a' | bin/paperboy-estimate --feed-lines 4)
+  rc=$?
+  assert_eq "$rc" "0" "feed_lines_added: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "5" "feed_lines_added: physical_lines"
+}
+
 # ---- runner ----
 
 for fn in $(declare -F | awk '$3 ~ /^test_/ {print $3}'); do
