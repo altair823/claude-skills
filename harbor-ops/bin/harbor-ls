@@ -178,14 +178,93 @@ cmd_tags() {
         'SIZE=.size_str'
 }
 
+cmd_scan() {
+    local arg="${1:-}"
+    if [ -z "$arg" ]; then
+        echo "scan requires <project>/<repo>:<tag>" >&2; exit 4
+    fi
+    local proj_repo="${arg%%:*}"
+    local tag="${arg##*:}"
+    if [ "$proj_repo" = "$arg" ] || [ -z "$tag" ]; then
+        echo "scan requires <project>/<repo>:<tag>" >&2; exit 4
+    fi
+    local project="${proj_repo%%/*}"
+    local repo="${proj_repo#*/}"
+    if [ -z "$project" ] || [ "$project" = "$proj_repo" ]; then
+        echo "scan requires <project>/<repo>:<tag>" >&2; exit 4
+    fi
+    local repo_enc="${repo//\//%2F}"
+
+    local raw
+    raw="$(harbor_get "/api/v2.0/projects/${project}/repositories/${repo_enc}/artifacts/${tag}?with_scan_overview=true")"
+
+    if [ "$OPT_JSON" = "1" ]; then
+        printf '%s' "$raw" | jq -c '.scan_overview // {}'
+        return
+    fi
+
+    local scanner
+    scanner="$(printf '%s' "$raw" | jq -r '
+        (.scan_overview // {}) | keys_unsorted | sort | .[0] // ""
+    ')"
+
+    local status critical high medium low unknown end_time
+    if [ -z "$scanner" ]; then
+        status="Not Scanned"
+        end_time="-"
+        critical="-"; high="-"; medium="-"; low="-"; unknown="-"
+    else
+        status="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].scan_status // "-"')"
+        end_time="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '
+            (.scan_overview[$s].end_time // "") | sub("\\..*Z$"; "Z") | sub("T"; " ")
+        ')"
+        [ -z "$end_time" ] && end_time="-"
+        local sev_path
+        sev_path="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '
+            if (.scan_overview[$s].summary.summary // null) != null then "summary.summary"
+            elif (.scan_overview[$s].severity // null) != null then "severity"
+            else "" end
+        ')"
+        if [ "$sev_path" = "summary.summary" ]; then
+            critical="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Critical // 0')"
+            high="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.High // 0')"
+            medium="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Medium // 0')"
+            low="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Low // 0')"
+            unknown="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Unknown // 0')"
+        elif [ "$sev_path" = "severity" ]; then
+            critical="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Critical // 0')"
+            high="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.High // 0')"
+            medium="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Medium // 0')"
+            low="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Low // 0')"
+            unknown="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Unknown // 0')"
+        else
+            critical="-"; high="-"; medium="-"; low="-"; unknown="-"
+        fi
+    fi
+
+    local row
+    row="$(jq -c -n --arg ref "${project}/${repo}:${tag}" \
+        --arg status "$status" --arg end "$end_time" \
+        --arg c "$critical" --arg h "$high" --arg m "$medium" \
+        --arg l "$low" --arg u "$unknown" \
+        '[ {ref:$ref, status:$status, scanned:$end, c:$c, h:$h, m:$m, l:$l, u:$u} ]')"
+
+    printf '%s' "$row" | render_table \
+        'PROJECT/REPO:TAG=.ref' \
+        'STATUS=.status' \
+        'SCANNED=.scanned' \
+        'CRITICAL=.c' \
+        'HIGH=.h' \
+        'MEDIUM=.m' \
+        'LOW=.l' \
+        'UNKNOWN=.u'
+}
+
 case "$SUBCMD" in
     projects) cmd_projects "${ARGS[@]}";;
     repos)    cmd_repos    "${ARGS[@]}";;
     tags)     cmd_tags     "${ARGS[@]}";;
-    scan)
-        echo "not implemented yet: scan" >&2
-        exit 4
-        ;;
+    scan)     cmd_scan     "${ARGS[@]}";;
     *)
         echo "unknown subcommand: $SUBCMD" >&2
         usage
