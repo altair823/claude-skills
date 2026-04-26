@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_common.sh
+. "$HERE/_common.sh"
+
+usage() {
+    cat <<USAGE >&2
+Usage: harbor-push <local-image> <project>/<repo>:<tag> [--profile <name>]
+
+Tag <local-image> for the active Harbor host and push it. Uses an isolated
+DOCKER_CONFIG so your ~/.docker/config.json is never modified — login state
+exists only for the duration of this command and is cleaned up on exit.
+
+Example:
+  docker pull nginx:1.27-alpine
+  harbor-push nginx:1.27-alpine playground/nginx:v1
+USAGE
+}
+
+OPT_PROFILE=""
+POSITIONAL=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile) OPT_PROFILE="$2"; shift 2;;
+        --debug) export HARBOR_DEBUG=1; shift;;
+        -h|--help) usage; exit 0;;
+        --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done;;
+        -*) echo "unknown flag: $1" >&2; usage; exit 4;;
+        *) POSITIONAL+=("$1"); shift;;
+    esac
+done
+
+if [ "${#POSITIONAL[@]}" -lt 2 ]; then
+    usage; exit 4
+fi
+
+LOCAL_IMAGE="${POSITIONAL[0]}"
+DEST="${POSITIONAL[1]}"
+
+# DEST must look like project/repo:tag
+case "$DEST" in
+    */*:*) ;;
+    *)
+        echo "destination must be <project>/<repo>:<tag>, got: $DEST" >&2
+        exit 4
+        ;;
+esac
+
+if [ -n "$OPT_PROFILE" ]; then
+    load_profile --profile "$OPT_PROFILE"
+else
+    load_profile
+fi
+
+host="$(printf '%s' "$HARBOR_URL" | sed -E 's|^https?://([^/]+).*|\1|')"
+target="${host}/${DEST}"
+
+# Isolated docker config dir so the user's ~/.docker/config.json is never touched.
+TMP_DOCKER_CONFIG="$(mktemp -d)"
+cleanup() { rm -rf "$TMP_DOCKER_CONFIG"; }
+trap cleanup EXIT
+
+export DOCKER_CONFIG="$TMP_DOCKER_CONFIG"
+
+log_debug "DOCKER_CONFIG=$DOCKER_CONFIG (isolated)"
+log_debug "docker login $host -u $HARBOR_USER --password-stdin"
+
+if ! printf '%s' "$HARBOR_SECRET" | docker login "$host" -u "$HARBOR_USER" --password-stdin >/dev/null; then
+    echo "docker login failed for $host as $HARBOR_USER" >&2
+    exit 1
+fi
+
+log_debug "docker tag $LOCAL_IMAGE $target"
+docker tag "$LOCAL_IMAGE" "$target"
+
+log_debug "docker push $target"
+docker push "$target"
+
+echo "pushed: $target"
