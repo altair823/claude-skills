@@ -23,7 +23,7 @@ export GITEA_REVIEWER_TOKEN_FILE="$TEST_TMP/rev-token"
 printf 'file-token\n' >"$GITEA_REVIEWER_TOKEN_FILE"
 GITEA_REVIEWER_TOKEN="env-token" tok="$(load_reviewer_token)"
 assert_eq "$tok" "env-token" "env wins over file"
-unset GITEA_REVIEWER_TOKEN
+unset GITEA_REVIEWER_TOKEN || true
 teardown
 
 # --- load_reviewer_token: falls back to file ---
@@ -32,7 +32,7 @@ export GITEA_REVIEWER_TOKEN_FILE="$TEST_TMP/rev-token"
 printf 'file-token\n' >"$GITEA_REVIEWER_TOKEN_FILE"
 unset GITEA_REVIEWER_TOKEN || true
 tok="$(load_reviewer_token)"
-assert_contains "$tok" "file-token" "file fallback"
+assert_eq "$tok" "file-token" "file fallback"
 teardown
 
 # --- load_reviewer_token: missing both → die ---

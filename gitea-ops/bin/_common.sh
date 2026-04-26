@@ -25,6 +25,7 @@ load_reviewer_token() {
     if [ -n "${GITEA_REVIEWER_TOKEN:-}" ]; then
         printf '%s' "$GITEA_REVIEWER_TOKEN"; return 0
     fi
+    # -s rejects empty placeholder files (Setup recommends `touch reviewer-token`).
     if [ -r "$GITEA_REVIEWER_TOKEN_FILE" ] && [ -s "$GITEA_REVIEWER_TOKEN_FILE" ]; then
         cat "$GITEA_REVIEWER_TOKEN_FILE"; return 0
     fi
