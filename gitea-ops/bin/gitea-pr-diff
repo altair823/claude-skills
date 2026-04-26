@@ -1,0 +1,41 @@
+#!/bin/sh
+# Print PR metadata and unified diff for review.
+#
+# Usage:
+#   gitea-pr-diff <PR#> [--raw|--json] [-r owner/repo] [-u URL]
+#
+# Default: human-readable header (PR title, base, head, file list) followed by
+#          unified diff.
+# --raw:   diff body only.
+# --json:  {title, base, head, files:[...], diff:"..."} as a single JSON object.
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq
+
+PR=""
+MODE="meta"   # meta | raw | json
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --raw)
+            [ "$MODE" = "json" ] && die "--raw and --json are mutually exclusive"
+            MODE="raw"; shift ;;
+        --json)
+            [ "$MODE" = "raw" ] && die "--raw and --json are mutually exclusive"
+            MODE="json"; shift ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "unexpected positional: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# required"
+resolve_remote
+
+# Body of script filled in next step.
+die "not implemented"
