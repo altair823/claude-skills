@@ -221,3 +221,65 @@ glob_to_regex() {
     g="${g//\?/.}"
     printf '^%s$' "$g"
 }
+
+# Walk up from cwd to git root (or $HOME), scan manifest files in lex order,
+# match the active profile's host. On match, print "<project>/<repo>" and return 0.
+# Exit 3 with a message on no match. HARBOR_NO_DETECT=1 forces no match.
+detect_project() {
+    if [ "${HARBOR_NO_DETECT:-0}" = "1" ]; then
+        echo "project not detected (HARBOR_NO_DETECT=1)" >&2
+        exit 3
+    fi
+
+    local host
+    host="$(printf '%s' "$HARBOR_URL" | sed -E 's|^https?://([^/]+).*|\1|')"
+    if [ -z "$host" ]; then
+        echo "no host in HARBOR_URL: $HARBOR_URL" >&2
+        exit 2
+    fi
+
+    local stop_dir
+    if stop_dir="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        :
+    else
+        stop_dir="$HOME"
+    fi
+
+    local cur="$PWD"
+    local host_re
+    host_re="$(printf '%s' "$host" | sed 's/\./\\./g')"
+    local re="${host_re}/([A-Za-z0-9._-]+)/([A-Za-z0-9._/-]+?)(:[A-Za-z0-9._-]+)?"
+
+    while :; do
+        local f
+        for f in $(find "$cur" -maxdepth 1 -type f \( \
+            -name 'Dockerfile' -o -name 'Dockerfile.*' \
+            -o -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \
+            -o -name 'compose.yml' -o -name 'compose.yaml' \
+            -o -name '*.yaml' -o -name '*.yml' \
+        \) 2>/dev/null | LC_ALL=C sort); do
+            case "$(basename "$f")" in
+                docker-compose.yml|docker-compose.yaml|compose.yml|compose.yaml|Dockerfile|Dockerfile.*) ;;
+                *.yaml|*.yml)
+                    grep -q '^[[:space:]]*image:' "$f" || continue
+                    ;;
+            esac
+            local match
+            match="$(grep -E -m1 -o "$re" "$f" 2>/dev/null || true)"
+            if [ -n "$match" ]; then
+                local rest="${match#${host}/}"
+                rest="${rest%%:*}"
+                log_debug "detect: $f → $rest"
+                printf '%s' "$rest"
+                return 0
+            fi
+        done
+        if [ "$cur" = "$stop_dir" ] || [ "$cur" = "/" ]; then
+            break
+        fi
+        cur="$(dirname "$cur")"
+    done
+
+    echo "project not detected from manifests; pass <project> explicitly or use --no-detect" >&2
+    exit 3
+}
