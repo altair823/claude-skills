@@ -48,6 +48,8 @@ title="$(printf '%s' "$pr_json" | jq -r '.title // empty')"
 [ -n "$title" ] || die "PR #$PR not found"
 
 files_json="$(gitea_get "$pr_path/files")"
+files_err="$(printf '%s' "$files_json" | jq -r '.message // empty' 2>/dev/null || true)"
+[ -z "$files_err" ] || die "PR #$PR files: $files_err"
 diff_body="$(gitea_get "$pr_path.diff")"
 
 if [ "$MODE" = "raw" ]; then
@@ -57,7 +59,7 @@ fi
 
 if [ "$MODE" = "json" ]; then
     jq -n \
-        --arg title    "$(printf '%s' "$pr_json" | jq -r '.title // ""')" \
+        --arg title    "$title" \
         --arg base_ref "$(printf '%s' "$pr_json" | jq -r '.base.ref // ""')" \
         --arg base_sha "$(printf '%s' "$pr_json" | jq -r '.base.sha // ""')" \
         --arg head_ref "$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')" \
