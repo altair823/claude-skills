@@ -1,0 +1,183 @@
+#!/bin/sh
+# paperboy-spec — discover paperboy's HTTP API by inspecting its live openapi.json.
+#
+# The paperboy server publishes an OpenAPI 3 document at
+# `$PAPERBOY_URL$PAPERBOY_OPENAPI_PATH` (default `/openapi.json`). Use this
+# script BEFORE crafting an API call so you're working from the current
+# server's contract, not from possibly-outdated README/API.md.
+#
+# Subcommands:
+#   paperboy-spec                       Print the full openapi.json (jq pretty)
+#   paperboy-spec paths                 List `METHOD path` rows
+#   paperboy-spec paths --filter <re>   Filter paths by extended-regex
+#   paperboy-spec op <METHOD> <PATH>    Show one operation: summary, params,
+#                                       request body, responses, schema refs
+#   paperboy-spec schema <Name>         Show a component schema by name
+#   paperboy-spec schemas               List schema names
+#   paperboy-spec swagger               Print the Swagger UI URL
+#   paperboy-spec refresh               Force re-fetch (ignore cache)
+#
+# Options (all subcommands):
+#   --no-cache         Disable on-disk cache (~/.cache/paperboy-ops/openapi.json)
+#   --raw              Don't pipe through jq
+#   --debug            Verbose
+#
+# Cache TTL: 5 minutes. Use `refresh` if the user just deployed a new build.
+
+set -eu
+
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=_common.sh
+. "$DIR/_common.sh"
+
+require_cmd curl jq
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/paperboy-ops"
+CACHE_FILE="$CACHE_DIR/openapi.json"
+CACHE_TTL=300  # seconds
+
+no_cache=""
+raw=""
+debug=""
+filter=""
+sub=""
+positional=""
+
+# Flags can appear anywhere; first non-flag positional is the subcommand,
+# remaining positionals are stashed for subcommand-specific consumption.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-cache) no_cache=1; shift ;;
+        --raw)      raw=1; shift ;;
+        --debug)    debug=1; shift ;;
+        --filter)   filter="$2"; shift 2 ;;
+        -h|--help)
+            sed -n '2,/^# Cache TTL/p' "$0" | sed -n 's/^# \?//p'
+            exit 0
+            ;;
+        --) shift; while [ $# -gt 0 ]; do positional="$positional${positional:+ }$1"; shift; done; break ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            if [ -z "$sub" ]; then sub="$1"
+            else positional="$positional${positional:+ }$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Restore positional args for subcommand.
+# shellcheck disable=SC2086
+set -- $positional
+
+load_config
+mkdir -p "$CACHE_DIR"
+
+cache_fresh() {
+    [ -z "$no_cache" ] || return 1
+    [ -r "$CACHE_FILE" ] || return 1
+    now="$(date +%s)"
+    mtime="$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null)"
+    [ -n "$mtime" ] || return 1
+    age=$((now - mtime))
+    [ "$age" -lt "$CACHE_TTL" ]
+}
+
+fetch_spec() {
+    [ -n "$debug" ] && printf 'paperboy-spec: GET %s%s\n' "$PAPERBOY_URL" "$PAPERBOY_OPENAPI_PATH" >&2
+    set -- -sS --user "$PAPERBOY_USERNAME:$PAPERBOY_PASSWORD" \
+              -H 'Accept: application/json' \
+              --fail-with-body
+    while IFS= read -r f; do
+        [ -z "$f" ] || set -- "$@" "$f"
+    done <<EOF
+$(curl_tls_flags)
+EOF
+    if ! curl "$@" "$PAPERBOY_URL$PAPERBOY_OPENAPI_PATH" >"$CACHE_FILE.tmp"; then
+        rm -f "$CACHE_FILE.tmp"
+        die "openapi fetch failed (network or auth)"
+    fi
+    if ! jq -e . "$CACHE_FILE.tmp" >/dev/null 2>&1; then
+        rm -f "$CACHE_FILE.tmp"
+        die "openapi response is not valid JSON (got HTML? wrong path?)"
+    fi
+    mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+}
+
+ensure_spec() {
+    if cache_fresh; then return; fi
+    fetch_spec
+}
+
+case "$sub" in
+    ""|full)
+        ensure_spec
+        if [ -n "$raw" ]; then cat "$CACHE_FILE"; else jq . "$CACHE_FILE"; fi
+        ;;
+    refresh)
+        no_cache=1
+        fetch_spec
+        echo "refreshed: $CACHE_FILE"
+        ;;
+    swagger)
+        printf '%s%s\n' "$PAPERBOY_URL" "$PAPERBOY_SWAGGER_PATH"
+        ;;
+    paths)
+        ensure_spec
+        # Tab-separated METHOD path summary, then column-format.
+        rows="$(jq -r '
+            .paths
+            | to_entries
+            | map(
+                .key as $p
+                | (.value | to_entries
+                    | map(select(.key as $m | ["get","post","put","patch","delete","head","options"] | index($m)))
+                    | map([(.key|ascii_upcase), $p, (.value.summary // "")]))
+              )
+            | add // []
+            | .[] | @tsv
+        ' "$CACHE_FILE")"
+        if [ -n "$filter" ]; then
+            rows="$(printf '%s\n' "$rows" | grep -E -- "$filter" || true)"
+        fi
+        if [ -z "$rows" ]; then
+            echo "(no paths matched)" >&2
+            exit 1
+        fi
+        printf 'METHOD\tPATH\tSUMMARY\n%s\n' "$rows" | column -t -s "$(printf '\t')"
+        ;;
+    op)
+        ensure_spec
+        op_method="${1:-}"; op_path="${2:-}"
+        [ -n "$op_method" ] || die "usage: paperboy-spec op <METHOD> <PATH>"
+        [ -n "$op_path" ] || die "usage: paperboy-spec op <METHOD> <PATH>"
+        m_lower="$(printf '%s' "$op_method" | tr 'A-Z' 'a-z')"
+        jq --arg p "$op_path" --arg m "$m_lower" '
+            .paths[$p][$m]
+            // ("operation not found: " + ($m|ascii_upcase) + " " + $p | error)
+            | {
+                summary: .summary,
+                description: .description,
+                parameters: (.parameters // []),
+                requestBody: (.requestBody // null),
+                responses: (.responses // {})
+              }
+        ' "$CACHE_FILE"
+        ;;
+    schemas)
+        ensure_spec
+        jq -r '.components.schemas | keys[]' "$CACHE_FILE" | sort
+        ;;
+    schema)
+        ensure_spec
+        name="${1:-}"
+        [ -n "$name" ] || die "usage: paperboy-spec schema <Name>"
+        jq --arg n "$name" '
+            .components.schemas[$n]
+            // ("schema not found: " + $n | error)
+        ' "$CACHE_FILE"
+        ;;
+    *)
+        die "unknown subcommand: $sub (try paths|op|schema|schemas|swagger|refresh)"
+        ;;
+esac

@@ -1,0 +1,178 @@
+#!/bin/sh
+# paperboy-api — generic authenticated HTTP client for paperboy.
+#
+# Usage:
+#   paperboy-api <METHOD> <PATH> [options]
+#
+# Options:
+#   --json '<json>'       JSON body inline
+#   --json-file <path>    JSON body from file
+#   --json-stdin          JSON body from stdin (also @-)
+#   --form k=v ...        Repeatable; sent as multipart/form-data
+#   -H 'Header: value'    Repeatable extra header (passed through to curl)
+#   --idem <key>          Sets `Idempotency-Key` header
+#   --idem-auto           Generates a unique Idempotency-Key
+#   --auth main|metrics   Credentials role (default: main)
+#   --status              Print HTTP status to stderr after body
+#   --raw                 Don't pipe through jq (binary safe)
+#   --debug               Echo curl args to stderr
+#
+# The response body is written to stdout. Non-2xx → exit 1.
+#
+# This is the only call you need to invoke any paperboy endpoint. Do not
+# hardcode endpoints in higher-level scripts; instead, call:
+#     paperboy-spec paths           # discover what's available
+#     paperboy-api GET /jobs/$id    # call it
+
+set -eu
+
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=_common.sh
+. "$DIR/_common.sh"
+
+require_cmd curl
+
+method=""
+api_path=""
+body_json=""
+body_source="" # inline | file:<path> | stdin
+forms=""
+extra_headers=""
+idem_key=""
+auth_role="main"
+print_status=""
+raw=""
+debug=""
+
+usage() {
+    sed -n '2,/^# This is/p' "$0" | sed -n 's/^# \?//p' >&2
+    exit "${1:-2}"
+}
+
+# Parse positional then options
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help) usage 0 ;;
+        --json)        body_json="$2"; body_source="inline"; shift 2 ;;
+        --json-file)   body_json="$2"; body_source="file"; shift 2 ;;
+        --json-stdin|@-) body_source="stdin"; shift ;;
+        --form)        forms="$forms${forms:+
+}$2"; shift 2 ;;
+        -H)            extra_headers="$extra_headers${extra_headers:+
+}$2"; shift 2 ;;
+        --idem)        idem_key="$2"; shift 2 ;;
+        --idem-auto)   idem_key="__AUTO__"; shift ;;
+        --auth)        auth_role="$2"; shift 2 ;;
+        --status)      print_status=1; shift ;;
+        --raw)         raw=1; shift ;;
+        --debug)       debug=1; shift ;;
+        --)            shift; break ;;
+        -*)            die "unknown flag: $1" ;;
+        *)
+            if [ -z "$method" ]; then method="$1"
+            elif [ -z "$api_path" ]; then api_path="$1"
+            else die "unexpected arg: $1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+[ -n "$method" ] || die "METHOD missing — see --help"
+[ -n "$api_path" ] || die "PATH missing — see --help"
+
+# Ensure path begins with /
+case "$api_path" in /*) ;; *) api_path="/$api_path" ;; esac
+
+load_config
+
+if [ "$idem_key" = "__AUTO__" ]; then
+    idem_key="$(gen_idem_key)"
+fi
+
+# Resolve credentials in the parent shell so a missing metrics account aborts
+# instead of silently dropping into a curl password prompt.
+auth_pair="$(auth_for "$auth_role")"
+
+# Build curl args.
+set -- -sS -X "$method" --user "$auth_pair"
+
+# TLS flags (CA cert / -k)
+while IFS= read -r f; do
+    [ -z "$f" ] || set -- "$@" "$f"
+done <<EOF
+$(curl_tls_flags)
+EOF
+
+# Idempotency
+if [ -n "$idem_key" ]; then
+    set -- "$@" -H "Idempotency-Key: $idem_key"
+fi
+
+# Extra headers
+if [ -n "$extra_headers" ]; then
+    OLDIFS="$IFS"; IFS='
+'
+    for h in $extra_headers; do
+        set -- "$@" -H "$h"
+    done
+    IFS="$OLDIFS"
+fi
+
+# Body
+if [ "$body_source" = "inline" ]; then
+    set -- "$@" -H "Content-Type: application/json" --data "$body_json"
+elif [ "$body_source" = "file" ]; then
+    [ -r "$body_json" ] || die "cannot read --json-file: $body_json"
+    set -- "$@" -H "Content-Type: application/json" --data "@$body_json"
+elif [ "$body_source" = "stdin" ]; then
+    set -- "$@" -H "Content-Type: application/json" --data "@-"
+fi
+
+# Forms
+if [ -n "$forms" ]; then
+    OLDIFS="$IFS"; IFS='
+'
+    for kv in $forms; do
+        set -- "$@" -F "$kv"
+    done
+    IFS="$OLDIFS"
+fi
+
+# Status capture
+if [ -n "$print_status" ]; then
+    set -- "$@" -w '\n[%{http_code}]\n'
+fi
+
+# Final URL
+url="$PAPERBOY_URL$api_path"
+
+[ -n "$debug" ] && {
+    printf 'paperboy-api: %s %s\n' "$method" "$url" >&2
+    printf 'paperboy-api: curl' >&2
+    for a in "$@"; do printf ' %s' "$a" >&2; done
+    printf '\n' >&2
+}
+
+tmp_body="$(mktemp)"
+tmp_code="$(mktemp)"
+trap 'rm -f "$tmp_body" "$tmp_code"' EXIT
+
+# Body to tmp_body, status code to tmp_code. curl exit propagates.
+curl "$@" -o "$tmp_body" -w '%{http_code}' "$url" >"$tmp_code" || curl_rc=$?
+code="$(cat "$tmp_code")"
+
+if [ -z "$raw" ] && command -v jq >/dev/null 2>&1 && [ -s "$tmp_body" ] \
+   && jq . "$tmp_body" >/dev/null 2>&1; then
+    jq . "$tmp_body"
+else
+    cat "$tmp_body"
+    [ -s "$tmp_body" ] && [ "$(tail -c 1 "$tmp_body" | od -An -tx1 | tr -d ' ')" != "0a" ] && echo
+fi
+
+[ -n "$print_status" ] && printf '[%s]\n' "$code" >&2
+
+case "$code" in
+    2*) exit 0 ;;
+    *) printf 'paperboy-api: HTTP %s\n' "$code" >&2; exit 1 ;;
+esac
