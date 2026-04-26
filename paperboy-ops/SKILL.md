@@ -11,7 +11,7 @@ Three thin tools:
 - `paperboy-api` — generic authenticated HTTP client (`paperboy-api METHOD PATH …`).
 - `paperboy-estimate` — deterministic line/cm estimator for text payloads (paper-saving gate).
 
-Both read `~/.config/paperboy-ops/config` for `PAPERBOY_URL`, `PAPERBOY_USERNAME`, `PAPERBOY_PASSWORD` (+ optional metrics creds, openapi/swagger paths, custom CA).
+The two HTTP-talking tools (`paperboy-spec`, `paperboy-api`) read `~/.config/paperboy-ops/config` for `PAPERBOY_URL`, `PAPERBOY_USERNAME`, `PAPERBOY_PASSWORD` (+ optional metrics creds, openapi/swagger paths, custom CA). `paperboy-estimate` is purely local and needs no config.
 
 **The API is evolving.** Do NOT call endpoints from memory or from `paperboy/API.md`. Always start by reading the live spec.
 
@@ -74,7 +74,7 @@ echo "$TEXT" | paperboy-estimate --size "$W,$H" --feed-lines "$N"
 Output:
 
 ```json
-{"physical_lines": 18, "approx_cm": 5.4, "over_threshold": true, "threshold": 15}
+{"physical_lines": 18, "approx_cm": 5.40, "over_threshold": true, "threshold": 15}
 ```
 
 Exit code: `0` if `physical_lines <= threshold` (default 15), `1` if over,
