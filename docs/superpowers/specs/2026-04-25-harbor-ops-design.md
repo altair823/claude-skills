@@ -113,8 +113,10 @@ url="${!url_var}"
 For the resolved profile:
 
 1. `<profile>_HARBOR_SECRET` (inline in config) — preferred for simplicity
-2. `<profile>_HARBOR_SECRET_FILE` — path read at runtime (file mode 0600
-   enforced; warn on Windows where NTFS ignores it)
+2. `<profile>_HARBOR_SECRET_FILE` — path read at runtime. On Linux/macOS/WSL,
+   if the file's mode is not `0600` (or stricter), emit a stderr warning but
+   still read the file. On Windows Git Bash (NTFS), the mode check is
+   skipped silently.
 3. Otherwise: error (exit 2)
 
 ### Auth header
@@ -163,6 +165,10 @@ Extract `<host>` from the active profile's `HARBOR_URL`. Match the regex:
 
 The first match wins. The matched `<project>` (and `<repo>` if needed) is
 filled in. If the user passed `<repo>` only, only `<project>` is filled.
+
+Determinism: at each directory level, files are visited in lexicographic
+order; within a file, lines are scanned top-to-bottom. The scan stops at the
+first match.
 
 ### Behavior
 
@@ -220,7 +226,9 @@ filled in. If the user passed `<repo>` only, only `<project>` is filled.
   PROJECT/REPO:TAG       STATUS       SCANNED              CRITICAL  HIGH  MEDIUM  LOW  UNKNOWN
   myproj/myrepo:v1.2.0   Success      2026-04-24 10:11Z         2     5       8    3        1
   ```
-- Status pulled from `scan_overview.<scanner>.scan_status` (first scanner key)
+- Scanner selection: pick the lexicographically first key under
+  `scan_overview` so output is stable across runs.
+- Status pulled from `scan_overview.<scanner>.scan_status`
 - Counts pulled from `scan_overview.<scanner>.summary.summary` (or
   `scan_overview.<scanner>.severity` map, whichever is present)
 - Not yet scanned: `STATUS=Not Scanned`, all counts `-`
@@ -254,9 +262,10 @@ Single-page responses short-circuit (no second request).
 ## Filter and Limit
 
 - `--filter <glob>`: applied client-side after pagination, on the primary name
-  field defined per subcommand. Glob is converted to a regex (`*` → `.*`,
-  `?` → `.`, other chars escaped) and applied via
-  `jq 'map(select(.<field> | test(<re>)))'`.
+  field defined per subcommand. The glob is converted to a regex by first
+  backslash-escaping every regex metacharacter (`. + ( ) [ ] { } ^ $ | \`),
+  then substituting `*` → `.*` and `?` → `.`, then anchoring with `^...$`,
+  then applied via `jq 'map(select(.<field> | test(<re>)))'`.
 - `--limit <N>`: applied after filtering, via `jq '.[:N]'`.
 
 ## Output Rendering
