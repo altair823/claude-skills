@@ -86,9 +86,30 @@ cmd_projects() {
             'CREATED=(.creation_time // "" | sub("\\..*Z$"; "Z") | sub("T"; " "))'
 }
 
+cmd_repos() {
+    local project="${1:-}"
+    if [ -z "$project" ]; then
+        local detected
+        detected="$(detect_project)"
+        project="${detected%%/*}"
+    fi
+    local raw
+    raw="$(harbor_get_paginated "/api/v2.0/projects/${project}/repositories")"
+    printf '%s' "$raw" \
+        | jq --arg p "$project" 'map(.short_name = (.name | sub("^"+$p+"/"; "")))' \
+        | apply_filter '.short_name' "$OPT_FILTER" \
+        | apply_limit "$OPT_LIMIT" \
+        | emit \
+            'NAME=.short_name' \
+            'ARTIFACT_COUNT=.artifact_count' \
+            'PULL_COUNT=.pull_count' \
+            'UPDATED=(.update_time // "" | sub("\\..*Z$"; "Z") | sub("T"; " "))'
+}
+
 case "$SUBCMD" in
     projects) cmd_projects "${ARGS[@]}";;
-    repos|tags|scan)
+    repos)    cmd_repos    "${ARGS[@]}";;
+    tags|scan)
         echo "not implemented yet: $SUBCMD" >&2
         exit 4
         ;;
