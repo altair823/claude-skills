@@ -78,15 +78,21 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
     '{"title":"My PR","head":{"ref":"feat","sha":"abc"},"base":{"ref":"main","sha":"def"},"user":{"login":"u"},"state":"open"}'
 fixture GET /api/v1/repos/owner/repo/pulls/42/files \
     '[{"filename":"f.go","status":"modified","additions":5,"deletions":2}]'
-fixture GET /api/v1/repos/owner/repo/pulls/42.diff 'D'
+fixture GET /api/v1/repos/owner/repo/pulls/42.diff 'diff --git a/f.go'
 
 out="$("$BIN/gitea-pr-diff" 42 --json 2>&1)"
 title="$(printf '%s' "$out" | jq -r '.title')"
 assert_eq "$title" "My PR" "json has title"
 fpath="$(printf '%s' "$out" | jq -r '.files[0].path')"
 assert_eq "$fpath" "f.go" "json files[0].path"
+base_ref="$(printf '%s' "$out" | jq -r '.base.ref')"
+assert_eq "$base_ref" "main" "json base.ref"
+head_ref="$(printf '%s' "$out" | jq -r '.head.ref')"
+assert_eq "$head_ref" "feat" "json head.ref"
+fstatus="$(printf '%s' "$out" | jq -r '.files[0].status')"
+assert_eq "$fstatus" "modified" "json files[0].status"
 diff_field="$(printf '%s' "$out" | jq -r '.diff')"
-assert_eq "$diff_field" "D" "json diff field"
+assert_eq "$diff_field" "diff --git a/f.go" "json diff field"
 teardown
 
 # --- 404: PR not found → die ---
@@ -107,6 +113,18 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
 fixture GET /api/v1/repos/owner/repo/pulls/42/files '{"message":"forbidden"}'
 if "$BIN/gitea-pr-diff" 42 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero on files error >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "files" "error mentions files endpoint"
+teardown
+
+# --- /files endpoint error: --raw mode also dies (guard is mode-independent) ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"X","head":{"ref":"h","sha":"a"},"base":{"ref":"main","sha":"b"},"user":{"login":"u"},"state":"open","html_url":""}'
+fixture GET /api/v1/repos/owner/repo/pulls/42/files '{"message":"forbidden"}'
+if "$BIN/gitea-pr-diff" 42 --raw 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on files error in --raw mode >&2; exit 1
 fi
 assert_file_contains "$TEST_TMP/err" "files" "error mentions files endpoint"
 teardown
