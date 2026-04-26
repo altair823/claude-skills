@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# paperboy-estimate — deterministic line/cm estimator for paperboy text payloads.
+# Reads text from stdin, writes a JSON object to stdout.
+# Exit code: 0 if physical_lines <= threshold, 1 if over, 2 on charset check failure.
+set -u
+
+PRINTER_WIDTH_ASCII=42        # SRP-350III, font A, default size: 42 columns
+CM_PER_LINE="0.3"             # conservative; actual ~0.21 cm/line
+
+SIZE_W=1
+SIZE_H=1
+FEED_LINES=0
+THRESHOLD="${PAPERBOY_LINE_THRESHOLD:-15}"
+CHECK_CHARSET=0
+
+usage() {
+  cat <<'EOF' >&2
+Usage: paperboy-estimate [--size W,H] [--feed-lines N] [--threshold N] [--check-charset] < text
+EOF
+  exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --size)         IFS=',' read -r SIZE_W SIZE_H <<<"$2"; shift 2 ;;
+    --feed-lines)   FEED_LINES="$2"; shift 2 ;;
+    --threshold)    THRESHOLD="$2"; shift 2 ;;
+    --check-charset) CHECK_CHARSET=1; shift ;;
+    -h|--help)      usage ;;
+    *)              usage ;;
+  esac
+done
+
+# Clamp size args to >= 1 to avoid div-by-zero in effective_cols and a
+# zero-physical-count when SIZE_H=0.
+if (( SIZE_W < 1 )); then SIZE_W=1; fi
+if (( SIZE_H < 1 )); then SIZE_H=1; fi
+
+input=$(cat)
+
+if (( CHECK_CHARSET == 1 )); then
+  if ! conv_err=$(printf '%s' "$input" | iconv -f UTF-8 -t EUC-KR -o /dev/null 2>&1); then
+    printf 'paperboy-estimate: EUC-KR charset check failed:\n%s\n' "$conv_err" >&2
+    exit 2
+  fi
+fi
+
+# EUC-KR byte width + 42-col wrap
+if [[ -z "$input" ]]; then
+  physical=0
+else
+  effective_cols=$(( PRINTER_WIDTH_ASCII / SIZE_W ))
+  if (( effective_cols < 1 )); then effective_cols=1; fi
+
+  physical=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    bytes=$(printf '%s' "$line" | iconv -f UTF-8 -t EUC-KR 2>/dev/null | wc -c)
+    bytes=${bytes// /}
+    if (( bytes == 0 )); then
+      wrapped=1
+    else
+      wrapped=$(( (bytes + effective_cols - 1) / effective_cols ))
+    fi
+    physical=$(( physical + wrapped ))
+  done <<<"$input"
+fi
+
+physical=$(( physical * SIZE_H + FEED_LINES ))
+cm=$(awk -v p="$physical" -v c="$CM_PER_LINE" 'BEGIN{printf "%.2f", p*c}')
+over=$(awk -v p="$physical" -v t="$THRESHOLD" 'BEGIN{print (p>t)?"true":"false"}')
+
+jq -n \
+  --argjson p "$physical" \
+  --argjson cm "$cm" \
+  --argjson over "$over" \
+  --argjson t "$THRESHOLD" \
+  '{physical_lines: $p, approx_cm: $cm, over_threshold: $over, threshold: $t}'
+
+[[ "$over" == "true" ]] && exit 1 || exit 0

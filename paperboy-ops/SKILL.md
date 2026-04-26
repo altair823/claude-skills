@@ -5,12 +5,13 @@ description: Use when the user wants to interact with paperboy — a private HTT
 
 # paperboy-ops
 
-Two thin tools:
+Three thin tools:
 
 - `paperboy-spec` — inspect the live OpenAPI document (paths, operations, schemas).
 - `paperboy-api` — generic authenticated HTTP client (`paperboy-api METHOD PATH …`).
+- `paperboy-estimate` — deterministic line/cm estimator for text payloads (paper-saving gate).
 
-Both read `~/.config/paperboy-ops/config` for `PAPERBOY_URL`, `PAPERBOY_USERNAME`, `PAPERBOY_PASSWORD` (+ optional metrics creds, openapi/swagger paths, custom CA).
+The two HTTP-talking tools (`paperboy-spec`, `paperboy-api`) read `~/.config/paperboy-ops/config` for `PAPERBOY_URL`, `PAPERBOY_USERNAME`, `PAPERBOY_PASSWORD` (+ optional metrics creds, openapi/swagger paths, custom CA). `paperboy-estimate` is purely local and needs no config.
 
 **The API is evolving.** Do NOT call endpoints from memory or from `paperboy/API.md`. Always start by reading the live spec.
 
@@ -35,6 +36,66 @@ discover → read schema → call → poll if async
 - Pulling Prometheus metrics (`/metrics`) with the secondary metrics credentials.
 
 Do NOT use for other thermal printer projects, ESC/POS test rigs, or anything that doesn't speak paperboy's HTTP API.
+
+## Paper-saving rules
+
+The printer is a B&W thermal unit. Every line eats paper. Before sending any
+**text-bearing payload** (a JSON body whose human-readable content lives in a
+field like `text`, `body`, `content`, or `markdown`), Claude MUST walk the
+checklist below, then call `paperboy-estimate` to verify length.
+
+Raw payloads (`/print/raw` and any future endpoint that ships base64/binary)
+are exempt — the caller is byte-aware by definition.
+
+### Pre-print compaction checklist
+
+| # | Rule | Why |
+|---|---|---|
+| 1 | Convert prose to tables or bullets | Prose pads with filler; tables strip it. |
+| 2 | Hoist repeated label prefixes into a table header (one row per item) | Removes per-line redundancy. |
+| 3 | Drop colour metadata (`행운의 색: 파랑`, etc.) | Printer is B&W; the value renders as text but conveys nothing. |
+| 4 | Glyphs only from ASCII, Hangul, common Hanja, basic punctuation (`.,!?:;-/()`) and box drawing (`─│┌┐└┘├┤┬┴┼`) | Server encodes EUC-KR. Emoji and symbols outside EUC-KR will be replaced or fail the print. When in doubt, use `--check-charset` to verify. |
+| 5 | Collapse consecutive blank lines to one. `feed_lines=0` unless cutter offset demands 1–3 | Each blank line = paper. |
+| 6 | `size=[1,1]` is the default. Only `[2,2]+` when the user explicitly asks for "크게/제목/강조" | Doubling each axis quadruples paper area. |
+| 7 | `bold=false`, `align=0` unless the user requests otherwise | Conservative defaults; nothing is "decorative by default". |
+
+Multiple-item requests are NOT auto-merged. If the user asks for three
+fortunes, print three jobs unless the user themselves asks for a single strip
+with dividers — paper separation can carry intent.
+
+### Length gate
+
+After composing the payload, run the helper on the text-bearing field:
+
+```sh
+echo "$TEXT" | paperboy-estimate --size "$W,$H" --feed-lines "$N"
+```
+
+Output:
+
+```json
+{"physical_lines": 18, "approx_cm": 5.40, "over_threshold": true, "threshold": 15}
+```
+
+Exit code: `0` if `physical_lines <= threshold` (default 15), `1` if over,
+`2` if `--check-charset` was passed and the text contains EUC-KR-incompatible
+glyphs.
+
+| `over_threshold` | Action |
+|---|---|
+| `false` | Print immediately. |
+| `true` | Show the user a preview (first ~10 lines + `... (총 N줄, ~M cm)`) and ask for confirmation. Print only after explicit OK. |
+
+The gate is a confirmation, not a hard block. Intentionally long content
+proceeds with one user OK. Override the threshold via `--threshold N` or
+`PAPERBOY_LINE_THRESHOLD`.
+
+### When to use `--check-charset`
+
+Only when introducing unusual glyphs (decorative marks, Unicode symbols,
+uncommon Hanja). It runs strict `iconv -f UTF-8 -t EUC-KR`, prints offending
+characters to stderr, and exits 2. ASCII + Hangul + common punctuation never
+needs it.
 
 ## Setup
 
@@ -109,14 +170,26 @@ paperboy-spec schema TextPayload     # required: text; optional: align/bold/size
 # 2. Sanity-check the printer.
 paperboy-api GET /readyz             # {ok:true, usb_open:true, online:true, ...}
 
-# 3. Enqueue (auto Idempotency-Key so retries don't double-print).
-#    align=1 → centred. size=[2,2] → double-wide, double-tall (1..=8 per axis;
-#    [1,1] is the printer's default). Cut defaults true.
+# 3. Compose payload (compaction checklist 1–7 already applied).
+TEXT='[영수증]
+커피      4500
+샌드위치  6000
+─────────────
+합계     10500'
+
+# 4. Estimate length. Exit 0 = under threshold → print. Exit 1 = ask user first.
+if echo "$TEXT" | paperboy-estimate --size 1,1 --feed-lines 0; then
+  :  # under threshold; proceed
+else
+  echo "Over threshold — show preview, get user confirmation, then proceed."
+fi
+
+# 5. Enqueue (auto Idempotency-Key so retries don't double-print).
 JOB=$(paperboy-api POST /print/text --idem-auto \
-  --json '{"text":"안녕 paperboy","align":1,"size":[2,2]}' \
+  --json "$(jq -n --arg t "$TEXT" '{text:$t,align:0,size:[1,1],cut:true,feed_lines:0}')" \
   | jq -r .job_id)
 
-# 4. Poll until terminal.
+# 6. Poll until terminal.
 while :; do
   s=$(paperboy-api GET "/jobs/$JOB" --raw | jq -r .status)
   case "$s" in
