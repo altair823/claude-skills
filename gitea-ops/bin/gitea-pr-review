@@ -1,0 +1,79 @@
+#!/bin/sh
+# Post a review on a Gitea PR using the reviewer token.
+#
+# Usage:
+#   gitea-pr-review <PR#> --event <APPROVE|REQUEST_CHANGES|COMMENT>
+#                          --body "..." | --body -
+#                          [--inline FILE | --inline -]
+#                          [-r owner/repo] [-u URL]
+#
+# Reads reviewer token from $GITEA_REVIEWER_TOKEN or ~/.config/gitea-ops/reviewer-token.
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq
+
+PR=""
+EVENT=""
+BODY=""
+BODY_FROM_STDIN="false"
+INLINE_FILE=""
+INLINE_FROM_STDIN="false"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --event) EVENT="$2"; shift 2 ;;
+        --body)
+            if [ "$2" = "-" ]; then
+                BODY_FROM_STDIN="true"
+            else
+                BODY="$2"
+            fi
+            shift 2 ;;
+        --inline)
+            if [ "$2" = "-" ]; then
+                INLINE_FROM_STDIN="true"
+            else
+                INLINE_FILE="$2"
+            fi
+            shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "unexpected positional: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# required"
+[ -n "$EVENT" ] || die "--event required"
+
+case "$EVENT" in
+    APPROVE)         API_EVENT="APPROVED" ;;
+    REQUEST_CHANGES) API_EVENT="REQUEST_CHANGES" ;;
+    COMMENT)         API_EVENT="COMMENT" ;;
+    *) die "invalid --event: $EVENT (use APPROVE|REQUEST_CHANGES|COMMENT)" ;;
+esac
+
+if [ "$BODY_FROM_STDIN" = "true" ] && [ "$INLINE_FROM_STDIN" = "true" ]; then
+    die "--body and --inline cannot both read stdin"
+fi
+
+if [ "$BODY_FROM_STDIN" = "true" ]; then
+    BODY="$(cat)"
+elif [ "$INLINE_FROM_STDIN" = "true" ]; then
+    INLINE_JSON="$(cat)"
+fi
+
+# After resolving stdin, body must be non-empty unless event is COMMENT and inline supplied.
+if [ -z "$BODY" ] && [ -z "${INLINE_JSON:-}" ] && [ -z "$INLINE_FILE" ]; then
+    die "--body required (or --body -, or --inline)"
+fi
+
+resolve_remote
+TOKEN="$(load_reviewer_token)"
+
+# Body construction continues in next task.
+die "not implemented"
