@@ -60,4 +60,73 @@ fi
 assert_file_contains "$TEST_TMP/err" "reviewer token" "error mentions reviewer token"
 teardown
 
+# --- summary-only: POST body has event+body, no comments ---
+setup
+install_curl_stub
+fixture POST /api/v1/repos/owner/repo/pulls/42/reviews \
+    '{"id":7,"html_url":"https://gitea.test/owner/repo/pulls/42#review-7"}'
+
+out="$("$BIN/gitea-pr-review" 42 --event APPROVE --body "looks good" 2>&1)"
+assert_contains "$out" "review-7" "review URL printed"
+
+call="$(nth_call 1)"
+method="$(printf '%s' "$call" | cut -f1)"
+url="$(printf '%s'    "$call" | cut -f2)"
+body="$(printf '%s'   "$call" | cut -f3)"
+assert_eq "$method" "POST" "POST method"
+assert_contains "$url" "/pulls/42/reviews" "reviews endpoint"
+assert_contains "$body" '"event":"APPROVED"' "event mapped to APPROVED"
+assert_contains "$body" '"body":"looks good"' "body string included"
+case "$body" in *'"comments"'*) echo FAIL: comments key present without inline >&2; exit 1 ;; esac
+teardown
+
+# --- inline FILE: POST body includes comments[] ---
+setup
+install_curl_stub
+fixture POST /api/v1/repos/owner/repo/pulls/42/reviews '{"id":8,"html_url":"u"}'
+
+cat >"$TEST_TMP/inline.json" <<'EOF'
+[{"path":"a.go","new_position":12,"body":"nit"},{"path":"b.sh","old_position":3,"body":"oops"}]
+EOF
+
+"$BIN/gitea-pr-review" 42 --event REQUEST_CHANGES --body "issues" --inline "$TEST_TMP/inline.json" >/dev/null 2>&1
+body="$(nth_call 1 | cut -f3)"
+assert_contains "$body" '"event":"REQUEST_CHANGES"' "event mapped"
+assert_contains "$body" '"comments"' "comments array present"
+assert_contains "$body" '"a.go"' "first comment path"
+assert_contains "$body" '"new_position":12' "new_position numeric"
+assert_contains "$body" '"old_position":3' "old_position numeric"
+teardown
+
+# --- --body - reads stdin ---
+setup
+install_curl_stub
+fixture POST /api/v1/repos/owner/repo/pulls/42/reviews '{"id":9,"html_url":"u"}'
+echo "from stdin" | "$BIN/gitea-pr-review" 42 --event COMMENT --body - >/dev/null 2>&1
+body="$(nth_call 1 | cut -f3)"
+assert_contains "$body" '"event":"COMMENT"' "event mapped"
+assert_contains "$body" "from stdin" "body from stdin propagated"
+teardown
+
+# --- inline JSON missing required field → die ---
+setup
+install_curl_stub
+echo '[{"path":"a.go","body":"missing position"}]' >"$TEST_TMP/bad.json"
+if "$BIN/gitea-pr-review" 42 --event COMMENT --body x --inline "$TEST_TMP/bad.json" 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on bad inline >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "inline" "error mentions inline"
+teardown
+
+# --- 422 self-review → clear message ---
+setup
+install_curl_stub
+fixture POST /api/v1/repos/owner/repo/pulls/42/reviews \
+    '{"message":"Cannot create review for your own pull request"}'
+if "$BIN/gitea-pr-review" 42 --event APPROVE --body x 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on 422 >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "self-review" "error mentions self-review"
+teardown
+
 echo OK

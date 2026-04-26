@@ -75,5 +75,61 @@ fi
 resolve_remote
 TOKEN="$(load_reviewer_token)"
 
-# Body construction continues in next task.
-die "not implemented"
+# Resolve inline JSON source.
+if [ -n "$INLINE_FILE" ]; then
+    [ -r "$INLINE_FILE" ] || die "inline file not readable: $INLINE_FILE"
+    INLINE_JSON="$(cat "$INLINE_FILE")"
+fi
+
+if [ -n "${INLINE_JSON:-}" ]; then
+    # Validate: must be array; each element needs path, body, and one of new_position/old_position.
+    if ! printf '%s' "$INLINE_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        die "invalid inline JSON: not an array"
+    fi
+    bad="$(printf '%s' "$INLINE_JSON" | jq -r '
+        [.[] |
+         select((.path|type != "string") or
+                (.body|type != "string") or
+                ((.new_position|type) != "number" and (.old_position|type) != "number"))
+        ] | length' 2>/dev/null || echo 1)"
+    [ "$bad" = "0" ] || die "invalid inline JSON: each item needs path, body, and new_position or old_position"
+fi
+
+# Build POST body (compact JSON so tests can match key:value without spaces).
+if [ -n "${INLINE_JSON:-}" ]; then
+    body_json="$(jq -cn \
+        --arg event "$API_EVENT" \
+        --arg body "$BODY" \
+        --argjson comments "$INLINE_JSON" \
+        '{event:$event, body:$body, comments:$comments}')"
+else
+    body_json="$(jq -cn \
+        --arg event "$API_EVENT" \
+        --arg body "$BODY" \
+        '{event:$event, body:$body}')"
+fi
+
+# POST with reviewer token (override Authorization header in api_json equivalent).
+url="$GITEA_URL/api/v1/repos/$GITEA_REPO/pulls/$PR/reviews"
+resp="$(printf '%s' "$body_json" | curl -sS -X POST \
+    -H "Authorization: token $TOKEN" \
+    -H "Content-Type: application/json" \
+    --data @- \
+    "$url")"
+
+err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
+if [ -n "$err_msg" ]; then
+    case "$err_msg" in
+        *"own pull request"*|*"cannot review"*)
+            die "self-review not allowed: $err_msg" ;;
+        *)
+            die "review failed: $err_msg" ;;
+    esac
+fi
+
+review_url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"
+if [ -z "$review_url" ]; then
+    printf '[gitea-pr-review] unexpected response:\n%s\n' "$resp" >&2
+    exit 1
+fi
+printf '%s\n' "$review_url"
