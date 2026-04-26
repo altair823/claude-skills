@@ -5,6 +5,7 @@
 ## Skills
 
 - [gitea-ops](gitea-ops/SKILL.md) — Gitea (릴리스 / PR / 이슈)를 REST API로 CLI에서 조작.
+- [harbor-ops](harbor-ops/SKILL.md) — 사설 Harbor 컨테이너 레지스트리(프로젝트 / repo / tag / 스캔 요약)를 REST API로 read-only 브라우즈.
 
 ## Layout
 

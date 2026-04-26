@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_common.sh
+. "$HERE/_common.sh"
+
+usage() {
+    cat <<USAGE >&2
+Usage: harbor-ls <subcommand> [options] [args]
+
+Subcommands:
+  projects                              List all projects
+  repos    [<project>]                  List repos in a project (auto-detect if omitted)
+  tags     <project>/<repo>             List tags in a repository
+  scan     <project>/<repo>:<tag>       Show scan-overview summary
+
+Common options:
+  --profile <name>      Select profile from config
+  --json                Emit JSON instead of a table
+  --limit <N>           Truncate results client-side
+  --filter <glob>       Glob match on the primary name field
+  --no-detect           Disable manifest-based project detection
+  --debug               Verbose stderr logging
+  -h, --help            Show this message
+USAGE
+}
+
+OPT_PROFILE=""
+OPT_JSON=0
+OPT_LIMIT=""
+OPT_FILTER=""
+OPT_NO_DETECT=0
+POSITIONAL=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile) OPT_PROFILE="$2"; shift 2;;
+        --json) OPT_JSON=1; shift;;
+        --limit) OPT_LIMIT="$2"; shift 2;;
+        --filter) OPT_FILTER="$2"; shift 2;;
+        --no-detect) OPT_NO_DETECT=1; shift;;
+        --debug) export HARBOR_DEBUG=1; shift;;
+        -h|--help) usage; exit 0;;
+        --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done;;
+        -*) echo "unknown flag: $1" >&2; usage; exit 4;;
+        *) POSITIONAL+=("$1"); shift;;
+    esac
+done
+
+if [ "$OPT_NO_DETECT" = "1" ]; then export HARBOR_NO_DETECT=1; fi
+
+if [ "${#POSITIONAL[@]}" -eq 0 ]; then
+    usage; exit 4
+fi
+
+SUBCMD="${POSITIONAL[0]}"
+ARGS=("${POSITIONAL[@]:1}")
+
+if [ -n "$OPT_PROFILE" ]; then
+    load_profile --profile "$OPT_PROFILE"
+else
+    load_profile
+fi
+
+emit() {
+    local data
+    data="$(cat)"
+    if [ "$OPT_JSON" = "1" ]; then
+        printf '%s' "$data" | render_json
+    else
+        printf '%s' "$data" | render_table "$@"
+    fi
+}
+
+cmd_projects() {
+    local raw
+    raw="$(harbor_get_paginated /api/v2.0/projects)"
+    printf '%s' "$raw" \
+        | apply_filter '.name' "$OPT_FILTER" \
+        | apply_limit "$OPT_LIMIT" \
+        | emit \
+            'NAME=.name' \
+            'ID=.project_id' \
+            'PUBLIC=.metadata.public' \
+            'REPO_COUNT=.repo_count' \
+            'CREATED=(.creation_time // "" | sub("\\..*Z$"; "Z") | sub("T"; " "))'
+}
+
+cmd_repos() {
+    local project="${1:-}"
+    if [ -z "$project" ]; then
+        local detected
+        detected="$(detect_project)"
+        project="${detected%%/*}"
+    fi
+    local raw
+    raw="$(harbor_get_paginated "/api/v2.0/projects/${project}/repositories")"
+    printf '%s' "$raw" \
+        | jq --arg p "$project" 'map(.short_name = (.name | sub("^"+$p+"/"; "")))' \
+        | apply_filter '.short_name' "$OPT_FILTER" \
+        | apply_limit "$OPT_LIMIT" \
+        | emit \
+            'NAME=.short_name' \
+            'ARTIFACT_COUNT=.artifact_count' \
+            'PULL_COUNT=.pull_count' \
+            'UPDATED=(.update_time // "" | sub("\\..*Z$"; "Z") | sub("T"; " "))'
+}
+
+cmd_tags() {
+    local arg="${1:-}"
+    local project="" repo=""
+    case "$arg" in
+        */*) project="${arg%%/*}"; repo="${arg#*/}";;
+        "")
+            local detected; detected="$(detect_project)"
+            project="${detected%%/*}"; repo="${detected#*/}"
+            if [ "$project" = "$repo" ] || [ -z "$repo" ]; then
+                echo "tags requires <project>/<repo>; detection only filled <project>" >&2
+                exit 3
+            fi
+            ;;
+        *)
+            local detected; detected="$(detect_project)"
+            project="${detected%%/*}"
+            repo="$arg"
+            ;;
+    esac
+
+    local repo_enc="${repo//\//%2F}"
+    local raw
+    raw="$(harbor_get_paginated \
+        "/api/v2.0/projects/${project}/repositories/${repo_enc}/artifacts" \
+        'with_tag=true&with_scan_overview=false')"
+
+    local exploded
+    exploded="$(printf '%s' "$raw" | jq '
+        [ .[] |
+          ( .tags // [] ) as $tags |
+          if ($tags | length) == 0
+          then { tag: "<none>", digest, size, push_time }
+          else $tags[] as $t | { tag: $t.name, digest, size, push_time }
+          end
+        ]
+    ')"
+
+    local display
+    display="$(printf '%s' "$exploded" | jq '
+        map(. + {
+            digest_short: (.digest | .[0:19]),
+            pushed: ((.push_time // "") | sub("\\..*Z$"; "Z") | sub("T"; " "))
+        })
+    ' | apply_filter '.tag' "$OPT_FILTER" | apply_limit "$OPT_LIMIT")"
+
+    if [ "$OPT_JSON" = "1" ]; then
+        printf '%s' "$display" | render_json
+        return
+    fi
+
+    local with_size
+    with_size="$(printf '%s' "$display" | jq -c '.')"
+    local rows="["; local first=1
+    local n; n="$(printf '%s' "$with_size" | jq 'length')"
+    local i=0
+    while [ "$i" -lt "$n" ]; do
+        local row; row="$(printf '%s' "$with_size" | jq -c ".[$i]")"
+        local sz; sz="$(printf '%s' "$row" | jq -r '.size')"
+        local szs; szs="$(format_size "$sz")"
+        if [ "$first" -eq 1 ]; then first=0; else rows="${rows},"; fi
+        rows="${rows}$(printf '%s' "$row" | jq -c --arg s "$szs" '. + {size_str: $s}')"
+        i=$((i+1))
+    done
+    rows="${rows}]"
+
+    printf '%s' "$rows" | render_table \
+        'TAG=.tag' \
+        'DIGEST=.digest_short' \
+        'PUSHED=.pushed' \
+        'SIZE=.size_str'
+}
+
+cmd_scan() {
+    local arg="${1:-}"
+    if [ -z "$arg" ]; then
+        echo "scan requires <project>/<repo>:<tag>" >&2; exit 4
+    fi
+    local proj_repo="${arg%%:*}"
+    local tag="${arg##*:}"
+    if [ "$proj_repo" = "$arg" ] || [ -z "$tag" ]; then
+        echo "scan requires <project>/<repo>:<tag>" >&2; exit 4
+    fi
+    local project="${proj_repo%%/*}"
+    local repo="${proj_repo#*/}"
+    if [ -z "$project" ] || [ "$project" = "$proj_repo" ]; then
+        echo "scan requires <project>/<repo>:<tag>" >&2; exit 4
+    fi
+    local repo_enc="${repo//\//%2F}"
+
+    local raw
+    raw="$(harbor_get "/api/v2.0/projects/${project}/repositories/${repo_enc}/artifacts/${tag}?with_scan_overview=true")"
+
+    if [ "$OPT_JSON" = "1" ]; then
+        printf '%s' "$raw" | jq -c '.scan_overview // {}'
+        return
+    fi
+
+    local scanner
+    scanner="$(printf '%s' "$raw" | jq -r '
+        (.scan_overview // {}) | keys_unsorted | sort | .[0] // ""
+    ')"
+
+    local status critical high medium low unknown end_time
+    if [ -z "$scanner" ]; then
+        status="Not Scanned"
+        end_time="-"
+        critical="-"; high="-"; medium="-"; low="-"; unknown="-"
+    else
+        status="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].scan_status // "-"')"
+        end_time="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '
+            (.scan_overview[$s].end_time // "") | sub("\\..*Z$"; "Z") | sub("T"; " ")
+        ')"
+        [ -z "$end_time" ] && end_time="-"
+        local sev_path
+        sev_path="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '
+            if (.scan_overview[$s].summary.summary // null) != null then "summary.summary"
+            elif (.scan_overview[$s].severity // null) != null then "severity"
+            else "" end
+        ')"
+        if [ "$sev_path" = "summary.summary" ]; then
+            critical="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Critical // 0')"
+            high="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.High // 0')"
+            medium="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Medium // 0')"
+            low="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Low // 0')"
+            unknown="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].summary.summary.Unknown // 0')"
+        elif [ "$sev_path" = "severity" ]; then
+            critical="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Critical // 0')"
+            high="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.High // 0')"
+            medium="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Medium // 0')"
+            low="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Low // 0')"
+            unknown="$(printf '%s' "$raw" | jq -r --arg s "$scanner" '.scan_overview[$s].severity.Unknown // 0')"
+        else
+            critical="-"; high="-"; medium="-"; low="-"; unknown="-"
+        fi
+    fi
+
+    local row
+    row="$(jq -c -n --arg ref "${project}/${repo}:${tag}" \
+        --arg status "$status" --arg end "$end_time" \
+        --arg c "$critical" --arg h "$high" --arg m "$medium" \
+        --arg l "$low" --arg u "$unknown" \
+        '[ {ref:$ref, status:$status, scanned:$end, c:$c, h:$h, m:$m, l:$l, u:$u} ]')"
+
+    printf '%s' "$row" | render_table \
+        'PROJECT/REPO:TAG=.ref' \
+        'STATUS=.status' \
+        'SCANNED=.scanned' \
+        'CRITICAL=.c' \
+        'HIGH=.h' \
+        'MEDIUM=.m' \
+        'LOW=.l' \
+        'UNKNOWN=.u'
+}
+
+case "$SUBCMD" in
+    projects) cmd_projects "${ARGS[@]}";;
+    repos)    cmd_repos    "${ARGS[@]}";;
+    tags)     cmd_tags     "${ARGS[@]}";;
+    scan)     cmd_scan     "${ARGS[@]}";;
+    *)
+        echo "unknown subcommand: $SUBCMD" >&2
+        usage
+        exit 4
+        ;;
+esac
