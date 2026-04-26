@@ -6,11 +6,15 @@
 #
 # Options:
 #   --method <merge|squash|rebase>   Merge strategy (default: merge)
+#   --force                          Skip review gate (merge without APPROVED review)
 #   --keep-branch                    Keep remote head branch after merge
 #   --keep-worktree                  Keep local worktree after merge
 #   --worktree <path>                Explicit worktree path (default: auto-detect)
 #   -r owner/repo                    Override target repo
 #   -u URL                           Override Gitea base URL
+#
+# Review gate: before merging, at least one APPROVED non-dismissed review is required.
+# Use --force to bypass. Gate is skipped when the PR is already merged.
 
 set -eu
 . "$(dirname "$0")/_common.sh"
@@ -18,6 +22,7 @@ require_cmd curl jq git
 
 PR=""
 METHOD="merge"
+FORCE="false"
 KEEP_BRANCH="false"
 KEEP_WORKTREE="false"
 WORKTREE=""
@@ -25,12 +30,13 @@ WORKTREE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --method) METHOD="$2"; shift 2 ;;
+        --force) FORCE="true"; shift ;;
         --keep-branch) KEEP_BRANCH="true"; shift ;;
         --keep-worktree) KEEP_WORKTREE="true"; shift ;;
         --worktree) WORKTREE="$2"; shift 2 ;;
         -r|--repo) GITEA_REPO="$2"; shift 2 ;;
         -u|--url)  GITEA_URL="$2"; shift 2 ;;
-        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
         -*) die "unknown flag: $1" ;;
         *)
             [ -z "$PR" ] || die "unexpected positional: $1"
@@ -53,6 +59,23 @@ head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')"
 html_url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
 
 [ -n "$head_ref" ] || die "PR #$PR not found or missing head.ref"
+
+# Review gate: require >=1 APPROVED non-dismissed review unless already merged or --force.
+if [ "$merged" != "true" ] && [ "$FORCE" != "true" ]; then
+    reviews_json="$(gitea_get "/repos/$GITEA_REPO/pulls/$PR/reviews")"
+    if ! printf '%s' "$reviews_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        err_msg="$(printf '%s' "$reviews_json" | jq -r '.message // empty' 2>/dev/null || true)"
+        die "failed to fetch reviews: ${err_msg:-unexpected response}"
+    fi
+    n_reviews="$(printf '%s' "$reviews_json" | jq 'length')"
+    if [ "$n_reviews" -ge 50 ]; then
+        printf '[gitea-pr-merge] warning: reviews list >= 50; pagination not implemented, gate may misfire\n' >&2
+    fi
+    n_approved="$(printf '%s' "$reviews_json" | jq '[.[] | select(.state=="APPROVED" and .dismissed==false)] | length')"
+    if [ "$n_approved" -lt 1 ]; then
+        die "no APPROVED review on PR #$PR; use --force to override"
+    fi
+fi
 
 if [ "$merged" = "true" ]; then
     printf '[gitea-pr-merge] PR #%s (%s) already merged — skipping merge call\n' "$PR" "$head_ref" >&2
