@@ -106,11 +106,84 @@ cmd_repos() {
             'UPDATED=(.update_time // "" | sub("\\..*Z$"; "Z") | sub("T"; " "))'
 }
 
+cmd_tags() {
+    local arg="${1:-}"
+    local project="" repo=""
+    case "$arg" in
+        */*) project="${arg%%/*}"; repo="${arg#*/}";;
+        "")
+            local detected; detected="$(detect_project)"
+            project="${detected%%/*}"; repo="${detected#*/}"
+            if [ "$project" = "$repo" ] || [ -z "$repo" ]; then
+                echo "tags requires <project>/<repo>; detection only filled <project>" >&2
+                exit 3
+            fi
+            ;;
+        *)
+            local detected; detected="$(detect_project)"
+            project="${detected%%/*}"
+            repo="$arg"
+            ;;
+    esac
+
+    local repo_enc="${repo//\//%2F}"
+    local raw
+    raw="$(harbor_get_paginated \
+        "/api/v2.0/projects/${project}/repositories/${repo_enc}/artifacts" \
+        'with_tag=true&with_scan_overview=false')"
+
+    local exploded
+    exploded="$(printf '%s' "$raw" | jq '
+        [ .[] |
+          ( .tags // [] ) as $tags |
+          if ($tags | length) == 0
+          then { tag: "<none>", digest, size, push_time }
+          else $tags[] as $t | { tag: $t.name, digest, size, push_time }
+          end
+        ]
+    ')"
+
+    local display
+    display="$(printf '%s' "$exploded" | jq '
+        map(. + {
+            digest_short: (.digest | .[0:19]),
+            pushed: ((.push_time // "") | sub("\\..*Z$"; "Z") | sub("T"; " "))
+        })
+    ' | apply_filter '.tag' "$OPT_FILTER" | apply_limit "$OPT_LIMIT")"
+
+    if [ "$OPT_JSON" = "1" ]; then
+        printf '%s' "$display" | render_json
+        return
+    fi
+
+    local with_size
+    with_size="$(printf '%s' "$display" | jq -c '.')"
+    local rows="["; local first=1
+    local n; n="$(printf '%s' "$with_size" | jq 'length')"
+    local i=0
+    while [ "$i" -lt "$n" ]; do
+        local row; row="$(printf '%s' "$with_size" | jq -c ".[$i]")"
+        local sz; sz="$(printf '%s' "$row" | jq -r '.size')"
+        local szs; szs="$(format_size "$sz")"
+        if [ "$first" -eq 1 ]; then first=0; else rows="${rows},"; fi
+        rows="${rows}$(printf '%s' "$row" | jq -c --arg s "$szs" '. + {size_str: $s}')"
+        i=$((i+1))
+    done
+    rows="${rows}]"
+
+    printf '%s' "$rows" | render_table \
+        'TAG=.tag' \
+        'DIGEST=.digest_short' \
+        'PUSHED=.pushed' \
+        'SIZE=.size_str'
+}
+
 case "$SUBCMD" in
     projects) cmd_projects "${ARGS[@]}";;
     repos)    cmd_repos    "${ARGS[@]}";;
-    tags|scan)
-        echo "not implemented yet: $SUBCMD" >&2
+    tags)     cmd_tags     "${ARGS[@]}";;
+    scan)
+        echo "not implemented yet: scan" >&2
         exit 4
         ;;
     *)
