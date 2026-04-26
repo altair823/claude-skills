@@ -200,3 +200,24 @@ harbor_get_paginated() {
     fi
     rm -rf "$pages_dir"
 }
+
+# Convert a shell-style glob to an anchored ERE.
+# Steps: escape regex metas, then substitute (* → .*, ? → .), then anchor.
+glob_to_regex() {
+    local g="$1"
+    g="${g//\\/\\\\}"
+    g="${g//./\\.}"
+    g="${g//+/\\+}"
+    g="${g//(/\\(}"
+    g="${g//)/\\)}"
+    g="${g//[/\\[}"
+    g="${g//]/\\]}"
+    g="${g//\{/\\\{}"
+    g="${g//\}/\\\}}"
+    g="${g//^/\\^}"
+    g="${g//\$/\\\$}"
+    g="${g//|/\\|}"
+    g="${g//\*/.*}"
+    g="${g//\?/.}"
+    printf '^%s$' "$g"
+}
