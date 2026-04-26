@@ -53,7 +53,7 @@ files_err="$(printf '%s' "$files_json" | jq -r '.message // empty' 2>/dev/null |
 diff_body="$(gitea_get "$pr_path.diff")"
 
 if [ "$MODE" = "raw" ]; then
-    printf '%s' "$diff_body"
+    printf '%s\n' "$diff_body"
     exit 0
 fi
 
@@ -99,4 +99,4 @@ printf '%s' "$files_json" | jq -r '
 '
 
 printf '\n--- DIFF ---\n'
-printf '%s' "$diff_body"
+printf '%s\n' "$diff_body"

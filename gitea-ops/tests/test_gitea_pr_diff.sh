@@ -99,4 +99,16 @@ fi
 assert_file_contains "$TEST_TMP/err" "999" "error mentions PR number"
 teardown
 
+# --- /files endpoint returns error JSON → die ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"X","head":{"ref":"h","sha":"a"},"base":{"ref":"main","sha":"b"},"user":{"login":"u"},"state":"open","html_url":""}'
+fixture GET /api/v1/repos/owner/repo/pulls/42/files '{"message":"forbidden"}'
+if "$BIN/gitea-pr-diff" 42 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on files error >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "files" "error mentions files endpoint"
+teardown
+
 echo OK
