@@ -3,5 +3,98 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=_common.sh
 . "$HERE/_common.sh"
-echo "harbor-ls placeholder" >&2
-exit 1
+
+usage() {
+    cat <<USAGE >&2
+Usage: harbor-ls <subcommand> [options] [args]
+
+Subcommands:
+  projects                              List all projects
+  repos    [<project>]                  List repos in a project (auto-detect if omitted)
+  tags     <project>/<repo>             List tags in a repository
+  scan     <project>/<repo>:<tag>       Show scan-overview summary
+
+Common options:
+  --profile <name>      Select profile from config
+  --json                Emit JSON instead of a table
+  --limit <N>           Truncate results client-side
+  --filter <glob>       Glob match on the primary name field
+  --no-detect           Disable manifest-based project detection
+  --debug               Verbose stderr logging
+  -h, --help            Show this message
+USAGE
+}
+
+OPT_PROFILE=""
+OPT_JSON=0
+OPT_LIMIT=""
+OPT_FILTER=""
+OPT_NO_DETECT=0
+POSITIONAL=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile) OPT_PROFILE="$2"; shift 2;;
+        --json) OPT_JSON=1; shift;;
+        --limit) OPT_LIMIT="$2"; shift 2;;
+        --filter) OPT_FILTER="$2"; shift 2;;
+        --no-detect) OPT_NO_DETECT=1; shift;;
+        --debug) export HARBOR_DEBUG=1; shift;;
+        -h|--help) usage; exit 0;;
+        --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done;;
+        -*) echo "unknown flag: $1" >&2; usage; exit 4;;
+        *) POSITIONAL+=("$1"); shift;;
+    esac
+done
+
+if [ "$OPT_NO_DETECT" = "1" ]; then export HARBOR_NO_DETECT=1; fi
+
+if [ "${#POSITIONAL[@]}" -eq 0 ]; then
+    usage; exit 4
+fi
+
+SUBCMD="${POSITIONAL[0]}"
+ARGS=("${POSITIONAL[@]:1}")
+
+if [ -n "$OPT_PROFILE" ]; then
+    load_profile --profile "$OPT_PROFILE"
+else
+    load_profile
+fi
+
+emit() {
+    local data
+    data="$(cat)"
+    if [ "$OPT_JSON" = "1" ]; then
+        printf '%s' "$data" | render_json
+    else
+        printf '%s' "$data" | render_table "$@"
+    fi
+}
+
+cmd_projects() {
+    local raw
+    raw="$(harbor_get_paginated /api/v2.0/projects)"
+    printf '%s' "$raw" \
+        | apply_filter '.name' "$OPT_FILTER" \
+        | apply_limit "$OPT_LIMIT" \
+        | emit \
+            'NAME=.name' \
+            'ID=.project_id' \
+            'PUBLIC=.metadata.public' \
+            'REPO_COUNT=.repo_count' \
+            'CREATED=(.creation_time // "" | sub("\\..*Z$"; "Z") | sub("T"; " "))'
+}
+
+case "$SUBCMD" in
+    projects) cmd_projects "${ARGS[@]}";;
+    repos|tags|scan)
+        echo "not implemented yet: $SUBCMD" >&2
+        exit 4
+        ;;
+    *)
+        echo "unknown subcommand: $SUBCMD" >&2
+        usage
+        exit 4
+        ;;
+esac

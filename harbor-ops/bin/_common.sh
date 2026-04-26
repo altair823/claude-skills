@@ -340,3 +340,20 @@ render_table() {
         printf '%s' "$input" | jq -r ".[] | $row_filter"
     } | column -t -s "$(printf '\t')"
 }
+
+# apply_filter: pipe JSON array through stdin, get filtered array on stdout.
+# Args: <field-jq-expr> <glob>. Empty <glob> = passthrough.
+apply_filter() {
+    local field="$1" glob="$2"
+    if [ -z "$glob" ]; then cat; return; fi
+    local re
+    re="$(glob_to_regex "$glob")"
+    jq --arg re "$re" "map(select((${field}) | tostring | test(\$re)))"
+}
+
+# apply_limit: pipe JSON array, slice to first N. Empty N = passthrough.
+apply_limit() {
+    local n="$1"
+    if [ -z "$n" ]; then cat; return; fi
+    jq --argjson n "$n" '.[:$n]'
+}
