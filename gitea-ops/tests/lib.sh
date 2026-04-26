@@ -52,6 +52,10 @@ setup() {
     export GITEA_TOKEN_FILE="$TEST_TMP/token"
     printf 'fake-token\n' >"$GITEA_TOKEN_FILE"
 
+    # Reviewer token sandbox so real ~/.config/gitea-ops/reviewer-token is untouched.
+    export GITEA_REVIEWER_TOKEN_FILE="$TEST_TMP/reviewer-token"
+    printf 'fake-reviewer-token\n' >"$GITEA_REVIEWER_TOKEN_FILE"
+
     # Default repo coords; tests may override.
     export GITEA_URL="https://gitea.test"
     export GITEA_REPO="owner/repo"
