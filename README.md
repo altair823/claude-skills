@@ -7,6 +7,8 @@ with `SKILL.md` and any helper scripts.
 
 - [gitea-ops](gitea-ops/SKILL.md) — drive Gitea (releases / PRs / issues) via
   REST API from the CLI.
+- [harbor-ops](harbor-ops/SKILL.md) — read-only browse of a private Harbor
+  container registry (projects, repos, tags, scan summary) via REST API.
 
 ## Layout
 
