@@ -71,7 +71,7 @@ if [ "$merged" != "true" ] && [ "$FORCE" != "true" ]; then
     if [ "$n_reviews" -ge 50 ]; then
         printf '[gitea-pr-merge] warning: reviews list >= 50; pagination not implemented, gate may misfire\n' >&2
     fi
-    n_approved="$(printf '%s' "$reviews_json" | jq '[.[] | select(.state=="APPROVED" and .dismissed==false)] | length')"
+    n_approved="$(printf '%s' "$reviews_json" | jq '[.[] | select(.state=="APPROVED" and (.dismissed // false)==false)] | length')"
     if [ "$n_approved" -lt 1 ]; then
         die "no APPROVED review on PR #$PR; use --force to override"
     fi

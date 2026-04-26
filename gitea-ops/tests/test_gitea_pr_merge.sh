@@ -7,6 +7,7 @@ setup
 out="$("$BIN/gitea-pr-merge" --help 2>&1 || true)"
 assert_contains "$out" "Usage:" "--help shows usage"
 assert_contains "$out" "PR#" "--help mentions PR# arg"
+assert_contains "$out" "--force" "--help mentions --force flag"
 teardown
 
 # --- missing PR# fails with clear error ---
@@ -318,6 +319,19 @@ if "$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree 2>"$TEST_TMP/err"; the
     echo "FAIL: expected non-zero (dismissed APPROVED)" >&2; exit 1
 fi
 assert_file_contains "$TEST_TMP/err" "no APPROVED" "dismissed does not count"
+teardown
+
+# --- review gate: APPROVED with no dismissed field counts (legacy Gitea response) ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"number":42,"merged":false,"state":"open","head":{"ref":"feat/topic"},"base":{"ref":"main"}}'
+fixture GET /api/v1/repos/owner/repo/pulls/42/reviews \
+    '[{"id":1,"state":"APPROVED"}]'
+fixture POST /api/v1/repos/owner/repo/pulls/42/merge ''
+
+"$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree >/dev/null 2>&1
+assert_eq "$(call_count)" "3" "approved-without-dismissed-field counts as approved"
 teardown
 
 # --- review gate: --force skips reviews API entirely ---
