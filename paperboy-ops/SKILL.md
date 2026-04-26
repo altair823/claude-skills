@@ -170,14 +170,26 @@ paperboy-spec schema TextPayload     # required: text; optional: align/bold/size
 # 2. Sanity-check the printer.
 paperboy-api GET /readyz             # {ok:true, usb_open:true, online:true, ...}
 
-# 3. Enqueue (auto Idempotency-Key so retries don't double-print).
-#    align=1 → centred. size=[2,2] → double-wide, double-tall (1..=8 per axis;
-#    [1,1] is the printer's default). Cut defaults true.
+# 3. Compose payload (compaction checklist 1–7 already applied).
+TEXT='[영수증]
+커피      4500
+샌드위치  6000
+─────────────
+합계     10500'
+
+# 4. Estimate length. Exit 0 = under threshold → print. Exit 1 = ask user first.
+if echo "$TEXT" | paperboy-estimate --size 1,1 --feed-lines 0; then
+  :  # under threshold; proceed
+else
+  echo "Over threshold — show preview, get user confirmation, then proceed."
+fi
+
+# 5. Enqueue (auto Idempotency-Key so retries don't double-print).
 JOB=$(paperboy-api POST /print/text --idem-auto \
-  --json '{"text":"안녕 paperboy","align":1,"size":[2,2]}' \
+  --json "$(jq -n --arg t "$TEXT" '{text:$t,align:0,size:[1,1],cut:true,feed_lines:0}')" \
   | jq -r .job_id)
 
-# 4. Poll until terminal.
+# 6. Poll until terminal.
 while :; do
   s=$(paperboy-api GET "/jobs/$JOB" --raw | jq -r .status)
   case "$s" in
