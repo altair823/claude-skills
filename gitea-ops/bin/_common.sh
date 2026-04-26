@@ -16,7 +16,7 @@ load_token() {
     if [ -r "$GITEA_TOKEN_FILE" ]; then
         cat "$GITEA_TOKEN_FILE"; return 0
     fi
-    die "no token (set GITEA_TOKEN or write $GITEA_TOKEN_FILE)"
+    die "token 필요 (GITEA_TOKEN env 또는 $GITEA_TOKEN_FILE 파일)"
 }
 
 GITEA_REVIEWER_TOKEN_FILE="${GITEA_REVIEWER_TOKEN_FILE:-$HOME/.config/gitea-ops/reviewer-token}"
@@ -29,7 +29,7 @@ load_reviewer_token() {
     if [ -r "$GITEA_REVIEWER_TOKEN_FILE" ] && [ -s "$GITEA_REVIEWER_TOKEN_FILE" ]; then
         cat "$GITEA_REVIEWER_TOKEN_FILE"; return 0
     fi
-    die "reviewer token required (set GITEA_REVIEWER_TOKEN or write $GITEA_REVIEWER_TOKEN_FILE)"
+    die "reviewer token 필요 (GITEA_REVIEWER_TOKEN env 또는 $GITEA_REVIEWER_TOKEN_FILE 파일)"
 }
 
 # Parse remote URL into "<scheme>://<host>" and "owner/repo".
@@ -68,7 +68,7 @@ parse_remote() {
             path="${path%.git}"
             printf 'https://%s\t%s\n' "$host" "$path"
             ;;
-        *) die "cannot parse remote URL: $url" ;;
+        *) die "remote URL 파싱 실패: $url" ;;
     esac
 }
 
@@ -96,8 +96,8 @@ resolve_remote() {
             fi
         fi
     fi
-    [ -n "${GITEA_URL:-}" ] || die "no GITEA_URL (set --url, GITEA_URL, or config)"
-    [ -n "${GITEA_REPO:-}" ] || die "no GITEA_REPO (set --repo, GITEA_REPO, or config)"
+    [ -n "${GITEA_URL:-}" ] || die "GITEA_URL 미설정 (--url / GITEA_URL env / config 파일 중 하나 필요)"
+    [ -n "${GITEA_REPO:-}" ] || die "GITEA_REPO 미설정 (--repo / GITEA_REPO env / config 파일 중 하나 필요)"
     export GITEA_URL GITEA_REPO
 }
 
@@ -125,7 +125,7 @@ api_json() {
 
 require_cmd() {
     for c in "$@"; do
-        command -v "$c" >/dev/null 2>&1 || die "missing command: $c"
+        command -v "$c" >/dev/null 2>&1 || die "필수 명령 없음: $c"
     done
 }
 
