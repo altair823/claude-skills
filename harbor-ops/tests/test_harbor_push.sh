@@ -11,8 +11,15 @@ stdin_data=""
 if [ ! -t 0 ]; then
     stdin_data="$(cat)"
 fi
-printf 'argv:%s\nstdin:%s\nDOCKER_CONFIG:%s\n---\n' \
-    "$*" "$stdin_data" "${DOCKER_CONFIG:-<unset>}" >>"$log"
+printf 'argv:%s\nstdin:%s\nDOCKER_CONFIG:%s\nDOCKER_HOST:%s\n---\n' \
+    "$*" "$stdin_data" "${DOCKER_CONFIG:-<unset>}" "${DOCKER_HOST:-<unset>}" >>"$log"
+# Special case for `docker context inspect` used by harbor-push to capture
+# the user's active endpoint before isolating DOCKER_CONFIG.
+if [ "$1" = "context" ] && [ "$2" = "inspect" ]; then
+    # Emit the user's pretend rootless endpoint for the inheritance test;
+    # otherwise emit empty (default-host case).
+    printf '%s' "${STUB_DOCKER_CONTEXT_HOST:-}"
+fi
 exit 0
 DOCKER_EOF
     chmod +x "$STUB_DIR/docker"
@@ -76,5 +83,29 @@ write_default_config; install_docker_stub
 ec=0
 harbor-push nginx:1.27 2>/dev/null || ec=$?
 assert_exit_code "$ec" "4" "missing dest exits 4"
+
+# --- DOCKER_HOST in env is propagated into the isolated config (rootless / remote daemon) ---
+teardown; setup; trap teardown EXIT
+write_default_config; install_docker_stub
+export DOCKER_HOST="unix:///run/user/1000/docker.sock"
+harbor-push nginx:1.27 mylib/nginx:v1 >/dev/null 2>&1
+unset DOCKER_HOST
+log="$(cat "$DOCKER_LOG")"
+# Login (the first real docker call after `context inspect`) must see DOCKER_HOST.
+push_host_line="$(awk '/^argv:push/{flag=1} flag && /^DOCKER_HOST:/{print; exit}' "$DOCKER_LOG")"
+assert_contains "$push_host_line" "unix:///run/user/1000/docker.sock" "DOCKER_HOST propagated to docker push"
+
+# --- DOCKER_HOST not set in env: harbor-push should ask context inspect, propagate result ---
+teardown; setup; trap teardown EXIT
+write_default_config; install_docker_stub
+export STUB_DOCKER_CONTEXT_HOST="unix:///some/rootless.sock"
+harbor-push nginx:1.27 mylib/nginx:v1 >/dev/null 2>&1
+unset STUB_DOCKER_CONTEXT_HOST
+log="$(cat "$DOCKER_LOG")"
+# `docker context inspect` must have been called.
+assert_contains "$log" "argv:context inspect" "context inspect invoked"
+# Subsequent docker calls (login/tag/push) inherit DOCKER_HOST from the context.
+push_host_line="$(awk '/^argv:push/{flag=1} flag && /^DOCKER_HOST:/{print; exit}' "$DOCKER_LOG")"
+assert_contains "$push_host_line" "unix:///some/rootless.sock" "DOCKER_HOST propagated from context"
 
 echo "OK test_harbor_push"

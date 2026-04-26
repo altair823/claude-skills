@@ -57,12 +57,24 @@ fi
 host="$(printf '%s' "$HARBOR_URL" | sed -E 's|^https?://([^/]+).*|\1|')"
 target="${host}/${DEST}"
 
+# Capture the active docker context's endpoint BEFORE isolating DOCKER_CONFIG,
+# otherwise the fresh tmp config has no contexts.json and docker falls back to
+# /var/run/docker.sock — which loses rootless / remote daemon configurations.
+USER_DOCKER_HOST="${DOCKER_HOST:-}"
+if [ -z "$USER_DOCKER_HOST" ] && command -v docker >/dev/null 2>&1; then
+    USER_DOCKER_HOST="$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+fi
+
 # Isolated docker config dir so the user's ~/.docker/config.json is never touched.
 TMP_DOCKER_CONFIG="$(mktemp -d)"
 cleanup() { rm -rf "$TMP_DOCKER_CONFIG"; }
 trap cleanup EXIT
 
 export DOCKER_CONFIG="$TMP_DOCKER_CONFIG"
+if [ -n "$USER_DOCKER_HOST" ]; then
+    export DOCKER_HOST="$USER_DOCKER_HOST"
+    log_debug "DOCKER_HOST=$DOCKER_HOST (inherited from active context)"
+fi
 
 log_debug "DOCKER_CONFIG=$DOCKER_CONFIG (isolated)"
 log_debug "docker login $host -u $HARBOR_USER --password-stdin"
