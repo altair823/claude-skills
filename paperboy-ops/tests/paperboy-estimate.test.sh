@@ -29,6 +29,30 @@ test_ascii_single_line() {
   assert_eq "$(jq -r .physical_lines <<<"$out")" "1" "ascii_single_line: physical_lines"
 }
 
+test_ascii_three_lines() {
+  local out rc
+  out=$(printf 'a\nb\nc' | bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "ascii_three_lines: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "3" "ascii_three_lines: physical_lines"
+}
+
+test_empty_input() {
+  local out rc
+  out=$(printf '' | bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "empty_input: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "0" "empty_input: physical_lines"
+}
+
+test_blank_line_counts_as_one() {
+  local out rc
+  out=$(printf 'a\n\nb' | bin/paperboy-estimate)
+  rc=$?
+  assert_eq "$rc" "0" "blank_line_counts_as_one: exit code"
+  assert_eq "$(jq -r .physical_lines <<<"$out")" "3" "blank_line_counts_as_one: physical_lines"
+}
+
 # ---- runner ----
 
 for fn in $(declare -F | awk '$3 ~ /^test_/ {print $3}'); do
