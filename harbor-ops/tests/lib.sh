@@ -88,6 +88,7 @@ method="GET"
 url=""
 write_fmt=""
 dump_headers_to=""
+output_to=""
 auth_header=""
 prev=""
 for a in "$@"; do
@@ -95,6 +96,7 @@ for a in "$@"; do
         -X) method="$a" ;;
         -w) write_fmt="$a" ;;
         -D) dump_headers_to="$a" ;;
+        -o) output_to="$a" ;;
         -H)
             case "$a" in
                 Authorization:*) auth_header="$a" ;;
@@ -130,12 +132,20 @@ if [ -n "$dump_headers_to" ]; then
     printf '\r\n' >>"$dump_headers_to"
 fi
 
-# Body
-if [ -r "$body_file" ]; then
-    cat "$body_file"
+# Body: to -o <file> if given, else to stdout.
+if [ -n "$output_to" ]; then
+    if [ -r "$body_file" ]; then
+        cat "$body_file" >"$output_to"
+    else
+        : >"$output_to"
+    fi
+else
+    if [ -r "$body_file" ]; then
+        cat "$body_file"
+    fi
 fi
 
-# -w '%{http_code}' → append code to stdout after body
+# -w '%{http_code}' → append code to stdout
 if [ "$write_fmt" = "%{http_code}" ]; then
     printf '%s' "$code"
 fi

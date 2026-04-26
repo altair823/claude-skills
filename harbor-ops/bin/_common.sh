@@ -92,3 +92,72 @@ load_profile() {
 
     export HARBOR_URL HARBOR_USER HARBOR_SECRET HARBOR_PROFILE_NAME
 }
+
+# Build the Basic auth header value for the active profile.
+auth_header() {
+    local raw="$HARBOR_USER:$HARBOR_SECRET"
+    if printf '' | base64 -w0 >/dev/null 2>&1; then
+        printf 'Basic %s' "$(printf '%s' "$raw" | base64 -w0)"
+    else
+        printf 'Basic %s' "$(printf '%s' "$raw" | base64 | tr -d '\n')"
+    fi
+}
+
+log_debug() {
+    if [ "${HARBOR_DEBUG:-0}" = "1" ]; then
+        printf '[harbor-ops] %s\n' "$*" >&2
+    fi
+}
+
+# Single GET. $1 = path (with optional ?query). Emits body to stdout.
+# Sets RESPONSE_HEADERS_FILE = path to a tmpfile with response headers.
+# Exits 2 on 401/403, 1 on other 4xx/5xx, 1 on network error.
+harbor_get() {
+    local path="$1"
+    local url="${HARBOR_URL%/}${path}"
+    local hdrs_file body_file code rc
+    hdrs_file="$(mktemp)"
+    body_file="$(mktemp)"
+
+    log_debug "GET $url"
+    set +e
+    code="$(curl -sS -o "$body_file" -D "$hdrs_file" -w '%{http_code}' \
+        -H "Authorization: $(auth_header)" \
+        -H "Accept: application/json" \
+        "$url")"
+    rc=$?
+    set -e
+
+    if [ "$rc" -ne 0 ]; then
+        rm -f "$hdrs_file" "$body_file"
+        echo "network error reaching $url (curl exit $rc)" >&2
+        exit 1
+    fi
+
+    case "$code" in
+        2*)
+            cat "$body_file"
+            export RESPONSE_HEADERS_FILE="$hdrs_file"
+            rm -f "$body_file"
+            return 0
+            ;;
+        401|403)
+            echo "auth failed for profile ${HARBOR_PROFILE_NAME} at ${HARBOR_URL} (HTTP $code); check HARBOR_USER / HARBOR_SECRET" >&2
+            rm -f "$hdrs_file" "$body_file"
+            exit 2
+            ;;
+        404)
+            echo "not found: $path (HTTP 404)" >&2
+            rm -f "$hdrs_file" "$body_file"
+            exit 1
+            ;;
+        *)
+            local snippet
+            snippet="$(head -c 200 "$body_file" 2>/dev/null || true)"
+            echo "API error: HTTP $code at $url" >&2
+            [ -n "$snippet" ] && echo "  body: $snippet" >&2
+            rm -f "$hdrs_file" "$body_file"
+            exit 1
+            ;;
+    esac
+}
