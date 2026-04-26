@@ -1,0 +1,102 @@
+#!/bin/sh
+# Print PR metadata and unified diff for review.
+#
+# Usage:
+#   gitea-pr-diff <PR#> [--raw|--json] [-r owner/repo] [-u URL]
+#
+# Default: human-readable header (PR title, base, head, file list) followed by
+#          unified diff.
+# --raw:   diff body only.
+# --json:  {title, base, head, files:[...], diff:"..."} as a single JSON object.
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq
+
+PR=""
+MODE="meta"   # meta | raw | json
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --raw)
+            [ "$MODE" = "json" ] && die "--raw and --json are mutually exclusive"
+            MODE="raw"; shift ;;
+        --json)
+            [ "$MODE" = "raw" ] && die "--raw and --json are mutually exclusive"
+            MODE="json"; shift ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "unexpected positional: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# required"
+resolve_remote
+
+pr_path="/repos/$GITEA_REPO/pulls/$PR"
+
+pr_json="$(gitea_get "$pr_path")"
+err_msg="$(printf '%s' "$pr_json" | jq -r '.message // empty' 2>/dev/null || true)"
+if [ -n "$err_msg" ]; then
+    die "PR #$PR: $err_msg"
+fi
+title="$(printf '%s' "$pr_json" | jq -r '.title // empty')"
+[ -n "$title" ] || die "PR #$PR not found"
+
+files_json="$(gitea_get "$pr_path/files")"
+files_err="$(printf '%s' "$files_json" | jq -r '.message // empty' 2>/dev/null || true)"
+[ -z "$files_err" ] || die "PR #$PR files: $files_err"
+diff_body="$(gitea_get "$pr_path.diff")"
+
+if [ "$MODE" = "raw" ]; then
+    printf '%s\n' "$diff_body"
+    exit 0
+fi
+
+if [ "$MODE" = "json" ]; then
+    jq -n \
+        --arg title    "$title" \
+        --arg base_ref "$(printf '%s' "$pr_json" | jq -r '.base.ref // ""')" \
+        --arg base_sha "$(printf '%s' "$pr_json" | jq -r '.base.sha // ""')" \
+        --arg head_ref "$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')" \
+        --arg head_sha "$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')" \
+        --argjson files "$(printf '%s' "$files_json" | jq '[.[] | {path:.filename,status:.status,additions:.additions,deletions:.deletions}]')" \
+        --arg diff     "$diff_body" \
+        '{title:$title, base:{ref:$base_ref,sha:$base_sha}, head:{ref:$head_ref,sha:$head_sha}, files:$files, diff:$diff}'
+    exit 0
+fi
+
+# Default mode: human header + diff.
+url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
+state="$(printf '%s' "$pr_json" | jq -r '.state // empty')"
+author="$(printf '%s' "$pr_json" | jq -r '.user.login // empty')"
+base_ref="$(printf '%s' "$pr_json" | jq -r '.base.ref // empty')"
+base_sha="$(printf '%s' "$pr_json" | jq -r '.base.sha[0:7] // empty')"
+head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')"
+head_sha="$(printf '%s' "$pr_json" | jq -r '.head.sha[0:7] // empty')"
+
+n_files="$(printf '%s' "$files_json" | jq 'length')"
+total_add="$(printf '%s' "$files_json" | jq '[.[].additions] | add // 0')"
+total_del="$(printf '%s' "$files_json" | jq '[.[].deletions] | add // 0')"
+
+printf 'PR #%s: %s\n' "$PR" "$title"
+if [ -n "$url" ]; then printf 'URL: %s\n' "$url"; fi
+printf 'Base: %s (%s)\n' "$base_ref" "$base_sha"
+printf 'Head: %s (%s)\n' "$head_ref" "$head_sha"
+printf 'State: %s\n' "$state"
+printf 'Author: %s\n' "$author"
+printf 'Files changed: %s (+%s -%s)\n' "$n_files" "$total_add" "$total_del"
+
+# Per-file lines: status code (M/A/D/...) plus additions/deletions.
+printf '%s' "$files_json" | jq -r '
+    .[] |
+    (.status[0:1] | ascii_upcase) as $s |
+    "  \($s)  \(.filename)  (+\(.additions) -\(.deletions))"
+'
+
+printf '\n--- DIFF ---\n'
+printf '%s\n' "$diff_body"

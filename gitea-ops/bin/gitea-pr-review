@@ -1,0 +1,137 @@
+#!/bin/sh
+# Post a review on a Gitea PR using the reviewer token.
+#
+# Usage:
+#   gitea-pr-review <PR#> --event <APPROVE|REQUEST_CHANGES|COMMENT>
+#                          [--body "..." | --body -]
+#                          [--inline FILE | --inline -]
+#                          [-r owner/repo] [-u URL]
+#
+# At least one of --body or --inline must be supplied (both is fine).
+#
+# Reads reviewer token from $GITEA_REVIEWER_TOKEN or ~/.config/gitea-ops/reviewer-token.
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq
+
+PR=""
+EVENT=""
+BODY=""
+BODY_FROM_STDIN="false"
+INLINE_FILE=""
+INLINE_FROM_STDIN="false"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --event) EVENT="$2"; shift 2 ;;
+        --body)
+            if [ "$2" = "-" ]; then
+                BODY_FROM_STDIN="true"
+            else
+                BODY="$2"
+            fi
+            shift 2 ;;
+        --inline)
+            if [ "$2" = "-" ]; then
+                INLINE_FROM_STDIN="true"
+            else
+                INLINE_FILE="$2"
+            fi
+            shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        -*) die "unknown flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "unexpected positional: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# required"
+[ -n "$EVENT" ] || die "--event required"
+
+case "$EVENT" in
+    APPROVE)         API_EVENT="APPROVED" ;;
+    REQUEST_CHANGES) API_EVENT="REQUEST_CHANGES" ;;
+    COMMENT)         API_EVENT="COMMENT" ;;
+    *) die "invalid --event: $EVENT (use APPROVE|REQUEST_CHANGES|COMMENT)" ;;
+esac
+
+if [ "$BODY_FROM_STDIN" = "true" ] && [ "$INLINE_FROM_STDIN" = "true" ]; then
+    die "--body and --inline cannot both read stdin"
+fi
+
+if [ "$BODY_FROM_STDIN" = "true" ]; then
+    BODY="$(cat)"
+elif [ "$INLINE_FROM_STDIN" = "true" ]; then
+    INLINE_JSON="$(cat)"
+fi
+
+# Reject if neither body nor inline (file or stdin) was supplied — applies to any event.
+if [ -z "$BODY" ] && [ -z "${INLINE_JSON:-}" ] && [ -z "$INLINE_FILE" ]; then
+    die "--body required (or --body -, or --inline)"
+fi
+
+resolve_remote
+TOKEN="$(load_reviewer_token)"
+
+# Resolve inline JSON source.
+if [ -n "$INLINE_FILE" ]; then
+    [ -r "$INLINE_FILE" ] || die "inline file not readable: $INLINE_FILE"
+    INLINE_JSON="$(cat "$INLINE_FILE")"
+fi
+
+if [ -n "${INLINE_JSON:-}" ]; then
+    # Validate: must be array; each element needs path, body, and one of new_position/old_position.
+    if ! printf '%s' "$INLINE_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        die "invalid inline JSON: not an array"
+    fi
+    bad="$(printf '%s' "$INLINE_JSON" | jq -r '
+        [.[] |
+         select((.path|type != "string") or
+                (.body|type != "string") or
+                ((.new_position|type) != "number" and (.old_position|type) != "number"))
+        ] | length' 2>/dev/null || echo 1)"
+    [ "$bad" = "0" ] || die "invalid inline JSON: each item needs path, body, and new_position or old_position"
+fi
+
+# Build POST body (compact JSON so tests can match key:value without spaces).
+if [ -n "${INLINE_JSON:-}" ]; then
+    body_json="$(jq -cn \
+        --arg event "$API_EVENT" \
+        --arg body "$BODY" \
+        --argjson comments "$INLINE_JSON" \
+        '{event:$event, body:$body, comments:$comments}')"
+else
+    body_json="$(jq -cn \
+        --arg event "$API_EVENT" \
+        --arg body "$BODY" \
+        '{event:$event, body:$body}')"
+fi
+
+# POST with reviewer token — uses load_reviewer_token(), not the author's load_token().
+url="$GITEA_URL/api/v1/repos/$GITEA_REPO/pulls/$PR/reviews"
+resp="$(printf '%s' "$body_json" | curl -sS -X POST \
+    -H "Authorization: token $TOKEN" \
+    -H "Content-Type: application/json" \
+    --data @- \
+    "$url")"
+
+err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
+if [ -n "$err_msg" ]; then
+    case "$err_msg" in
+        *"own pull request"*|*"cannot review"*)
+            die "self-review not allowed: $err_msg" ;;
+        *)
+            die "review failed: $err_msg" ;;
+    esac
+fi
+
+review_url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"
+if [ -z "$review_url" ]; then
+    printf '[gitea-pr-review] unexpected response:\n%s\n' "$resp" >&2
+    exit 1
+fi
+printf '%s\n' "$review_url"

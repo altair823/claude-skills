@@ -19,6 +19,19 @@ load_token() {
     die "no token (set GITEA_TOKEN or write $GITEA_TOKEN_FILE)"
 }
 
+GITEA_REVIEWER_TOKEN_FILE="${GITEA_REVIEWER_TOKEN_FILE:-$HOME/.config/gitea-ops/reviewer-token}"
+
+load_reviewer_token() {
+    if [ -n "${GITEA_REVIEWER_TOKEN:-}" ]; then
+        printf '%s' "$GITEA_REVIEWER_TOKEN"; return 0
+    fi
+    # -s rejects empty placeholder files (Setup recommends `touch reviewer-token`).
+    if [ -r "$GITEA_REVIEWER_TOKEN_FILE" ] && [ -s "$GITEA_REVIEWER_TOKEN_FILE" ]; then
+        cat "$GITEA_REVIEWER_TOKEN_FILE"; return 0
+    fi
+    die "reviewer token required (set GITEA_REVIEWER_TOKEN or write $GITEA_REVIEWER_TOKEN_FILE)"
+}
+
 # Parse remote URL into "<scheme>://<host>" and "owner/repo".
 # Accepts https://host/owner/repo(.git) and ssh git@host:owner/repo(.git).
 parse_remote() {
