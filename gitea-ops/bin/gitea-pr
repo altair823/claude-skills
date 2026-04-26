@@ -5,6 +5,7 @@
 #   gitea-pr --title "..." --body "..." --head BRANCH [--base main]
 #            [--draft] [--assignee USER]... [--label LABEL]...
 #            [-r owner/repo] [-u URL]
+
 set -eu
 . "$(dirname "$0")/_common.sh"
 require_cmd curl jq git
