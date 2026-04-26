@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_common.sh
+. "$HERE/_common.sh"
+
+usage() {
+    cat <<USAGE >&2
+Usage: harbor-project <subcommand> [options]
+
+Subcommands:
+  create  <name> [--public] [--yes]   Create a project (default: private)
+  delete  <name> [--yes]              Delete a project (must be empty)
+  set-public <name> <true|false>      Toggle project visibility
+
+Options:
+  --profile <name>                    Select profile from config
+  --yes                               Skip confirmation prompts
+  --debug                             Verbose stderr logging
+USAGE
+}
+
+# Harbor project name rule: 1-63 chars, lowercase letters, digits, ., -, _.
+validate_name() {
+    local n="$1"
+    case "$n" in
+        ""|*[!a-z0-9._-]*)
+            echo "invalid project name '$n'; must be lowercase [a-z0-9._-], 1-63 chars" >&2
+            exit 4
+            ;;
+    esac
+    if [ "${#n}" -gt 63 ]; then
+        echo "invalid project name '$n'; must be lowercase [a-z0-9._-], 1-63 chars" >&2
+        exit 4
+    fi
+}
+
+OPT_PROFILE=""
+OPT_YES=0
+OPT_PUBLIC=0
+POSITIONAL=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile) OPT_PROFILE="$2"; shift 2;;
+        --yes) OPT_YES=1; shift;;
+        --public) OPT_PUBLIC=1; shift;;
+        --debug) export HARBOR_DEBUG=1; shift;;
+        -h|--help) usage; exit 0;;
+        --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done;;
+        -*) echo "unknown flag: $1" >&2; usage; exit 4;;
+        *) POSITIONAL+=("$1"); shift;;
+    esac
+done
+
+if [ "$OPT_YES" = "1" ]; then export HARBOR_YES=1; fi
+
+if [ "${#POSITIONAL[@]}" -eq 0 ]; then
+    usage; exit 4
+fi
+
+SUBCMD="${POSITIONAL[0]}"
+ARGS=("${POSITIONAL[@]:1}")
+
+if [ -n "$OPT_PROFILE" ]; then
+    load_profile --profile "$OPT_PROFILE"
+else
+    load_profile
+fi
+
+cmd_create() {
+    local name="${1:-}"
+    validate_name "$name"
+    local public="false"
+    [ "$OPT_PUBLIC" = "1" ] && public="true"
+    local body
+    body="$(jq -c -n --arg n "$name" --arg p "$public" \
+        '{project_name: $n, metadata: {public: $p}}')"
+    harbor_post /api/v2.0/projects "$body" >/dev/null
+    echo "created project: $name (public=$public)"
+}
+
+cmd_delete() {
+    local name="${1:-}"
+    validate_name "$name"
+    confirm "permanently delete project '$name' on ${HARBOR_URL}?"
+    harbor_delete "/api/v2.0/projects/$name" >/dev/null
+    echo "deleted project: $name"
+}
+
+cmd_set_public() {
+    local name="${1:-}"
+    local val="${2:-}"
+    validate_name "$name"
+    case "$val" in
+        true|false) ;;
+        *) echo "set-public requires 'true' or 'false', got: $val" >&2; exit 4;;
+    esac
+    local body
+    body="$(jq -c -n --arg p "$val" '{metadata: {public: $p}}')"
+    harbor_put "/api/v2.0/projects/$name" "$body" >/dev/null
+    echo "set $name public=$val"
+}
+
+case "$SUBCMD" in
+    create)     cmd_create     "${ARGS[@]}";;
+    delete)     cmd_delete     "${ARGS[@]}";;
+    set-public) cmd_set_public "${ARGS[@]}";;
+    *)
+        echo "unknown subcommand: $SUBCMD" >&2
+        usage
+        exit 4
+        ;;
+esac

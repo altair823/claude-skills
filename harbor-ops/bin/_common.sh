@@ -120,22 +120,36 @@ log_debug() {
     fi
 }
 
-# Single GET. $1 = path (with optional ?query). Emits body to stdout.
-# Sets RESPONSE_HEADERS_FILE = path to a tmpfile with response headers.
-# Exits 2 on 401/403, 1 on other 4xx/5xx, 1 on network error.
-harbor_get() {
-    local path="$1"
+# Internal HTTP request. $1=method, $2=path, $3=optional JSON body (empty for none).
+# Emits body to stdout. Sets RESPONSE_HEADERS_FILE.
+# Exits 2 on 401/403, 1 on other 4xx/5xx and network errors.
+_harbor_request() {
+    local method="$1"
+    local path="$2"
+    local body="${3:-}"
     local url="${HARBOR_URL%/}${path}"
     local hdrs_file body_file code rc
     hdrs_file="$(mktemp)"
     body_file="$(mktemp)"
 
-    log_debug "GET $url"
+    log_debug "$method $url"
+
+    local -a curl_args=(
+        -sS
+        -o "$body_file"
+        -D "$hdrs_file"
+        -w '%{http_code}'
+        -X "$method"
+        -H "Authorization: $(auth_header)"
+        -H "Accept: application/json"
+    )
+    if [ -n "$body" ]; then
+        curl_args+=( -H "Content-Type: application/json" --data-binary "$body" )
+    fi
+    curl_args+=( "$url" )
+
     set +e
-    code="$(curl -sS -o "$body_file" -D "$hdrs_file" -w '%{http_code}' \
-        -H "Authorization: $(auth_header)" \
-        -H "Accept: application/json" \
-        "$url")"
+    code="$(curl "${curl_args[@]}")"
     rc=$?
     set -e
 
@@ -162,6 +176,14 @@ harbor_get() {
             rm -f "$hdrs_file" "$body_file"
             exit 1
             ;;
+        409)
+            local snippet
+            snippet="$(head -c 200 "$body_file" 2>/dev/null || true)"
+            echo "conflict: $method $path (HTTP 409)" >&2
+            [ -n "$snippet" ] && echo "  body: $snippet" >&2
+            rm -f "$hdrs_file" "$body_file"
+            exit 1
+            ;;
         *)
             local snippet
             snippet="$(head -c 200 "$body_file" 2>/dev/null || true)"
@@ -170,6 +192,32 @@ harbor_get() {
             rm -f "$hdrs_file" "$body_file"
             exit 1
             ;;
+    esac
+}
+
+harbor_get()    { _harbor_request GET    "$1"; }
+harbor_post()   { _harbor_request POST   "$1" "${2:-}"; }
+harbor_put()    { _harbor_request PUT    "$1" "${2:-}"; }
+harbor_delete() { _harbor_request DELETE "$1"; }
+
+# Interactive y/N confirm. Args: <prompt>. Honors HARBOR_YES=1 to skip.
+# When stdin is not a tty and HARBOR_YES != 1, refuses with an error (exit 4).
+confirm() {
+    local prompt="$1"
+    if [ "${HARBOR_YES:-0}" = "1" ]; then
+        log_debug "confirm bypassed (--yes)"
+        return 0
+    fi
+    if [ ! -t 0 ]; then
+        echo "refusing without --yes (stdin is not a tty): $prompt" >&2
+        exit 4
+    fi
+    local ans
+    printf '%s [y/N] ' "$prompt" >&2
+    read -r ans
+    case "$ans" in
+        y|Y|yes|YES) return 0 ;;
+        *) echo "aborted" >&2; exit 1 ;;
     esac
 }
 

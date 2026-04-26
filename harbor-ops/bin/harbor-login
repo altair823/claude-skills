@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_common.sh
+. "$HERE/_common.sh"
+
+usage() {
+    cat <<USAGE >&2
+Usage: harbor-login [--profile <name>]
+
+Run 'docker login' against the Harbor host of the active profile, using the
+stored credentials. The session persists in ~/.docker/config.json until you
+'docker logout <host>'.
+USAGE
+}
+
+OPT_PROFILE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile) OPT_PROFILE="$2"; shift 2;;
+        --debug) export HARBOR_DEBUG=1; shift;;
+        -h|--help) usage; exit 0;;
+        *) echo "unknown arg: $1" >&2; usage; exit 4;;
+    esac
+done
+
+if [ -n "$OPT_PROFILE" ]; then
+    load_profile --profile "$OPT_PROFILE"
+else
+    load_profile
+fi
+
+host="$(printf '%s' "$HARBOR_URL" | sed -E 's|^https?://([^/]+).*|\1|')"
+log_debug "docker login $host -u $HARBOR_USER --password-stdin"
+
+printf '%s' "$HARBOR_SECRET" | docker login "$host" -u "$HARBOR_USER" --password-stdin

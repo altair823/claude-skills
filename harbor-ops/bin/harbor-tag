@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_common.sh
+. "$HERE/_common.sh"
+
+usage() {
+    cat <<USAGE >&2
+Usage: harbor-tag <subcommand> [options]
+
+Subcommands:
+  delete <project>/<repo>:<tag> [--yes]
+      Remove a tag from an artifact. The artifact itself is not deleted;
+      only the tag pointer is removed.
+  copy <src-project>/<src-repo>:<src-tag> <dst-project>/<dst-repo>:<dst-tag>
+      Promote an artifact across projects/repos by referencing the source
+      tag (Harbor's POST /artifacts?from=...). The destination repo must
+      exist; image promotion is API-only (no blob re-upload).
+
+Options:
+  --profile <name>      Select profile from config
+  --yes                 Skip confirmation prompts (delete only)
+  --debug               Verbose stderr logging
+USAGE
+}
+
+OPT_PROFILE=""
+OPT_YES=0
+POSITIONAL=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile) OPT_PROFILE="$2"; shift 2;;
+        --yes) OPT_YES=1; shift;;
+        --debug) export HARBOR_DEBUG=1; shift;;
+        -h|--help) usage; exit 0;;
+        --) shift; while [ $# -gt 0 ]; do POSITIONAL+=("$1"); shift; done;;
+        -*) echo "unknown flag: $1" >&2; usage; exit 4;;
+        *) POSITIONAL+=("$1"); shift;;
+    esac
+done
+
+if [ "$OPT_YES" = "1" ]; then export HARBOR_YES=1; fi
+
+if [ "${#POSITIONAL[@]}" -eq 0 ]; then
+    usage; exit 4
+fi
+
+SUBCMD="${POSITIONAL[0]}"
+ARGS=("${POSITIONAL[@]:1}")
+
+if [ -n "$OPT_PROFILE" ]; then
+    load_profile --profile "$OPT_PROFILE"
+else
+    load_profile
+fi
+
+# parse_ref REF -> sets $proj $repo $tag (tag may be empty if not present)
+parse_ref() {
+    local ref="$1"
+    case "$ref" in
+        */*:*)
+            proj="${ref%%/*}"
+            local rest="${ref#*/}"
+            repo="${rest%:*}"
+            tag="${rest##*:}"
+            ;;
+        */*)
+            proj="${ref%%/*}"
+            repo="${ref#*/}"
+            tag=""
+            ;;
+        *)
+            proj=""; repo=""; tag=""
+            ;;
+    esac
+}
+
+cmd_delete() {
+    local ref="${1:-}"
+    local proj repo tag
+    parse_ref "$ref"
+    if [ -z "$proj" ] || [ -z "$repo" ] || [ -z "$tag" ]; then
+        echo "delete requires <project>/<repo>:<tag>, got: $ref" >&2
+        exit 4
+    fi
+    confirm "delete tag '$tag' from ${proj}/${repo} on ${HARBOR_URL}?"
+    local repo_enc="${repo//\//%2F}"
+    harbor_delete "/api/v2.0/projects/${proj}/repositories/${repo_enc}/artifacts/${tag}/tags/${tag}" >/dev/null
+    echo "deleted tag: ${proj}/${repo}:${tag}"
+}
+
+# URL-encode a single ref segment (slashes and colons → %2F, %3A).
+_url_encode() {
+    local s="$1"
+    s="${s//\//%2F}"
+    s="${s//:/%3A}"
+    printf '%s' "$s"
+}
+
+cmd_copy() {
+    local src="${1:-}"
+    local dst="${2:-}"
+    local sproj srepo stag dproj drepo dtag
+    parse_ref "$src"; sproj="$proj"; srepo="$repo"; stag="$tag"
+    parse_ref "$dst"; dproj="$proj"; drepo="$repo"; dtag="$tag"
+    if [ -z "$sproj" ] || [ -z "$srepo" ] || [ -z "$stag" ] \
+        || [ -z "$dproj" ] || [ -z "$drepo" ] || [ -z "$dtag" ]; then
+        echo "copy requires <src-project>/<src-repo>:<src-tag> <dst-project>/<dst-repo>:<dst-tag>" >&2
+        exit 4
+    fi
+    local from_enc dst_repo_enc
+    from_enc="$(_url_encode "${sproj}/${srepo}:${stag}")"
+    dst_repo_enc="${drepo//\//%2F}"
+    # Harbor copy API: POST /projects/{dst}/repositories/{dst-repo}/artifacts?from=<src>
+    # The dst-tag is established by the source's tag; if dst-tag differs we must
+    # tag explicitly afterward. Harbor's POST artifacts with from= preserves
+    # source tags. To force a specific dst-tag, follow up with POST tags.
+    harbor_post \
+        "/api/v2.0/projects/${dproj}/repositories/${dst_repo_enc}/artifacts?from=${from_enc}" \
+        '' >/dev/null
+    if [ "$stag" != "$dtag" ]; then
+        local body
+        body="$(jq -c -n --arg t "$dtag" '{name: $t}')"
+        harbor_post \
+            "/api/v2.0/projects/${dproj}/repositories/${dst_repo_enc}/artifacts/${stag}/tags" \
+            "$body" >/dev/null
+    fi
+    echo "copied: ${sproj}/${srepo}:${stag} → ${dproj}/${drepo}:${dtag}"
+}
+
+case "$SUBCMD" in
+    delete) cmd_delete "${ARGS[@]}";;
+    copy)   cmd_copy   "${ARGS[@]}";;
+    *)
+        echo "unknown subcommand: $SUBCMD" >&2
+        usage
+        exit 4
+        ;;
+esac

@@ -90,6 +90,7 @@ write_fmt=""
 dump_headers_to=""
 output_to=""
 auth_header=""
+body=""
 prev=""
 for a in "$@"; do
     case "$prev" in
@@ -97,6 +98,7 @@ for a in "$@"; do
         -w) write_fmt="$a" ;;
         -D) dump_headers_to="$a" ;;
         -o) output_to="$a" ;;
+        --data-binary|-d|--data) body="$a" ;;
         -H)
             case "$a" in
                 Authorization:*) auth_header="$a" ;;
@@ -109,8 +111,11 @@ for a in "$@"; do
     prev="$a"
 done
 
-# Log: METHOD\tURL\tAUTH-HEADER
-printf '%s\t%s\t%s\n' "$method" "$url" "$auth_header" >>"$log"
+# Escape newlines/tabs in body for single-line log entry.
+body_log="$(printf '%s' "$body" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {printf "%s", $0}' | sed 's/\t/\\t/g')"
+
+# Log: METHOD\tURL\tAUTH-HEADER\tBODY
+printf '%s\t%s\t%s\t%s\n' "$method" "$url" "$auth_header" "$body_log" >>"$log"
 
 # Fixture key: METHOD + path + query (as-is, with chars normalized)
 path_q="$(printf '%s' "$url" | sed -e 's|^https\?://[^/]*||')"
