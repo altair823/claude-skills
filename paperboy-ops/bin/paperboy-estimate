@@ -38,6 +38,13 @@ if (( SIZE_H < 1 )); then SIZE_H=1; fi
 
 input=$(cat)
 
+if (( CHECK_CHARSET == 1 )); then
+  if ! conv_err=$(printf '%s' "$input" | iconv -f UTF-8 -t EUC-KR -o /dev/null 2>&1); then
+    printf 'paperboy-estimate: EUC-KR charset check failed:\n%s\n' "$conv_err" >&2
+    exit 2
+  fi
+fi
+
 # EUC-KR byte width + 42-col wrap
 if [[ -z "$input" ]]; then
   physical=0

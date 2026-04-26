@@ -137,6 +137,36 @@ test_env_threshold_default() {
   assert_eq "$(jq -r .threshold <<<"$out")" "25" "env_threshold_default: threshold from env"
 }
 
+test_charset_check_passes_ascii() {
+  local out rc
+  out=$(printf 'hello' | bin/paperboy-estimate --check-charset)
+  rc=$?
+  assert_eq "$rc" "0" "charset_check_passes_ascii: exit code"
+}
+
+test_charset_check_passes_hangul() {
+  local out rc
+  out=$(printf '안녕' | bin/paperboy-estimate --check-charset)
+  rc=$?
+  assert_eq "$rc" "0" "charset_check_passes_hangul: exit code"
+}
+
+test_charset_check_fails_emoji() {
+  local out rc err
+  err=$(mktemp)
+  out=$(printf '🎨 hello' | bin/paperboy-estimate --check-charset 2>"$err")
+  rc=$?
+  local err_content
+  err_content=$(cat "$err")
+  rm -f "$err"
+  assert_eq "$rc" "2" "charset_check_fails_emoji: exit code"
+  if [[ -n "$err_content" ]]; then
+    assert_eq "ok" "ok" "charset_check_fails_emoji: stderr non-empty"
+  else
+    assert_eq "non-empty" "empty" "charset_check_fails_emoji: stderr non-empty"
+  fi
+}
+
 # ---- runner ----
 
 for fn in $(declare -F | awk '$3 ~ /^test_/ {print $3}'); do
