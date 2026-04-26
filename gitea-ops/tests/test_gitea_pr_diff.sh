@@ -58,4 +58,45 @@ assert_contains "$out" "--- DIFF ---" "diff section header"
 assert_contains "$out" "+new" "diff body included"
 teardown
 
+# --- --raw: diff body only, no header ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"X","head":{"ref":"h","sha":"a"},"base":{"ref":"main","sha":"b"},"user":{"login":"u"},"state":"open","html_url":""}'
+fixture GET /api/v1/repos/owner/repo/pulls/42/files '[]'
+fixture GET /api/v1/repos/owner/repo/pulls/42.diff 'DIFF_BODY_42'
+
+out="$("$BIN/gitea-pr-diff" 42 --raw 2>&1)"
+assert_contains "$out" "DIFF_BODY_42" "raw includes diff"
+case "$out" in *"PR #42:"*) echo FAIL: header leaked into raw >&2; exit 1 ;; esac
+teardown
+
+# --- --json: parseable JSON object ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"My PR","head":{"ref":"feat","sha":"abc"},"base":{"ref":"main","sha":"def"},"user":{"login":"u"},"state":"open"}'
+fixture GET /api/v1/repos/owner/repo/pulls/42/files \
+    '[{"filename":"f.go","status":"modified","additions":5,"deletions":2}]'
+fixture GET /api/v1/repos/owner/repo/pulls/42.diff 'D'
+
+out="$("$BIN/gitea-pr-diff" 42 --json 2>&1)"
+title="$(printf '%s' "$out" | jq -r '.title')"
+assert_eq "$title" "My PR" "json has title"
+fpath="$(printf '%s' "$out" | jq -r '.files[0].path')"
+assert_eq "$fpath" "f.go" "json files[0].path"
+diff_field="$(printf '%s' "$out" | jq -r '.diff')"
+assert_eq "$diff_field" "D" "json diff field"
+teardown
+
+# --- 404: PR not found → die ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/999 '{"message":"Not found"}'
+if "$BIN/gitea-pr-diff" 999 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on 404 >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "999" "error mentions PR number"
+teardown
+
 echo OK
