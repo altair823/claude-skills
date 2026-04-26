@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_common.sh
+. "$HERE/_common.sh"
+echo "harbor-ls placeholder" >&2
+exit 1
