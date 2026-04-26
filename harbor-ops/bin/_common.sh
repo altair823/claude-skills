@@ -161,3 +161,42 @@ harbor_get() {
             ;;
     esac
 }
+
+HARBOR_MAX_PAGES="${HARBOR_MAX_PAGES:-200}"
+HARBOR_PAGE_SIZE="${HARBOR_PAGE_SIZE:-100}"
+
+# Paginated GET. $1 = path (no query). $2 = optional extra-query string.
+# Emits a single concatenated JSON array on stdout.
+harbor_get_paginated() {
+    local base_path="$1"
+    local extra="${2:-}"
+    local page=1
+    local pages_dir
+    pages_dir="$(mktemp -d)"
+
+    while [ "$page" -le "$HARBOR_MAX_PAGES" ]; do
+        local q="page=${page}&page_size=${HARBOR_PAGE_SIZE}"
+        [ -n "$extra" ] && q="${extra}&${q}"
+        # Redirect to file (no command substitution) so harbor_get's
+        # exported RESPONSE_HEADERS_FILE survives for the rel="next" check.
+        harbor_get "${base_path}?${q}" >"$pages_dir/page-$(printf '%04d' "$page").json"
+
+        if [ -n "${RESPONSE_HEADERS_FILE:-}" ] && [ -r "$RESPONSE_HEADERS_FILE" ] && \
+           grep -qiE '^Link:.*rel="next"' "$RESPONSE_HEADERS_FILE"; then
+            page=$((page + 1))
+            continue
+        fi
+        break
+    done
+
+    if [ "$page" -gt "$HARBOR_MAX_PAGES" ]; then
+        echo "warning: pagination truncated at MAX_PAGES=$HARBOR_MAX_PAGES; results may be partial" >&2
+    fi
+
+    if ls "$pages_dir"/*.json >/dev/null 2>&1; then
+        jq -s 'add // []' "$pages_dir"/*.json
+    else
+        printf '[]'
+    fi
+    rm -rf "$pages_dir"
+}
