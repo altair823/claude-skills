@@ -89,7 +89,8 @@ cat >"$TEST_TMP/inline.json" <<'EOF'
 [{"path":"a.go","new_position":12,"body":"nit"},{"path":"b.sh","old_position":3,"body":"oops"}]
 EOF
 
-"$BIN/gitea-pr-review" 42 --event REQUEST_CHANGES --body "issues" --inline "$TEST_TMP/inline.json" >/dev/null 2>&1
+out="$("$BIN/gitea-pr-review" 42 --event REQUEST_CHANGES --body "issues" --inline "$TEST_TMP/inline.json" 2>&1)"
+assert_contains "$out" "u" "review URL printed (matches fixture html_url)"
 body="$(nth_call 1 | cut -f3)"
 assert_contains "$body" '"event":"REQUEST_CHANGES"' "event mapped"
 assert_contains "$body" '"comments"' "comments array present"
@@ -102,7 +103,8 @@ teardown
 setup
 install_curl_stub
 fixture POST /api/v1/repos/owner/repo/pulls/42/reviews '{"id":9,"html_url":"u"}'
-echo "from stdin" | "$BIN/gitea-pr-review" 42 --event COMMENT --body - >/dev/null 2>&1
+out="$(echo "from stdin" | "$BIN/gitea-pr-review" 42 --event COMMENT --body - 2>&1)"
+assert_contains "$out" "u" "review URL printed (matches fixture html_url)"
 body="$(nth_call 1 | cut -f3)"
 assert_contains "$body" '"event":"COMMENT"' "event mapped"
 assert_contains "$body" "from stdin" "body from stdin propagated"

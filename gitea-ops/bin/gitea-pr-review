@@ -109,7 +109,7 @@ else
         '{event:$event, body:$body}')"
 fi
 
-# POST with reviewer token (override Authorization header in api_json equivalent).
+# POST with reviewer token — uses load_reviewer_token(), not the author's load_token().
 url="$GITEA_URL/api/v1/repos/$GITEA_REPO/pulls/$PR/reviews"
 resp="$(printf '%s' "$body_json" | curl -sS -X POST \
     -H "Authorization: token $TOKEN" \
