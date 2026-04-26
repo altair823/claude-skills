@@ -77,4 +77,26 @@ CFG
 out="$(run_in_subshell '' "load_profile --profile prod; echo \$HARBOR_SECRET")"
 assert_eq "$out" "from-file" "SECRET_FILE read"
 
+# --- subtest: unquoted $ in value emits clear hint, exits 2 ---
+teardown; setup; trap teardown EXIT
+cat >"$HOME/.config/harbor-ops/config" <<'CFG'
+prod_HARBOR_URL=https://prod.test
+prod_HARBOR_USER=robot$myrobot
+prod_HARBOR_SECRET=secret-1
+CFG
+ec=0
+err="$(run_in_subshell '' "load_profile --profile prod" 2>&1 >/dev/null)" || ec=$?
+assert_exit_code "$ec" "2" "unquoted \$ exits 2"
+assert_contains "$err" "single-quoted" "hint mentions single-quoting"
+
+# --- subtest: properly single-quoted value with $ works ---
+teardown; setup; trap teardown EXIT
+cat >"$HOME/.config/harbor-ops/config" <<'CFG'
+prod_HARBOR_URL=https://prod.test
+prod_HARBOR_USER='robot$myrobot'
+prod_HARBOR_SECRET='abc$xyz'
+CFG
+out="$(run_in_subshell '' "load_profile --profile prod; echo \$HARBOR_USER \$HARBOR_SECRET")"
+assert_eq "$out" 'robot$myrobot abc$xyz' "single-quoted \$ values preserved"
+
 echo "OK test_config_profile"

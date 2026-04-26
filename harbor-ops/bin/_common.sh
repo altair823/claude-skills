@@ -23,6 +23,17 @@ load_profile() {
         fi
     fi
 
+    # Source the config. Robot account names / secrets may contain '$'
+    # (e.g. robot$name) — those values must be single-quoted in the config,
+    # otherwise bash treats $name as a parameter expansion and either errors
+    # under `set -u` or silently produces the wrong credential. Trap that
+    # failure to emit a clearer hint than the raw "unbound variable" message.
+    if ! ( set -e; . "$cfg" ) >/dev/null 2>&1; then
+        echo "failed to source $cfg" >&2
+        echo "  Hint: values containing '\$' (e.g. robot account names like robot\$myrobot)" >&2
+        echo "        must be single-quoted, e.g. prod_HARBOR_USER='robot\$myrobot'" >&2
+        exit 2
+    fi
     # shellcheck disable=SC1090
     . "$cfg"
 
