@@ -18,6 +18,21 @@ Invoke when the user wants any of:
 
 Do NOT use for GitHub/GitLab — different API shape.
 
+## Workflow
+
+```sh
+# 1. Author creates PR
+gitea-pr --title "Add widget" --head feat/widget
+
+# 2. Reviewer (separate Claude session, reviewer-token):
+gitea-pr-diff 42                    # dump meta+diff for analysis
+gitea-pr-review 42 --event APPROVE \
+    --body "Approved. Logic sound."
+
+# 3. Author merges (gate auto-checks for APPROVED review):
+gitea-pr-merge 42                   # passes gate, merges, cleans up
+```
+
 ## Setup
 
 1. Personal Access Token: generate at `https://<host>/user/settings/applications`
@@ -29,6 +44,17 @@ Do NOT use for GitHub/GitLab — different API shape.
    GITEA_REPO=owner/repo
    ```
    When `origin` remote matches the Gitea URL these are auto-derived.
+4. **Reviewer token** (separate Gitea account, repo write scope): generate at
+   `https://<host>/user/settings/applications` while logged in as the reviewer
+   account. Store at `~/.config/gitea-ops/reviewer-token` (mode 0600) **or**
+   `GITEA_REVIEWER_TOKEN` env. Required only by `gitea-pr-review`. Run once
+   to create an empty placeholder:
+   ```sh
+   mkdir -p ~/.config/gitea-ops
+   touch ~/.config/gitea-ops/reviewer-token
+   chmod 600 ~/.config/gitea-ops/reviewer-token
+   ```
+   Then paste the token into the file.
 
 ## Scripts
 
@@ -69,6 +95,50 @@ gitea-pr --title "..." --body "..." --head BRANCH [--base main]
 
 Pushes `--head` if it exists locally but not on remote, then opens the PR.
 
+### `gitea-pr-diff`
+
+```
+gitea-pr-diff <PR#> [--raw|--json] [-r owner/repo] [-u URL]
+```
+
+PR meta + unified diff을 stdout에 출력. 기본은 사람-친화 헤더 (title/base/head/files-changed) + diff. `--raw`는 diff body만, `--json`은 단일 JSON 객체.
+
+Claude가 review 분석 input으로 사용:
+
+```sh
+gitea-pr-diff 42 > /tmp/pr-42.txt   # 분석용 dump
+```
+
+### `gitea-pr-review`
+
+```
+gitea-pr-review <PR#> --event <APPROVE|REQUEST_CHANGES|COMMENT>
+                      --body "..." | --body -
+                      [--inline FILE | --inline -]
+                      [-r owner/repo] [-u URL]
+```
+
+reviewer token (separate from main token) 강제. Body는 `--body -`로 stdin에서, inline comments는 JSON file 또는 `--inline -` stdin.
+
+Inline JSON schema (배열):
+```json
+[{"path":"file.go","new_position":42,"body":"..."},
+ {"path":"old.sh","old_position":10,"body":"..."}]
+```
+각 항목은 `path`, `body`, `new_position` 또는 `old_position` 필수.
+
+예시:
+```sh
+gitea-pr-review 42 --event APPROVE --body "Approved. Logic sound."
+gitea-pr-review 42 --event REQUEST_CHANGES \
+    --body "$(cat <<'EOF'
+Several inline issues — see below.
+EOF
+)" --inline /tmp/review-42.json
+```
+
+422 self-review 응답은 명확한 메시지로 안내. PR author와 reviewer-token 계정이 같으면 발생.
+
 ### `gitea-pr-merge`
 
 ```
@@ -76,12 +146,15 @@ gitea-pr-merge <PR#> [options]
 
 Options:
   --method <merge|squash|rebase>   Merge strategy (default: merge)
+  --force                          Skip review gate
   --keep-branch                    Keep remote head branch after merge
   --keep-worktree                  Keep local worktree after merge
   --worktree <path>                Explicit worktree path (default: cwd)
   -r owner/repo                    Override target repo
   -u URL                           Override Gitea base URL
 ```
+
+**Review gate**: 머지 호출 직전 `GET /pulls/<n>/reviews`로 APPROVED & non-dismissed 리뷰가 1+개 있는지 확인. 없으면 거부, `--force`로 우회. PR이 이미 머지된 상태면 gate 자체를 스킵.
 
 기본 동작 (한 번에 끝내기):
 1. `GET /pulls/<n>`로 PR 메타 조회 (이미 머지면 머지 호출 스킵)
