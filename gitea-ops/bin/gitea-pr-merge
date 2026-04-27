@@ -108,14 +108,14 @@ if [ "$KEEP_BRANCH" != "true" ]; then
             printf '[gitea-pr-merge] 원격 branch 삭제: %s\n' "$head_ref" >&2
         fi
     else
-        printf '[gitea-pr-merge] git work tree 아님 — branch 삭제 스킵\n' >&2
+        printf '[gitea-pr-merge] git worktree 아님 — branch 삭제 스킵\n' >&2
     fi
 fi
 
 # 4. Worktree cleanup unless suppressed.
 if [ "$KEEP_WORKTREE" != "true" ]; then
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        printf '[gitea-pr-merge] git work tree 아님 — worktree 정리 스킵\n' >&2
+        printf '[gitea-pr-merge] git worktree 아님 — worktree 정리 스킵\n' >&2
         exit 0
     fi
 

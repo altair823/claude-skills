@@ -147,13 +147,13 @@ EOF
 gitea-pr-merge <PR#> [options]
 
 Options:
-  --method <merge|squash|rebase>   Merge strategy (default: merge)
-  --force                          Skip review gate
-  --keep-branch                    Keep remote head branch after merge
-  --keep-worktree                  Keep local worktree after merge
-  --worktree <path>                Explicit worktree path (default: cwd)
-  -r owner/repo                    Override target repo
-  -u URL                           Override Gitea base URL
+  --method <merge|squash|rebase>   merge 방식 (기본: merge)
+  --force                          review gate 우회
+  --keep-branch                    원격 head branch 보존
+  --keep-worktree                  로컬 worktree 보존
+  --worktree <path>                명시적 worktree 경로 (기본: cwd)
+  -r owner/repo                    repo 오버라이드
+  -u URL                           Gitea base URL 오버라이드
 ```
 
 **Review gate**: 머지 호출 직전 `GET /pulls/<n>/reviews`로 APPROVED & non-dismissed 리뷰가 1+개 있는지 확인. 없으면 거부, `--force`로 우회. PR이 이미 머지된 상태면 gate 자체를 스킵.
