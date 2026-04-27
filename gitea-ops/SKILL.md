@@ -210,5 +210,9 @@ Claude가 본 skill을 통해 PR/release/issue/review를 작성할 때 따르는
 - **체크리스트 / 표 헤더**: 한국어.
 - **Code block / API 응답 예시 / shell 명령**: 영문 그대로.
 - **Co-Authored-By trailer**: 영문 자동.
+- **PR review (`gitea-pr-review`)**: summary body는 짧게 (방향성/총평), 구체적 지적은 inline comment로. 적극적으로 달 것.
+  - **문제 (`new_position`/`old_position` 지적)**: bug, 의도 불명확, edge case 누락, 보안/성능 우려, 명명 개선 등.
+  - **칭찬**: 좋은 결정, 깔끔한 추상화, 영리한 jq filter, test 커버리지 같은 의도적 잘한 부분도 inline으로 코멘트. 무미건조한 review가 아니라 진짜 읽고 있다는 신호.
+  - 기본 3–10개. 문제가 많은 PR이면 더 많아도 OK. 0개는 review를 안 한 것 같음.
 
 이 규칙은 Claude가 본 repo 또는 Gitea remote에 PR을 만들거나 review를 등록할 때 적용. 사용자가 "영어로", "english" 등을 명시하면 우회.
