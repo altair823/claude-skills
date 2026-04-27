@@ -1,5 +1,5 @@
 #!/bin/sh
-# Post a review on a Gitea PR using the reviewer token.
+# Gitea PR에 reviewer token으로 review를 등록한다.
 #
 # Usage:
 #   gitea-pr-review <PR#> --event <APPROVE|REQUEST_CHANGES|COMMENT>
@@ -7,9 +7,9 @@
 #                          [--inline FILE | --inline -]
 #                          [-r owner/repo] [-u URL]
 #
-# At least one of --body or --inline must be supplied (both is fine).
+# --body 또는 --inline 중 하나 이상 필요 (둘 다 가능).
 #
-# Reads reviewer token from $GITEA_REVIEWER_TOKEN or ~/.config/gitea-ops/reviewer-token.
+# Reviewer token은 $GITEA_REVIEWER_TOKEN env 또는 ~/.config/gitea-ops/reviewer-token 파일에서 로드.
 
 set -eu
 . "$(dirname "$0")/_common.sh"
@@ -42,25 +42,25 @@ while [ $# -gt 0 ]; do
         -r|--repo) GITEA_REPO="$2"; shift 2 ;;
         -u|--url)  GITEA_URL="$2"; shift 2 ;;
         -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
-        -*) die "unknown flag: $1" ;;
+        -*) die "알 수 없는 flag: $1" ;;
         *)
-            [ -z "$PR" ] || die "unexpected positional: $1"
+            [ -z "$PR" ] || die "예기치 않은 인자: $1"
             PR="$1"; shift ;;
     esac
 done
 
-[ -n "$PR" ] || die "PR# required"
-[ -n "$EVENT" ] || die "--event required"
+[ -n "$PR" ] || die "PR# 인자 필요"
+[ -n "$EVENT" ] || die "--event 인자 필요"
 
 case "$EVENT" in
     APPROVE)         API_EVENT="APPROVED" ;;
     REQUEST_CHANGES) API_EVENT="REQUEST_CHANGES" ;;
     COMMENT)         API_EVENT="COMMENT" ;;
-    *) die "invalid --event: $EVENT (use APPROVE|REQUEST_CHANGES|COMMENT)" ;;
+    *) die "--event 값 오류: $EVENT (APPROVE|REQUEST_CHANGES|COMMENT 중 선택)" ;;
 esac
 
 if [ "$BODY_FROM_STDIN" = "true" ] && [ "$INLINE_FROM_STDIN" = "true" ]; then
-    die "--body and --inline cannot both read stdin"
+    die "--body와 --inline 둘 다 stdin 사용 불가"
 fi
 
 if [ "$BODY_FROM_STDIN" = "true" ]; then
@@ -71,7 +71,7 @@ fi
 
 # Reject if neither body nor inline (file or stdin) was supplied — applies to any event.
 if [ -z "$BODY" ] && [ -z "${INLINE_JSON:-}" ] && [ -z "$INLINE_FILE" ]; then
-    die "--body required (or --body -, or --inline)"
+    die "--body 또는 --inline 중 하나 이상 필요"
 fi
 
 resolve_remote
@@ -79,14 +79,14 @@ TOKEN="$(load_reviewer_token)"
 
 # Resolve inline JSON source.
 if [ -n "$INLINE_FILE" ]; then
-    [ -r "$INLINE_FILE" ] || die "inline file not readable: $INLINE_FILE"
+    [ -r "$INLINE_FILE" ] || die "inline 파일 읽을 수 없음: $INLINE_FILE"
     INLINE_JSON="$(cat "$INLINE_FILE")"
 fi
 
 if [ -n "${INLINE_JSON:-}" ]; then
     # Validate: must be array; each element needs path, body, and one of new_position/old_position.
     if ! printf '%s' "$INLINE_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
-        die "invalid inline JSON: not an array"
+        die "inline JSON 오류: 배열 아님"
     fi
     bad="$(printf '%s' "$INLINE_JSON" | jq -r '
         [.[] |
@@ -94,7 +94,7 @@ if [ -n "${INLINE_JSON:-}" ]; then
                 (.body|type != "string") or
                 ((.new_position|type) != "number" and (.old_position|type) != "number"))
         ] | length' 2>/dev/null || echo 1)"
-    [ "$bad" = "0" ] || die "invalid inline JSON: each item needs path, body, and new_position or old_position"
+    [ "$bad" = "0" ] || die "inline JSON 오류: 각 항목에 path/body/new_position 또는 old_position 필요"
 fi
 
 # Build POST body (compact JSON so tests can match key:value without spaces).
@@ -123,15 +123,15 @@ err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
 if [ -n "$err_msg" ]; then
     case "$err_msg" in
         *"own pull request"*|*"cannot review"*)
-            die "self-review not allowed: $err_msg" ;;
+            die "self-review 불가: $err_msg" ;;
         *)
-            die "review failed: $err_msg" ;;
+            die "review 등록 실패: $err_msg" ;;
     esac
 fi
 
 review_url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"
 if [ -z "$review_url" ]; then
-    printf '[gitea-pr-review] unexpected response:\n%s\n' "$resp" >&2
+    printf '[gitea-pr-review] 예기치 않은 응답:\n%s\n' "$resp" >&2
     exit 1
 fi
 printf '%s\n' "$review_url"
