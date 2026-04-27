@@ -15,7 +15,7 @@ setup
 if "$BIN/gitea-pr-merge" 2>"$TEST_TMP/err"; then
     echo FAIL: expected exit non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "PR" "error mentions PR"
+assert_file_contains "$TEST_TMP/err" "PR# 인자" "error mentions PR# requirement"
 teardown
 
 # --- unknown flag fails ---
@@ -23,7 +23,7 @@ setup
 if "$BIN/gitea-pr-merge" 1 --bogus 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero on unknown flag >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "unknown" "error mentions unknown"
+assert_file_contains "$TEST_TMP/err" "알 수 없는 flag" "error mentions unknown flag"
 teardown
 
 # --- happy path: PR mergeable → fetch + merge → success message ---
@@ -35,7 +35,7 @@ fixture POST /api/v1/repos/owner/repo/pulls/42/merge ''   # 200 empty body on su
 
 # Skip git/worktree work for this test by passing --keep-branch and --keep-worktree.
 out="$("$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree 2>&1)"
-assert_contains "$out" "merged" "success message mentions merged"
+assert_contains "$out" "머지 완료" "success message mentions merged"
 assert_contains "$out" "feat/topic" "success message mentions branch"
 
 # verify three API calls: GET pulls/42, GET reviews, POST .../merge
@@ -55,7 +55,7 @@ setup
 install_curl_stub
 fixture GET /api/v1/repos/owner/repo/pulls/42 '{"number":42,"merged":true,"head":{"ref":"feat/topic"},"base":{"ref":"main"}}'
 out="$("$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree 2>&1)" || true
-assert_contains "$out" "already merged" "warns already merged"
+assert_contains "$out" "이미 머지됨" "warns already merged"
 assert_eq "$(call_count)" "1" "no POST call when already merged"
 teardown
 
@@ -148,7 +148,7 @@ chmod +x "$STUB_DIR/git"
 # Should still exit 0 even though `git push --delete` failed.
 "$BIN/gitea-pr-merge" 42 --keep-worktree >"$TEST_TMP/out" 2>&1
 assert_eq "$?" "0" "delete failure does not abort"
-assert_file_contains "$TEST_TMP/out" "could not delete remote branch" "warns on failure"
+assert_file_contains "$TEST_TMP/out" "원격 branch 삭제 실패" "warns on failure"
 teardown
 
 # --- worktree cleanup: cwd is on head branch → fetch/checkout/remove sequence ---
@@ -230,7 +230,7 @@ GIT_EOF
 chmod +x "$STUB_DIR/git"
 
 out="$("$BIN/gitea-pr-merge" 42 --keep-branch 2>&1)"
-assert_contains "$out" "not on head branch" "warns when not on head"
+assert_contains "$out" "현재 head branch 아님" "warns when not on head"
 if [ -e "$GIT_LOG" ] && grep -q "worktree remove" "$GIT_LOG"; then
     echo "FAIL: should not call remove from non-head cwd" >&2; exit 1
 fi
@@ -264,7 +264,7 @@ chmod +x "$STUB_DIR/git"
 out="$("$BIN/gitea-pr-merge" 42 --keep-branch 2>&1)"
 exit_code=$?
 assert_eq "$exit_code" "0" "self-removal refusal exits 0"
-assert_contains "$out" "refusing self-removal" "warns about self-removal"
+assert_contains "$out" "self-removal 거부" "warns about self-removal"
 if [ -e "$GIT_LOG" ] && grep -q "worktree remove" "$GIT_LOG"; then
     echo "FAIL: self-removal must not call worktree remove" >&2; exit 1
 fi
@@ -299,7 +299,7 @@ fixture GET /api/v1/repos/owner/repo/pulls/42/reviews '[]'
 if "$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero on no APPROVED >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "no APPROVED" "error mentions no APPROVED"
+assert_file_contains "$TEST_TMP/err" "APPROVED review 없음" "error mentions no APPROVED"
 assert_file_contains "$TEST_TMP/err" "--force" "error mentions --force"
 # merge POST must NOT have been called.
 if grep -q "/pulls/42/merge" "$CALL_LOG"; then
@@ -318,7 +318,7 @@ fixture GET /api/v1/repos/owner/repo/pulls/42/reviews \
 if "$BIN/gitea-pr-merge" 42 --keep-branch --keep-worktree 2>"$TEST_TMP/err"; then
     echo "FAIL: expected non-zero (dismissed APPROVED)" >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "no APPROVED" "dismissed does not count"
+assert_file_contains "$TEST_TMP/err" "APPROVED review 없음" "dismissed does not count"
 teardown
 
 # --- review gate: APPROVED with no dismissed field counts (legacy Gitea response) ---

@@ -1,20 +1,20 @@
 #!/bin/sh
-# Merge a Gitea PR, delete the remote branch, and clean up the local worktree.
+# Gitea PR을 merge하고, 원격 head branch와 로컬 worktree를 정리한다.
 #
 # Usage:
 #   gitea-pr-merge <PR#> [options]
 #
 # Options:
-#   --method <merge|squash|rebase>   Merge strategy (default: merge)
-#   --force                          Skip review gate (merge without APPROVED review)
-#   --keep-branch                    Keep remote head branch after merge
-#   --keep-worktree                  Keep local worktree after merge
-#   --worktree <path>                Explicit worktree path (default: auto-detect)
-#   -r owner/repo                    Override target repo
-#   -u URL                           Override Gitea base URL
+#   --method <merge|squash|rebase>   merge 방식 (기본: merge)
+#   --force                          review gate 우회
+#   --keep-branch                    원격 head branch 보존
+#   --keep-worktree                  로컬 worktree 보존
+#   --worktree <path>                명시적 worktree 경로 (기본: cwd)
+#   -r owner/repo                    repo 오버라이드
+#   -u URL                           Gitea base URL 오버라이드
 #
-# Review gate: before merging, at least one APPROVED non-dismissed review is required.
-# Use --force to bypass. Gate is skipped when the PR is already merged.
+# Review gate: APPROVED & non-dismissed review가 1개 이상 있어야 merge 진행.
+#              없으면 거부 (--force로 우회). 이미 머지된 PR은 gate 스킵.
 
 set -eu
 . "$(dirname "$0")/_common.sh"
@@ -37,17 +37,17 @@ while [ $# -gt 0 ]; do
         -r|--repo) GITEA_REPO="$2"; shift 2 ;;
         -u|--url)  GITEA_URL="$2"; shift 2 ;;
         -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
-        -*) die "unknown flag: $1" ;;
+        -*) die "알 수 없는 flag: $1" ;;
         *)
-            [ -z "$PR" ] || die "unexpected positional: $1"
+            [ -z "$PR" ] || die "예기치 않은 인자: $1"
             PR="$1"; shift ;;
     esac
 done
 
-[ -n "$PR" ] || die "PR# required"
+[ -n "$PR" ] || die "PR# 인자 필요"
 case "$METHOD" in
     merge|squash|rebase) ;;
-    *) die "invalid --method: $METHOD (use merge|squash|rebase)" ;;
+    *) die "--method 값 오류: $METHOD (merge|squash|rebase 중 선택)" ;;
 esac
 
 resolve_remote
@@ -58,27 +58,27 @@ merged="$(printf '%s' "$pr_json" | jq -r '.merged // false')"
 head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // empty')"
 html_url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
 
-[ -n "$head_ref" ] || die "PR #$PR not found or missing head.ref"
+[ -n "$head_ref" ] || die "PR #$PR 존재하지 않거나 head.ref 누락"
 
 # Review gate: require >=1 APPROVED non-dismissed review unless already merged or --force.
 if [ "$merged" != "true" ] && [ "$FORCE" != "true" ]; then
     reviews_json="$(gitea_get "/repos/$GITEA_REPO/pulls/$PR/reviews")"
     if ! printf '%s' "$reviews_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
         err_msg="$(printf '%s' "$reviews_json" | jq -r '.message // empty' 2>/dev/null || true)"
-        die "failed to fetch reviews: ${err_msg:-unexpected response}"
+        die "reviews 조회 실패: ${err_msg:-예기치 않은 응답}"
     fi
     n_reviews="$(printf '%s' "$reviews_json" | jq 'length')"
     if [ "$n_reviews" -ge 50 ]; then
-        printf '[gitea-pr-merge] warning: reviews list >= 50; pagination not implemented, gate may misfire\n' >&2
+        printf '[gitea-pr-merge] 경고: reviews 응답 ≥ 50건 — pagination 미구현, gate 오작동 가능\n' >&2
     fi
     n_approved="$(printf '%s' "$reviews_json" | jq '[.[] | select(.state=="APPROVED" and (.dismissed // false)==false)] | length')"
     if [ "$n_approved" -lt 1 ]; then
-        die "no APPROVED review on PR #$PR; use --force to override"
+        die "PR #$PR에 APPROVED review 없음 — --force로 우회 가능"
     fi
 fi
 
 if [ "$merged" = "true" ]; then
-    printf '[gitea-pr-merge] PR #%s (%s) already merged — skipping merge call\n' "$PR" "$head_ref" >&2
+    printf '[gitea-pr-merge] PR #%s (%s) 이미 머지됨 — merge 호출 스킵\n' "$PR" "$head_ref" >&2
     # Fall through to branch/worktree cleanup below so re-runs are idempotent.
 else
     # 2. Call merge endpoint.
@@ -88,11 +88,11 @@ else
     if [ -n "$resp" ]; then
         err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
         if [ -n "$err_msg" ]; then
-            die "merge failed: $err_msg"
+            die "merge 실패: $err_msg"
         fi
         # Some success responses include benign payloads — only treat as error if .message present.
     fi
-    printf '[gitea-pr-merge] PR #%s merged (%s, branch %s)\n' "$PR" "$METHOD" "$head_ref" >&2
+    printf '[gitea-pr-merge] PR #%s 머지 완료 (방식: %s, head: %s)\n' "$PR" "$METHOD" "$head_ref" >&2
 fi
 
 if [ -n "$html_url" ]; then
@@ -103,25 +103,25 @@ fi
 if [ "$KEEP_BRANCH" != "true" ]; then
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         if ! git push origin --delete "$head_ref"; then
-            printf '[gitea-pr-merge] warning: could not delete remote branch %s — see git error above\n' "$head_ref" >&2
+            printf '[gitea-pr-merge] 경고: 원격 branch 삭제 실패 — git 에러 위 참조: %s\n' "$head_ref" >&2
         else
-            printf '[gitea-pr-merge] deleted remote branch %s\n' "$head_ref" >&2
+            printf '[gitea-pr-merge] 원격 branch 삭제: %s\n' "$head_ref" >&2
         fi
     else
-        printf '[gitea-pr-merge] not in a git work tree; skipping branch delete\n' >&2
+        printf '[gitea-pr-merge] git work tree 아님 — branch 삭제 스킵\n' >&2
     fi
 fi
 
 # 4. Worktree cleanup unless suppressed.
 if [ "$KEEP_WORKTREE" != "true" ]; then
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        printf '[gitea-pr-merge] not in a git work tree; skipping worktree cleanup\n' >&2
+        printf '[gitea-pr-merge] git work tree 아님 — worktree 정리 스킵\n' >&2
         exit 0
     fi
 
     current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
     if [ "$current_branch" != "$head_ref" ]; then
-        printf '[gitea-pr-merge] cwd not on head branch (%s != %s); skipping worktree cleanup\n' "$current_branch" "$head_ref" >&2
+        printf '[gitea-pr-merge] 현재 head branch 아님 (%s != %s) — worktree 정리 스킵\n' "$current_branch" "$head_ref" >&2
         exit 0
     fi
 
@@ -131,19 +131,19 @@ if [ "$KEEP_WORKTREE" != "true" ]; then
     # Find main worktree (first entry of `git worktree list --porcelain`).
     main_wt="$(git worktree list --porcelain 2>/dev/null \
         | awk '/^worktree /{print $2; exit}')"
-    [ -n "$main_wt" ] || die "could not determine main worktree"
+    [ -n "$main_wt" ] || die "main worktree 식별 실패"
 
     if [ "$main_wt" = "$target_wt" ]; then
-        printf '[gitea-pr-merge] cwd is the main worktree; refusing self-removal\n' >&2
+        printf '[gitea-pr-merge] cwd가 main worktree임 — self-removal 거부\n' >&2
         exit 0
     fi
 
-    cd "$main_wt" || die "cannot cd to main worktree: $main_wt"
-    trap 'printf "[gitea-pr-merge] cleanup aborted mid-sequence — worktree %s not removed\n" "$target_wt" >&2' EXIT
+    cd "$main_wt" || die "main worktree로 cd 실패: $main_wt"
+    trap 'printf "[gitea-pr-merge] cleanup 중단됨 — worktree 미정리: %s\n" "$target_wt" >&2' EXIT
     git fetch --prune
     git checkout main
     git pull
     git worktree remove "$target_wt"
-    printf '[gitea-pr-merge] removed worktree %s\n' "$target_wt" >&2
+    printf '[gitea-pr-merge] worktree 정리: %s\n' "$target_wt" >&2
     trap - EXIT
 fi
