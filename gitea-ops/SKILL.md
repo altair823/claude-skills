@@ -5,45 +5,44 @@ description: Drive Gitea via REST API from the CLI — create releases with mini
 
 # gitea-ops
 
-Thin wrapper around Gitea's REST API. Zero deps beyond `curl`, `jq`, `git`, and
-(for release signing) `sha256sum` + `minisign`.
+Gitea REST API thin wrapper. 의존성은 `curl`, `jq`, `git`, 그리고 (release 서명용) `sha256sum` + `minisign` 뿐.
 
-## When to use
+## 사용 시점
 
-Invoke when the user wants any of:
-- Cut a tagged release and attach binary artifacts (with sha256 + minisign)
-- Open a pull request programmatically
-- File or close an issue programmatically
-- Bulk-query issues/PRs for a Gitea repo
+사용자가 다음 중 하나를 원할 때 호출:
+- tag release를 만들고 binary artifact 첨부 (sha256 + minisign 포함)
+- pull request 작성 (프로그램적으로)
+- issue 작성/닫기 (프로그램적으로)
+- Gitea repo의 issue/PR bulk 조회
 
-Do NOT use for GitHub/GitLab — different API shape.
+GitHub/GitLab에는 사용 금지 — API 구조가 다름.
 
 ## Workflow
 
 ```sh
-# 1. Author creates PR
+# 1. 작성자가 PR 생성
 gitea-pr --title "Add widget" --head feat/widget
 
-# 2. Reviewer (separate Claude session, reviewer-token):
-gitea-pr-diff 42                    # dump meta+diff for analysis
+# 2. 리뷰어 (별도 Claude 세션, reviewer-token):
+gitea-pr-diff 42                    # 분석용 meta+diff dump
 gitea-pr-review 42 --event APPROVE \
     --body "Approved. Logic sound."
 
 # 3. Author merges (gate auto-checks for APPROVED review):
-gitea-pr-merge 42                   # passes gate, merges, cleans up
+gitea-pr-merge 42                   # gate 통과, merge, cleanup
 ```
 
-## Setup
+## 셋업
 
-1. Personal Access Token: generate at `https://<host>/user/settings/applications`
-   with scopes **repository**, **issue**, **package** (for release assets).
-2. Store token: `~/.config/gitea-ops/token` (mode 0600) **or** `GITEA_TOKEN` env.
-3. Optional defaults: `~/.config/gitea-ops/config` with
+1. Personal Access Token: `https://<host>/user/settings/applications`에서 발급.
+   scope: **repository**, **issue**, **package** (release asset용).
+2. token 저장: `~/.config/gitea-ops/token` (mode 0600) **또는** `GITEA_TOKEN` env.
+3. 기본값 (선택): `~/.config/gitea-ops/config`에
    ```
    GITEA_URL=https://gitea.example.com
    GITEA_REPO=owner/repo
    ```
-   When `origin` remote matches the Gitea URL these are auto-derived.
+   `origin` remote가 Gitea URL과 일치하면 자동 추출됨.
 4. **Reviewer token** (separate Gitea account, repo write scope): generate at
    `https://<host>/user/settings/applications` while logged in as the reviewer
    account. Required only by `gitea-pr-review`.
@@ -59,11 +58,10 @@ gitea-pr-merge 42                   # passes gate, merges, cleans up
    Or set `GITEA_REVIEWER_TOKEN` env. An empty placeholder file is rejected by
    `gitea-pr-review` until a token is pasted in.
 
-## Scripts
+## 스크립트
 
-Every script auto-detects host + repo from `git remote get-url origin` if
-invoked inside a working copy whose origin points at a Gitea host. Override
-with `-u <URL>` / `-r <owner/repo>`.
+모든 스크립트는 working copy 내에서 호출 시 `git remote get-url origin`으로 host + repo를
+자동 감지 (origin이 Gitea host를 가리키는 경우). `-u <URL>` / `-r <owner/repo>`로 오버라이드.
 
 ### `gitea-release`
 
@@ -74,10 +72,9 @@ gitea-release <TAG> [--name TITLE] [--notes TEXT | --notes-file PATH] [--auto-no
               [-r owner/repo] [-u URL]
 ```
 
-- Pushes the tag if it exists locally but not on remote.
-- Creates the release.
-- For each `--asset`, also uploads `<asset>.sha256` (auto-generated) and,
-  if `--sign KEYPATH` given, `<asset>.minisig`.
+- tag가 로컬에만 있고 remote에 없으면 push.
+- release 생성.
+- 각 `--asset`마다 자동 생성된 `<asset>.sha256` 함께 업로드, `--sign KEYPATH` 있으면 `<asset>.minisig`도 업로드.
 - `--auto-notes`: 직전 release(`/releases?limit=2`의 두 번째 항목) 시점 이후
   머지된 PR을 `## 변경사항 (since <tag>)` 섹션으로 노트 본문 맨 위에 prepend.
   PR이 0건이면 섹션 자체를 생략. `--notes`/`--notes-file`와 함께 쓰면 사용자
@@ -96,7 +93,7 @@ gitea-pr --title "..." --body "..." --head BRANCH [--base main]
          [-r owner/repo] [-u URL]
 ```
 
-Pushes `--head` if it exists locally but not on remote, then opens the PR.
+`--head`가 로컬에만 있고 remote에 없으면 push 후 PR 작성.
 
 ### `gitea-pr-diff`
 
@@ -184,7 +181,7 @@ gitea-issue --title "..." [--body "..."] [--label LABEL]...
             [-r owner/repo] [-u URL]
 ```
 
-Prints created issue number + URL.
+생성된 issue 번호 + URL을 출력.
 
 ### `gitea-issue-close`
 
@@ -192,13 +189,26 @@ Prints created issue number + URL.
 gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 ```
 
-## Error modes
+## 에러 처리
 
-- 401 → token missing/invalid. Tell user to check `~/.config/gitea-ops/token`.
-- 403 → token lacks scope.
-- 404 on `/repos/.../releases/tags/TAG` means tag not yet on remote — scripts
-  handle this by pushing then retrying once.
+- 401 → token 누락/무효. 사용자에게 `~/.config/gitea-ops/token` 확인 안내.
+- 403 → token scope 부족.
+- `/repos/.../releases/tags/TAG`에서 404 → tag가 아직 remote에 없음. 스크립트가 push 후 1회 재시도.
 
-## After actions
+## 작업 후
 
-Always print the created object's URL so the user can click through.
+생성된 object의 URL을 항상 출력해 사용자가 클릭으로 이동할 수 있게 함.
+
+## 작성 규칙
+
+Claude가 본 skill을 통해 PR/release/issue/review를 작성할 때 따르는 기본 규칙:
+
+- **본문 언어**: 한국어 기본. 사용자가 영문 명시 시 영문.
+- **기술 키워드**: PR/branch/merge/commit/fetch/push/pull/head/base/tag/release/review/gate/token/worktree 등은 한국어 산문 안에서 영문 inline. 번역하지 않음.
+- **CLI 식별자/flag/URL**: 영문 그대로.
+- **commit 메시지 / PR title**: Conventional Commits (`feat(scope): ...`, `fix(scope): ...` 등) — 영문 prefix + 한국어 본문 OK.
+- **체크리스트 / 표 헤더**: 한국어.
+- **Code block / API 응답 예시 / shell 명령**: 영문 그대로.
+- **Co-Authored-By trailer**: 영문 자동.
+
+이 규칙은 Claude가 본 repo 또는 Gitea remote에 PR을 만들거나 review를 등록할 때 적용. 사용자가 "영어로", "english" 등을 명시하면 우회.
