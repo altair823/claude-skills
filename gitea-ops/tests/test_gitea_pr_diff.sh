@@ -14,7 +14,7 @@ setup
 if "$BIN/gitea-pr-diff" 2>"$TEST_TMP/err"; then
     echo FAIL: expected exit non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "PR" "error mentions PR"
+assert_file_contains "$TEST_TMP/err" "PR# 인자" "error mentions PR# requirement"
 teardown
 
 # --- unknown flag fails ---
@@ -22,7 +22,7 @@ setup
 if "$BIN/gitea-pr-diff" 1 --bogus 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero on unknown flag >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "unknown" "error mentions unknown"
+assert_file_contains "$TEST_TMP/err" "알 수 없는 flag" "error mentions unknown flag"
 teardown
 
 # --- --raw and --json mutually exclusive ---
@@ -30,7 +30,7 @@ setup
 if "$BIN/gitea-pr-diff" 1 --raw --json 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero on conflicting flags >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "mutually exclusive" "error names conflict"
+assert_file_contains "$TEST_TMP/err" "동시 사용 불가" "error names conflict"
 teardown
 
 # --- default mode: meta header + diff ---

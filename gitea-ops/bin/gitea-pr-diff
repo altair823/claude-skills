@@ -1,13 +1,12 @@
 #!/bin/sh
-# Print PR metadata and unified diff for review.
+# PR 메타데이터 + unified diff을 stdout에 출력한다 (review 분석용).
 #
 # Usage:
 #   gitea-pr-diff <PR#> [--raw|--json] [-r owner/repo] [-u URL]
 #
-# Default: human-readable header (PR title, base, head, file list) followed by
-#          unified diff.
-# --raw:   diff body only.
-# --json:  {title, base, head, files:[...], diff:"..."} as a single JSON object.
+# 기본:    사람-친화 헤더 (PR title, base, head, file list) + diff.
+# --raw:   diff body만 출력.
+# --json:  {title, base, head, files:[...], diff:"..."} 단일 JSON 객체.
 
 set -eu
 . "$(dirname "$0")/_common.sh"
@@ -19,22 +18,22 @@ MODE="meta"   # meta | raw | json
 while [ $# -gt 0 ]; do
     case "$1" in
         --raw)
-            [ "$MODE" = "json" ] && die "--raw and --json are mutually exclusive"
+            [ "$MODE" = "json" ] && die "--raw와 --json은 동시 사용 불가"
             MODE="raw"; shift ;;
         --json)
-            [ "$MODE" = "raw" ] && die "--raw and --json are mutually exclusive"
+            [ "$MODE" = "raw" ] && die "--raw와 --json은 동시 사용 불가"
             MODE="json"; shift ;;
         -r|--repo) GITEA_REPO="$2"; shift 2 ;;
         -u|--url)  GITEA_URL="$2"; shift 2 ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
-        -*) die "unknown flag: $1" ;;
+        -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+        -*) die "알 수 없는 flag: $1" ;;
         *)
-            [ -z "$PR" ] || die "unexpected positional: $1"
+            [ -z "$PR" ] || die "예기치 않은 인자: $1"
             PR="$1"; shift ;;
     esac
 done
 
-[ -n "$PR" ] || die "PR# required"
+[ -n "$PR" ] || die "PR# 인자 필요"
 resolve_remote
 
 pr_path="/repos/$GITEA_REPO/pulls/$PR"
@@ -45,7 +44,7 @@ if [ -n "$err_msg" ]; then
     die "PR #$PR: $err_msg"
 fi
 title="$(printf '%s' "$pr_json" | jq -r '.title // empty')"
-[ -n "$title" ] || die "PR #$PR not found"
+[ -n "$title" ] || die "PR #$PR 존재하지 않음"
 
 files_json="$(gitea_get "$pr_path/files")"
 files_err="$(printf '%s' "$files_json" | jq -r '.message // empty' 2>/dev/null || true)"
@@ -88,8 +87,8 @@ if [ -n "$url" ]; then printf 'URL: %s\n' "$url"; fi
 printf 'Base: %s (%s)\n' "$base_ref" "$base_sha"
 printf 'Head: %s (%s)\n' "$head_ref" "$head_sha"
 printf 'State: %s\n' "$state"
-printf 'Author: %s\n' "$author"
-printf 'Files changed: %s (+%s -%s)\n' "$n_files" "$total_add" "$total_del"
+printf '작성자: %s\n' "$author"
+printf '변경 파일: %s개 (+%s -%s)\n' "$n_files" "$total_add" "$total_del"
 
 # Per-file lines: status code (M/A/D/...) plus additions/deletions.
 printf '%s' "$files_json" | jq -r '
