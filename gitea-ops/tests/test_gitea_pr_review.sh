@@ -14,7 +14,7 @@ setup
 if "$BIN/gitea-pr-review" --event APPROVE --body x 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "PR" "error mentions PR"
+assert_file_contains "$TEST_TMP/err" "PR# 인자" "error mentions PR# requirement"
 teardown
 
 # --- missing --event ---
@@ -22,7 +22,7 @@ setup
 if "$BIN/gitea-pr-review" 42 --body x 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "event" "error mentions event"
+assert_file_contains "$TEST_TMP/err" "--event 인자" "error mentions --event requirement"
 teardown
 
 # --- invalid --event ---
@@ -30,7 +30,7 @@ setup
 if "$BIN/gitea-pr-review" 42 --event NOPE --body x 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "invalid --event" "error mentions invalid event"
+assert_file_contains "$TEST_TMP/err" "--event 값 오류" "error mentions invalid event"
 teardown
 
 # --- missing --body and no inline ---
@@ -38,7 +38,7 @@ setup
 if "$BIN/gitea-pr-review" 42 --event APPROVE 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "body" "error mentions body"
+assert_file_contains "$TEST_TMP/err" "--body 또는 --inline" "error mentions body/inline requirement"
 teardown
 
 # --- both --body - and --inline - read stdin → die ---
@@ -46,7 +46,7 @@ setup
 if echo x | "$BIN/gitea-pr-review" 42 --event APPROVE --body - --inline - 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "stdin" "error mentions stdin conflict"
+assert_file_contains "$TEST_TMP/err" "stdin 사용 불가" "error mentions stdin conflict"
 teardown
 
 # --- reviewer-token missing → die ---
@@ -117,7 +117,7 @@ echo '[{"path":"a.go","body":"missing position"}]' >"$TEST_TMP/bad.json"
 if "$BIN/gitea-pr-review" 42 --event COMMENT --body x --inline "$TEST_TMP/bad.json" 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero on bad inline >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "inline" "error mentions inline"
+assert_file_contains "$TEST_TMP/err" "inline JSON 오류" "error mentions inline JSON failure"
 teardown
 
 # --- 422 self-review → clear message ---
