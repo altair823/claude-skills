@@ -21,16 +21,55 @@ GitHub/GitLab에는 사용 금지 — API 구조가 다름.
 
 ```sh
 # 1. 작성자가 PR 생성
-gitea-pr --title "Add widget" --head feat/widget
+gitea-pr --title "위젯 추가" --head feat/widget
 
 # 2. 리뷰어 (별도 Claude 세션, reviewer-token):
 gitea-pr-diff 42                    # 분석용 meta+diff dump
 gitea-pr-review 42 --event APPROVE \
-    --body "Approved. Logic sound."
+    --body "전반적으로 로직이 타당하고 회귀 위험이 보이지 않아 머지에 동의합니다."
 
-# 3. Author merges (gate auto-checks for APPROVED review):
-gitea-pr-merge 42                   # gate 통과, merge, cleanup
+# 3. 사람이 Gitea UI에서 직접 머지 — Claude는 자동 머지하지 않음.
+#    리뷰가 APPROVE 상태면 작성자/메인테이너가 웹에서 merge 버튼 클릭.
+#    이때 "Delete branch after merge" 옵션을 함께 체크해 원격 head branch를 정리하고,
+#    로컬 worktree는 `git worktree remove <path>`로 별도 정리한다.
 ```
+
+리뷰 결과가 문제 없을 때도 **APPROVE 코멘트는 반드시 등록**한다 (`gitea-pr-review --event APPROVE`).
+Claude가 직접 머지하지 않더라도, 사람이 머지 결정을 내릴 때 명시적인 승인 신호가 필요하기 때문.
+
+## PR 생성 전 선택지: 리뷰 루프
+
+`gitea-pr`로 PR을 만들기 직전, Claude는 사용자에게 다음 두 가지 모드 중 어느 것으로 진행할지 **반드시 묻고 답을 받는다**. 사용자 응답 없이 임의로 결정하지 않는다.
+
+1. **단발 (기본)** — PR을 만들고 종료. 리뷰는 사용자가 필요할 때 별도로 요청한다.
+2. **리뷰 루프** — PR을 만든 직후 Claude가 자동으로 셀프 리뷰를 돌리고, 리뷰가 actionable한 지적이나 권장 사항을 담고 있으면 그 내용을 후속 커밋으로 반영한 뒤 다시 리뷰한다. 모든 actionable 코멘트가 해소되고 `event=APPROVE`만 남을 때까지 반복.
+
+질문 형태 예시 (대화창):
+
+> PR을 어떤 모드로 진행할까요?
+> 1. **단발** (기본) — PR만 생성.
+> 2. **리뷰 루프** — 자동 리뷰 → 수정 → 재리뷰를 모두 APPROVE될 때까지 반복.
+
+### 루프 한 회차 동작
+
+리뷰 루프 모드에서는 매 회차마다 다음을 수행한다.
+
+1. `gitea-pr-diff <PR#>`로 현재 PR diff을 dump.
+2. 리뷰어 관점에서 분석 후 `gitea-pr-review` 호출:
+   - 본문/코드에 명확한 결함, 의도 불명확, 누락, 권장 개선이 있으면 `--event REQUEST_CHANGES` + 해당 inline 코멘트.
+   - actionable한 지적이 없고 칭찬·수긍 코멘트만 남으면 `--event APPROVE`.
+3. **종료 조건**: `event=APPROVE` 이고 inline 코멘트에 issue/suggestion 카테고리가 0개 (칭찬만 있음). 이때 루프 종료.
+4. 종료 조건 미충족: inline 코멘트와 summary를 토대로 코드/문서를 수정 → 새 커밋 → push → 다음 회차로 진입.
+
+### 가드
+
+- **최대 회차 5회**. 5회차 이후에도 actionable 코멘트가 남으면 루프를 강제 종료하고 사용자에게 결과를 보고한다 — 무한 회전 방지.
+- **수정 거부 옵션**: 리뷰 코멘트의 rationale에 동의하지 못하는 경우 (의도된 단순화 등) Claude는 반영 대신 사유를 사용자에게 보고하고 결정을 위임한다. 자기가 단 리뷰를 무비판적으로 따르지 않는다.
+- **수렴 실패 감지**: 동일한 inline 코멘트가 두 회차 연속 같은 위치에 다시 등장하면 그 자체로 강제 종료 신호 — 회차를 더 돌려도 풀리지 않는다는 뜻이므로 사용자에게 보고하고 멈춘다.
+
+### 사람 머지 단계는 변경 없음
+
+루프가 APPROVE로 종료되어도 머지 버튼은 여전히 사람이 Gitea UI에서 누른다. 루프는 사람이 머지를 누르기 전 단계까지의 PR 품질을 자동으로 끌어올리는 역할만 한다.
 
 ## 셋업
 
@@ -141,38 +180,6 @@ EOF
 
 422 self-review 응답은 명확한 메시지로 안내. PR author와 reviewer-token 계정이 같으면 발생.
 
-### `gitea-pr-merge`
-
-```
-gitea-pr-merge <PR#> [options]
-
-Options:
-  --method <merge|squash|rebase>   merge 방식 (기본: merge)
-  --force                          review gate 우회
-  --keep-branch                    원격 head branch 보존
-  --keep-worktree                  로컬 worktree 보존
-  --worktree <path>                명시적 worktree 경로 (기본: cwd)
-  -r owner/repo                    repo 오버라이드
-  -u URL                           Gitea base URL 오버라이드
-```
-
-**Review gate**: 머지 호출 직전 `GET /pulls/<n>/reviews`로 APPROVED & non-dismissed 리뷰가 1+개 있는지 확인. 없으면 거부, `--force`로 우회. PR이 이미 머지된 상태면 gate 자체를 스킵.
-
-기본 동작 (한 번에 끝내기):
-1. `GET /pulls/<n>`로 PR 메타 조회 (이미 머지면 머지 호출 스킵)
-2. `POST /pulls/<n>/merge` (`Do: merge|squash|rebase`)
-3. `git push origin --delete <head_ref>` — 실패는 경고만
-4. cwd가 head branch worktree면 main worktree로 cd → `git fetch --prune && git checkout main && git pull` → `git worktree remove <path>`
-
-cwd가 main worktree이거나 head 브랜치가 아닌 곳이면 cleanup 자동 스킵 — 안전.
-
-예시:
-```sh
-gitea-pr-merge 42                  # 기본: merge + branch 삭제 + worktree 정리
-gitea-pr-merge 42 --method squash
-gitea-pr-merge 42 --keep-branch    # 브랜치 유지 (worktree만 정리)
-```
-
 ### `gitea-issue`
 
 ```
@@ -195,6 +202,12 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 - 403 → token scope 부족.
 - `/repos/.../releases/tags/TAG`에서 404 → tag가 아직 remote에 없음. 스크립트가 push 후 1회 재시도.
 
+## 인코딩 / Multi-byte 안전성
+
+JSON 본문을 POST/PATCH 할 때는 항상 `curl --data-binary @-` 를 사용한다. 일반 `--data`는 입력에서 CR/LF 등을 strip 하면서 부수 처리를 하기 때문에, 한글·이모지 같은 multi-byte UTF-8 시퀀스가 산발적으로 invalid byte로 손상되어 Gitea에 U+FFFD(`���`)로 저장되는 사례가 실제로 발생했다 (PR #11 리뷰 코멘트의 "만" → `���`).
+
+`_common.sh:api_json` 과 `gitea-pr-review` 가 이 규칙을 따른다. 새 endpoint 추가 시에도 `--data-binary` 로 통일.
+
 ## 작업 후
 
 생성된 object의 URL을 항상 출력해 사용자가 클릭으로 이동할 수 있게 함.
@@ -203,6 +216,7 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 
 Claude가 본 skill을 통해 PR/release/issue/review를 작성할 때 따르는 기본 규칙:
 
+- **caveman 모드 미적용**: 세션에 caveman 모드가 활성화되어 있어도 PR title/body, issue, release notes, review summary, inline review comment는 **평소처럼 자연스러운 산문**으로 작성한다. 압축·문장 단편화·관사 생략 금지. 이 글들은 사용자/리뷰어가 두고두고 읽는 영구 기록이므로 의도와 맥락이 명확해야 함. (대화창 출력만 caveman 적용.)
 - **본문 언어**: 한국어 기본. 사용자가 영문 명시 시 영문.
 - **기술 키워드**: PR/branch/merge/commit/fetch/push/pull/head/base/tag/release/review/gate/token/worktree 등은 한국어 산문 안에서 영문 inline. 번역하지 않음.
 - **CLI 식별자/flag/URL**: 영문 그대로.

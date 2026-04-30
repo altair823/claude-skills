@@ -116,7 +116,7 @@ url="$GITEA_URL/api/v1/repos/$GITEA_REPO/pulls/$PR/reviews"
 resp="$(printf '%s' "$body_json" | curl -sS -X POST \
     -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/json" \
-    --data @- \
+    --data-binary @- \
     "$url")"
 
 err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"

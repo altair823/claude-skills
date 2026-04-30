@@ -116,10 +116,12 @@ api_json() {
     method="$1"; path="$2"
     token="$(load_token)"
     url="$GITEA_URL/api/v1$path"
+    # --data-binary preserves bytes verbatim. Plain --data strips CR/LF and can
+    # subtly corrupt multi-byte UTF-8 in the wrong locale; use binary always for JSON.
     curl -sS -X "$method" \
          -H "Authorization: token $token" \
          -H "Content-Type: application/json" \
-         --data @- \
+         --data-binary @- \
          "$url"
 }
 
