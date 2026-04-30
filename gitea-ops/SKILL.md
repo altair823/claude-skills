@@ -202,6 +202,12 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 - 403 → token scope 부족.
 - `/repos/.../releases/tags/TAG`에서 404 → tag가 아직 remote에 없음. 스크립트가 push 후 1회 재시도.
 
+## 인코딩 / Multi-byte 안전성
+
+JSON 본문을 POST/PATCH 할 때는 항상 `curl --data-binary @-` 를 사용한다. 일반 `--data`는 입력에서 CR/LF 등을 strip 하면서 부수 처리를 하기 때문에, 한글·이모지 같은 multi-byte UTF-8 시퀀스가 산발적으로 invalid byte로 손상되어 Gitea에 U+FFFD(`���`)로 저장되는 사례가 실제로 발생했다 (PR #11 리뷰 코멘트의 "만" → `���`).
+
+`_common.sh:api_json` 과 `gitea-pr-review` 가 이 규칙을 따른다. 새 endpoint 추가 시에도 `--data-binary` 로 통일.
+
 ## 작업 후
 
 생성된 object의 URL을 항상 출력해 사용자가 클릭으로 이동할 수 있게 함.
