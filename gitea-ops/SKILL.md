@@ -21,16 +21,19 @@ GitHub/GitLab에는 사용 금지 — API 구조가 다름.
 
 ```sh
 # 1. 작성자가 PR 생성
-gitea-pr --title "Add widget" --head feat/widget
+gitea-pr --title "위젯 추가" --head feat/widget
 
 # 2. 리뷰어 (별도 Claude 세션, reviewer-token):
 gitea-pr-diff 42                    # 분석용 meta+diff dump
 gitea-pr-review 42 --event APPROVE \
-    --body "Approved. Logic sound."
+    --body "로직 타당. 머지 가능."
 
-# 3. Author merges (gate auto-checks for APPROVED review):
-gitea-pr-merge 42                   # gate 통과, merge, cleanup
+# 3. 사람이 Gitea UI에서 직접 머지 — Claude는 자동 머지하지 않음.
+#    리뷰가 APPROVE 상태면 작성자/메인테이너가 웹에서 merge 버튼 클릭.
 ```
+
+리뷰 결과가 문제 없을 때도 **APPROVE 코멘트는 반드시 등록**한다 (`gitea-pr-review --event APPROVE`).
+Claude가 직접 머지하지 않더라도, 사람이 머지 결정을 내릴 때 명시적인 승인 신호가 필요하기 때문.
 
 ## 셋업
 
@@ -141,38 +144,6 @@ EOF
 
 422 self-review 응답은 명확한 메시지로 안내. PR author와 reviewer-token 계정이 같으면 발생.
 
-### `gitea-pr-merge`
-
-```
-gitea-pr-merge <PR#> [options]
-
-Options:
-  --method <merge|squash|rebase>   merge 방식 (기본: merge)
-  --force                          review gate 우회
-  --keep-branch                    원격 head branch 보존
-  --keep-worktree                  로컬 worktree 보존
-  --worktree <path>                명시적 worktree 경로 (기본: cwd)
-  -r owner/repo                    repo 오버라이드
-  -u URL                           Gitea base URL 오버라이드
-```
-
-**Review gate**: 머지 호출 직전 `GET /pulls/<n>/reviews`로 APPROVED & non-dismissed 리뷰가 1+개 있는지 확인. 없으면 거부, `--force`로 우회. PR이 이미 머지된 상태면 gate 자체를 스킵.
-
-기본 동작 (한 번에 끝내기):
-1. `GET /pulls/<n>`로 PR 메타 조회 (이미 머지면 머지 호출 스킵)
-2. `POST /pulls/<n>/merge` (`Do: merge|squash|rebase`)
-3. `git push origin --delete <head_ref>` — 실패는 경고만
-4. cwd가 head branch worktree면 main worktree로 cd → `git fetch --prune && git checkout main && git pull` → `git worktree remove <path>`
-
-cwd가 main worktree이거나 head 브랜치가 아닌 곳이면 cleanup 자동 스킵 — 안전.
-
-예시:
-```sh
-gitea-pr-merge 42                  # 기본: merge + branch 삭제 + worktree 정리
-gitea-pr-merge 42 --method squash
-gitea-pr-merge 42 --keep-branch    # 브랜치 유지 (worktree만 정리)
-```
-
 ### `gitea-issue`
 
 ```
@@ -203,6 +174,7 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 
 Claude가 본 skill을 통해 PR/release/issue/review를 작성할 때 따르는 기본 규칙:
 
+- **caveman 모드 미적용**: 세션에 caveman 모드가 활성화되어 있어도 PR title/body, issue, release notes, review summary, inline review comment는 **평소처럼 자연스러운 산문**으로 작성한다. 압축·문장 단편화·관사 생략 금지. 이 글들은 사용자/리뷰어가 두고두고 읽는 영구 기록이므로 의도와 맥락이 명확해야 함. (대화창 출력만 caveman 적용.)
 - **본문 언어**: 한국어 기본. 사용자가 영문 명시 시 영문.
 - **기술 키워드**: PR/branch/merge/commit/fetch/push/pull/head/base/tag/release/review/gate/token/worktree 등은 한국어 산문 안에서 영문 inline. 번역하지 않음.
 - **CLI 식별자/flag/URL**: 영문 그대로.
