@@ -62,7 +62,7 @@ Claude가 직접 머지하지 않더라도, 사람이 머지 결정을 내릴 �
 3. **종료 조건**: 방금 등록한 review의 `event=APPROVE` 이고 inline 코멘트에 issue/suggestion 카테고리가 0개 (칭찬만 있음). 이때 루프 종료.
 4. 종료 조건 미충족: inline 코멘트와 summary를 토대로 코드/문서를 수정 → 새 커밋 → push → 다음 회차의 (1) 로 진입.
 
-> **참고**: Gitea는 새 commit이 push되면 직전 review에 "Outdated" 배지를 붙여 표시할 수 있지만, review 자체와 inline 코멘트는 PR timeline과 review 목록에 영구 보존된다. 기본 설정에서는 새 commit push가 이전 review를 자동 dismiss하지 않는다 — 단지 "Outdated" 배지만 붙고 review는 그대로 남는다 (`dismiss-stale-reviews` 옵션을 켠 환경에선 별도 동작이 가능). "최종 APPROVE 하나만 보임" = 회차마다 review를 등록하지 않은 것 — UI에서 사라진 게 아님.
+> **참고**: Gitea는 새 commit이 push되면 직전 review에 "Outdated" 배지를 붙여 표시할 수 있지만, review 자체와 inline 코멘트는 PR timeline과 review 목록에 영구 보존된다. 기본 설정에서는 새 commit push가 이전 review를 자동 dismiss하지 않는다 — 단지 "Outdated" 배지만 붙고 review는 그대로 남는다 (Gitea protected branch 설정의 `dismiss_stale_approvals` 옵션 — UI 표기 "Dismiss stale approvals" — 을 켠 환경에선 별도 동작이 가능). "최종 APPROVE 하나만 보임" = 회차마다 review를 등록하지 않은 것 — UI에서 사라진 게 아님.
 
 ### 가드
 
