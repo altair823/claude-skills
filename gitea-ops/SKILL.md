@@ -26,10 +26,12 @@ gitea-pr --title "위젯 추가" --head feat/widget
 # 2. 리뷰어 (별도 Claude 세션, reviewer-token):
 gitea-pr-diff 42                    # 분석용 meta+diff dump
 gitea-pr-review 42 --event APPROVE \
-    --body "로직 타당. 머지 가능."
+    --body "전반적으로 로직이 타당하고 회귀 위험이 보이지 않아 머지에 동의합니다."
 
 # 3. 사람이 Gitea UI에서 직접 머지 — Claude는 자동 머지하지 않음.
 #    리뷰가 APPROVE 상태면 작성자/메인테이너가 웹에서 merge 버튼 클릭.
+#    이때 "Delete branch after merge" 옵션을 함께 체크해 원격 head branch를 정리하고,
+#    로컬 worktree는 `git worktree remove <path>`로 별도 정리한다.
 ```
 
 리뷰 결과가 문제 없을 때도 **APPROVE 코멘트는 반드시 등록**한다 (`gitea-pr-review --event APPROVE`).
