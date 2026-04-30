@@ -52,14 +52,17 @@ Claude가 직접 머지하지 않더라도, 사람이 머지 결정을 내릴 �
 
 ### 루프 한 회차 동작
 
-리뷰 루프 모드에서는 매 회차마다 다음을 수행한다.
+리뷰 루프 모드에서는 매 회차마다 다음을 **반드시 모두** 수행한다. 어느 단계도 생략 금지 — 특히 (2) 의 `gitea-pr-review` 호출을 빼먹고 commit/push만 하면 그건 회차가 아니라 단순 후속 작업으로 간주된다.
 
 1. `gitea-pr-diff <PR#>`로 현재 PR diff을 dump.
-2. 리뷰어 관점에서 분석 후 `gitea-pr-review` 호출:
+2. 리뷰어 관점에서 분석 후 `gitea-pr-review` **반드시 호출** — 매 회차에 새로운 review를 한 건씩 PR에 등록해야 한다.
    - 본문/코드에 명확한 결함, 의도 불명확, 누락, 권장 개선이 있으면 `--event REQUEST_CHANGES` + 해당 inline 코멘트.
    - actionable한 지적이 없고 칭찬·수긍 코멘트만 남으면 `--event APPROVE`.
-3. **종료 조건**: `event=APPROVE` 이고 inline 코멘트에 issue/suggestion 카테고리가 0개 (칭찬만 있음). 이때 루프 종료.
-4. 종료 조건 미충족: inline 코멘트와 summary를 토대로 코드/문서를 수정 → 새 커밋 → push → 다음 회차로 진입.
+   - summary body 첫 줄에 `회차 N` prefix를 붙여 timeline에서 회차를 식별 가능하게 한다 (예: `회차 2 — 1회차 지적 모두 반영. 추가 권장 1건.`).
+3. **종료 조건**: 방금 등록한 review의 `event=APPROVE` 이고 inline 코멘트에 issue/suggestion 카테고리가 0개 (칭찬만 있음). 이때 루프 종료.
+4. 종료 조건 미충족: inline 코멘트와 summary를 토대로 코드/문서를 수정 → 새 커밋 → push → 다음 회차의 (1) 로 진입.
+
+> **참고**: Gitea는 새 commit이 push되면 직전 review에 "Outdated" 배지를 붙여 표시할 수 있지만, review 자체와 inline 코멘트는 PR timeline과 review 목록에 영구 보존된다. "최종 APPROVE 하나만 보임" = 회차마다 review를 등록하지 않은 것 — UI에서 사라진 게 아님.
 
 ### 가드
 
