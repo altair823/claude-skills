@@ -67,6 +67,22 @@ else
     ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
 fi
 
+# Optional polling for pending CI.
+if [ "$WAIT_CI" = "1" ] && [ "$ci_state" = "pending" ]; then
+    elapsed=0
+    while [ "$ci_state" = "pending" ] && [ "$elapsed" -lt "$CI_TIMEOUT" ]; do
+        sleep "$CI_INTERVAL"
+        elapsed=$((elapsed + CI_INTERVAL))
+        ci_json="$(gitea_get "/repos/$GITEA_REPO/commits/$head_sha/status")"
+        ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
+        if [ "$ci_count" = "0" ]; then
+            ci_state="none"
+        else
+            ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
+        fi
+    done
+fi
+
 # Gate evaluation.
 required_ok=false
 if [ "$title_ok" = "true" ] && [ "$body_ok" = "true" ] && \

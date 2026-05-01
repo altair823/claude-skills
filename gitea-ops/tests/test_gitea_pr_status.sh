@@ -171,4 +171,35 @@ assert_contains "$out" "ci_state=pending" "ci_state=pending"
 assert_contains "$out" "gate_passed=false" "gate_passed=false"
 teardown
 
+# --- --wait-ci: pending → success transition → exit 0 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+# First call: pending. Second call: success.
+fixture_seq GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"pending","total_count":1,"statuses":[{"context":"build","state":"pending"}]}' \
+    '{"state":"success","total_count":1,"statuses":[{"context":"build","state":"success"}]}'
+
+rc=0
+out="$("$BIN/gitea-pr-status" 42 --wait-ci --ci-poll-interval 0 --ci-timeout 5)" || rc=$?
+assert_eq "$rc" "0" "exit 0 after pending → success"
+assert_contains "$out" "ci_state=success" "final ci_state=success"
+teardown
+
+# --- --wait-ci: pending stays → timeout → exit 3 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"pending","total_count":1,"statuses":[{"context":"build","state":"pending"}]}'
+
+rc=0
+out="$("$BIN/gitea-pr-status" 42 --wait-ci --ci-poll-interval 1 --ci-timeout 2)" || rc=$?
+assert_eq "$rc" "3" "exit 3 on --wait-ci timeout"
+assert_contains "$out" "ci_state=pending" "still pending after timeout"
+assert_contains "$out" "gate_passed=false" "gate_passed=false"
+teardown
+
 echo OK
