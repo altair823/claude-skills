@@ -68,6 +68,7 @@ gitea-pr-status <PR#> [--json] [--wait-ci] [--ci-timeout SECONDS]
 - `--json`: 단일 JSON 객체로 출력. 미지정 시 사람-친화 key=value 라인.
 - `--wait-ci`: CI가 `pending` 이면 polling. 미지정 시 즉시 현재 상태만 출력하고 종료.
 - `--ci-timeout SECONDS`: polling 최대 시간 (기본 1200 = 20분).
+- `--ci-poll-interval SECONDS`: polling 간격 (기본 30). `--wait-ci` 사용 시 1 이상이어야 한다 (무한 루프 방지).
 
 ### 출력 (텍스트 기본)
 
