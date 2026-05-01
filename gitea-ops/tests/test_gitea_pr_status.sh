@@ -25,6 +25,22 @@ fi
 assert_file_contains "$TEST_TMP/err" "알 수 없는 flag" "error mentions unknown flag"
 teardown
 
+# --- --wait-ci with --ci-poll-interval 0 → die (infinite loop guard) ---
+setup
+if "$BIN/gitea-pr-status" 1 --wait-ci --ci-poll-interval 0 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on --ci-poll-interval 0 with --wait-ci >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "무한 루프" "error mentions infinite loop"
+teardown
+
+# --- --ci-timeout non-integer → die ---
+setup
+if "$BIN/gitea-pr-status" 1 --ci-timeout abc 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero on non-integer --ci-timeout >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "비음수 정수" "error mentions non-negative integer"
+teardown
+
 # --- gate pass: all required ok, CI absent → exit 0 ---
 setup
 install_curl_stub
@@ -33,8 +49,8 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
 fixture GET /api/v1/repos/owner/repo/commits/abc/status \
     '{"state":"pending","total_count":0,"statuses":[]}'
 
-out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")"
-rc=$?
+rc=0
+out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")" || rc=$?
 assert_eq "$rc" "0" "exit 0 when gate passes"
 assert_contains "$out" "title_ok=true" "title_ok in output"
 assert_contains "$out" "body_ok=true" "body_ok in output"
@@ -55,9 +71,9 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
     '{"number":42,"title":"","body":"x","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"a"}}'
 fixture GET /api/v1/repos/owner/repo/commits/a/status '{"state":"pending","total_count":0,"statuses":[]}'
 
-if out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")"; then
-    echo FAIL: expected non-zero on empty title >&2; exit 1
-fi
+rc=0
+out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on empty title"
 assert_contains "$out" "title_ok=false" "title_ok=false reported"
 assert_contains "$out" "gate_passed=false" "gate_passed=false reported"
 teardown
@@ -69,9 +85,9 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
     '{"number":42,"title":"x","body":"","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"a"}}'
 fixture GET /api/v1/repos/owner/repo/commits/a/status '{"state":"pending","total_count":0,"statuses":[]}'
 
-if out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")"; then
-    echo FAIL: expected non-zero on empty body >&2; exit 1
-fi
+rc=0
+out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on empty body"
 assert_contains "$out" "body_ok=false" "body_ok=false reported"
 teardown
 
@@ -82,9 +98,9 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
     '{"number":42,"title":"x","body":"y","draft":false,"changed_files":0,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"a"}}'
 fixture GET /api/v1/repos/owner/repo/commits/a/status '{"state":"pending","total_count":0,"statuses":[]}'
 
-if out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")"; then
-    echo FAIL: expected non-zero on changed_files=0 >&2; exit 1
-fi
+rc=0
+out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on changed_files=0"
 assert_contains "$out" "changed_files=0" "changed_files=0 reported"
 assert_contains "$out" "gate_passed=false" "gate_passed=false reported"
 teardown
@@ -96,9 +112,9 @@ fixture GET /api/v1/repos/owner/repo/pulls/42 \
     '{"number":42,"title":"x","body":"y","draft":true,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"a"}}'
 fixture GET /api/v1/repos/owner/repo/commits/a/status '{"state":"pending","total_count":0,"statuses":[]}'
 
-if out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")"; then
-    echo FAIL: expected non-zero on draft >&2; exit 1
-fi
+rc=0
+out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on draft=true"
 assert_contains "$out" "draft=true" "draft=true reported"
 assert_contains "$out" "gate_passed=false" "gate_passed=false reported"
 teardown
@@ -182,7 +198,7 @@ fixture_seq GET /api/v1/repos/owner/repo/commits/abc/status \
     '{"state":"success","total_count":1,"statuses":[{"context":"build","state":"success"}]}'
 
 rc=0
-out="$("$BIN/gitea-pr-status" 42 --wait-ci --ci-poll-interval 0 --ci-timeout 5)" || rc=$?
+out="$("$BIN/gitea-pr-status" 42 --wait-ci --ci-poll-interval 1 --ci-timeout 5)" || rc=$?
 assert_eq "$rc" "0" "exit 0 after pending → success"
 assert_contains "$out" "ci_state=success" "final ci_state=success"
 teardown

@@ -40,6 +40,17 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$PR" ] || die "PR# 인자 필요"
+
+case "$CI_TIMEOUT" in
+    ''|*[!0-9]*) die "--ci-timeout 은 비음수 정수여야 함: $CI_TIMEOUT" ;;
+esac
+case "$CI_INTERVAL" in
+    ''|*[!0-9]*) die "--ci-poll-interval 은 비음수 정수여야 함: $CI_INTERVAL" ;;
+esac
+if [ "$WAIT_CI" = "1" ] && [ "$CI_INTERVAL" -le 0 ]; then
+    die "--wait-ci 사용 시 --ci-poll-interval 은 1 이상이어야 함 (무한 루프 방지)"
+fi
+
 resolve_remote
 
 pr_path="/repos/$GITEA_REPO/pulls/$PR"

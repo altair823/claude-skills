@@ -59,6 +59,7 @@ PR의 entry-gate 점검에 필요한 메타데이터와 CI 상태를 한 번에 
 
 ```
 gitea-pr-status <PR#> [--json] [--wait-ci] [--ci-timeout SECONDS]
+                      [--ci-poll-interval SECONDS]
                       [-r owner/repo] [-u URL]
 ```
 
@@ -107,7 +108,7 @@ gate_passed=true
 ### 종료 코드
 
 - 0: gate_passed=true.
-- 1: 필수 항목 실패.
+- 1: 필수 항목 실패 또는 CI pending(--wait-ci 미사용).
 - 2: CI failure / error.
 - 3: CI pending이면서 timeout 도달 (`--wait-ci` 사용 시). **이 코드는 자동 실패 아님** — 호출자(Claude) 가 결과를 사용자에게 보고하고 결정 (연장 / 중단 / 강제 진입) 을 위임해야 한다는 신호.
 - 그 외: API 오류 등 일반 실패.
