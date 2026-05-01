@@ -58,13 +58,17 @@ PR head SHA combined status 조회. `total_count==0` (CI 없음) → skip. `succ
 
 1. `gitea-pr-diff <PR#>`로 현재 PR diff을 dump.
 2. 리뷰어 관점에서 분석 후 `gitea-pr-review` **반드시 호출** — 매 회차에 새로운 review를 한 건씩 PR에 등록해야 한다.
-   - 본문/코드에 명확한 결함, 의도 불명확, 누락, 권장 개선이 있으면 `--event REQUEST_CHANGES` + 해당 inline 코멘트.
-   - actionable한 지적이 없고 칭찬·수긍 코멘트만 남으면 `--event APPROVE`.
+   - actionable 한 지적이 **하나라도** 있으면 `--event REQUEST_CHANGES` + 해당 inline 코멘트. 명백한 결함·의도 불명확·누락·권장 개선뿐 아니라 **사소한 nit/cosmetic (오타, 명명 미세 조정, 불필요한 빈 줄, 사소한 가독성 개선) 도 포함**한다. nit 이라고 APPROVE 로 묻어 두지 않는다 — 회차 한 번 더 도는 비용보다 누락된 cleanup 이 머지 후 별도 PR 로 이어지는 비용이 더 크다.
+   - actionable 한 지적이 0건이고 칭찬·수긍 코멘트만 남으면 `--event APPROVE`.
    - summary body 첫 줄에 `회차 N` prefix를 붙여 timeline에서 회차를 식별 가능하게 한다 (예: `회차 2 — 회차 1 지적 모두 반영. 추가 권장 1건.`).
 3. **종료 조건**: 방금 등록한 review의 `event=APPROVE` 이고 inline 코멘트에 issue/suggestion 카테고리가 0개 (칭찬만 있음). 이때 루프 종료.
 4. 종료 조건 미충족: inline 코멘트와 summary를 토대로 코드/문서를 수정 → 새 커밋 → push → 다음 회차의 (1) 로 진입.
 
 > **참고**: 회차마다 `gitea-pr-review` 등록 필수. Gitea 는 commit push 시 이전 review 를 자동 dismiss 하지 않고 "Outdated" 배지만 붙임 (`dismiss_stale_approvals` 켠 환경 예외). "APPROVE 하나만 보임"은 회차 누락 신호 — UI 에서 사라진 게 아님.
+
+### 머지 안내
+
+리뷰 루프가 APPROVE 로 종료된 직후 사용자에게 "이제 사용자가 Gitea UI 에서 머지" 라고 안내할 때 **반드시 해당 PR URL 을 포함**한다 (예: `http://gitea.example/owner/repo/pulls/N`). 사용자가 한 클릭으로 머지 화면에 이동할 수 있어야 함 — URL 없이 "머지하세요" 만 보내면 사용자가 PR 번호를 다시 찾아야 한다. `gitea-pr-review` 의 출력에 review URL 이 포함되니 거기서 PR URL 을 추출해 함께 보고.
 
 ### 가드
 
