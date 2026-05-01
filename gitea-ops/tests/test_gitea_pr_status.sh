@@ -202,4 +202,25 @@ assert_contains "$out" "ci_state=pending" "still pending after timeout"
 assert_contains "$out" "gate_passed=false" "gate_passed=false"
 teardown
 
+# --- --json: parseable object with all fields ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"My PR","body":"body","draft":false,"changed_files":7,"base":{"ref":"main","sha":"d"},"head":{"ref":"feat","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"success","total_count":1,"statuses":[{"context":"build","state":"success"}]}'
+
+out="$("$BIN/gitea-pr-status" 42 --json)"
+assert_eq "$(printf '%s' "$out" | jq -r '.title_ok')"      "true"    "json title_ok"
+assert_eq "$(printf '%s' "$out" | jq -r '.body_ok')"       "true"    "json body_ok"
+assert_eq "$(printf '%s' "$out" | jq -r '.changed_files')" "7"       "json changed_files"
+assert_eq "$(printf '%s' "$out" | jq -r '.draft')"         "false"   "json draft"
+assert_eq "$(printf '%s' "$out" | jq -r '.base')"          "main"    "json base"
+assert_eq "$(printf '%s' "$out" | jq -r '.head')"          "feat"    "json head"
+assert_eq "$(printf '%s' "$out" | jq -r '.head_sha')"      "abc"     "json head_sha"
+assert_eq "$(printf '%s' "$out" | jq -r '.ci_state')"      "success" "json ci_state"
+assert_eq "$(printf '%s' "$out" | jq -r '.ci_count')"      "1"       "json ci_count"
+assert_eq "$(printf '%s' "$out" | jq -r '.gate_passed')"   "true"    "json gate_passed"
+teardown
+
 echo OK
