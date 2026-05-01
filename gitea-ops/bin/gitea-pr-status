@@ -58,9 +58,14 @@ changed_files="$(printf '%s' "$pr_json" | jq -r '.changed_files // 0')"
 [ -n "$title" ] && title_ok=true || title_ok=false
 [ -n "$body" ]  && body_ok=true  || body_ok=false
 
-# CI placeholder — fully wired in Task 5.
-ci_state="none"
-ci_count=0
+# Fetch combined CI status for head_sha. Empty statuses → CI absent.
+ci_json="$(gitea_get "/repos/$GITEA_REPO/commits/$head_sha/status")"
+ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
+if [ "$ci_count" = "0" ]; then
+    ci_state="none"
+else
+    ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
+fi
 
 # Gate evaluation.
 required_ok=false

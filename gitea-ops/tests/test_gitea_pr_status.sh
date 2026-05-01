@@ -113,4 +113,62 @@ fi
 assert_file_contains "$TEST_TMP/err" "999" "error mentions PR number"
 teardown
 
+# --- CI success → gate_passed=true, exit 0 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"success","total_count":2,"statuses":[{"context":"build","state":"success"},{"context":"lint","state":"success"}]}'
+
+out="$("$BIN/gitea-pr-status" 42)"
+assert_contains "$out" "ci_state=success" "ci_state=success"
+assert_contains "$out" "ci_count=2" "ci_count=2"
+assert_contains "$out" "gate_passed=true" "gate_passed=true"
+teardown
+
+# --- CI failure → exit 2 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"failure","total_count":1,"statuses":[{"context":"build","state":"failure"}]}'
+
+rc=0
+out="$("$BIN/gitea-pr-status" 42 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "2" "exit 2 on CI failure"
+assert_contains "$out" "ci_state=failure" "ci_state=failure"
+assert_contains "$out" "gate_passed=false" "gate_passed=false"
+teardown
+
+# --- CI error → exit 2 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"error","total_count":1,"statuses":[{"context":"build","state":"error"}]}'
+
+rc=0
+out="$("$BIN/gitea-pr-status" 42)" || rc=$?
+assert_eq "$rc" "2" "exit 2 on CI error"
+assert_contains "$out" "ci_state=error" "ci_state=error"
+teardown
+
+# --- CI pending without --wait-ci → exit 1 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/42 \
+    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"pending","total_count":1,"statuses":[{"context":"build","state":"pending"}]}'
+
+rc=0
+out="$("$BIN/gitea-pr-status" 42)" || rc=$?
+assert_eq "$rc" "1" "exit 1 on CI pending without --wait-ci"
+assert_contains "$out" "ci_state=pending" "ci_state=pending"
+assert_contains "$out" "gate_passed=false" "gate_passed=false"
+teardown
+
 echo OK
