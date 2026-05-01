@@ -5,15 +5,14 @@ description: Use when the user wants to interact with paperboy — a private HTT
 
 # paperboy-ops
 
-Three thin tools:
+Three tools:
+- `paperboy-spec` — inspect live OpenAPI (paths/ops/schemas).
+- `paperboy-api` — auth'd HTTP client (`METHOD PATH`).
+- `paperboy-estimate` — local line/cm estimator (paper-saving gate).
 
-- `paperboy-spec` — inspect the live OpenAPI document (paths, operations, schemas).
-- `paperboy-api` — generic authenticated HTTP client (`paperboy-api METHOD PATH …`).
-- `paperboy-estimate` — deterministic line/cm estimator for text payloads (paper-saving gate).
+`paperboy-spec` / `paperboy-api` read `~/.config/paperboy-ops/config` for URL + Basic Auth (+ optional metrics creds, paths, CA). `paperboy-estimate` is local-only.
 
-The two HTTP-talking tools (`paperboy-spec`, `paperboy-api`) read `~/.config/paperboy-ops/config` for `PAPERBOY_URL`, `PAPERBOY_USERNAME`, `PAPERBOY_PASSWORD` (+ optional metrics creds, openapi/swagger paths, custom CA). `paperboy-estimate` is purely local and needs no config.
-
-**The API is evolving.** Do NOT call endpoints from memory or from `paperboy/API.md`. Always start by reading the live spec.
+**The API is evolving.** Do NOT call endpoints from memory — always start by reading the live spec.
 
 ## Workflow
 
@@ -65,37 +64,25 @@ with dividers — paper separation can carry intent.
 
 ### Length gate
 
-After composing the payload, run the helper on the text-bearing field:
+After composing, run on the text field:
 
 ```sh
 echo "$TEXT" | paperboy-estimate --size "$W,$H" --feed-lines "$N"
 ```
 
-Output:
+JSON output: `physical_lines`, `approx_cm`, `over_threshold`, `threshold`. Exit `0` under threshold (default 15), `1` over, `2` charset failure (with `--check-charset`).
 
-```json
-{"physical_lines": 18, "approx_cm": 5.40, "over_threshold": true, "threshold": 15}
-```
-
-Exit code: `0` if `physical_lines <= threshold` (default 15), `1` if over,
-`2` if `--check-charset` was passed and the text contains EUC-KR-incompatible
-glyphs.
-
-| `over_threshold` | Action |
-|---|---|
-| `false` | Print immediately. |
-| `true` | Show the user a preview (first ~10 lines + `... (총 N줄, ~M cm)`) and ask for confirmation. Print only after explicit OK. |
-
-The gate is a confirmation, not a hard block. Intentionally long content
-proceeds with one user OK. Override the threshold via `--threshold N` or
-`PAPERBOY_LINE_THRESHOLD`.
+`over_threshold=false` → print. `true` → show user preview (first ~10 lines + `... (총 N줄, ~M cm)`), wait for OK. The gate is confirmation, not block — long content proceeds with one OK. Override via `--threshold N` or `PAPERBOY_LINE_THRESHOLD`.
 
 ### When to use `--check-charset`
 
-Only when introducing unusual glyphs (decorative marks, Unicode symbols,
-uncommon Hanja). It runs strict `iconv -f UTF-8 -t EUC-KR`, prints offending
-characters to stderr, and exits 2. ASCII + Hangul + common punctuation never
-needs it.
+Only for unusual glyphs (decorative marks, Unicode symbols, uncommon Hanja). Runs strict `iconv -f UTF-8 -t EUC-KR`, prints offending chars to stderr, exits 2. ASCII + Hangul + common punctuation never needs it.
+
+## Pre-flight check
+
+Before the first authenticated call: deps (`curl jq`) + config is UTF-8 no BOM + mode 0600. Config is shell-sourced — a BOM corrupts the first variable name and silently breaks auth.
+
+**PowerShell pitfall**: default `>` / `Out-File` writes UTF-16 LE BOM. Use `Set-Content -Encoding utf8NoBOM` or `[IO.File]::WriteAllText()`.
 
 ## Setup
 
@@ -144,81 +131,59 @@ Cached at `~/.cache/paperboy-ops/openapi.json` for 5 minutes. After the user red
 paperboy-api <METHOD> <PATH> [options]
 ```
 
-Body options (mutually exclusive):
-- `--json '<inline-json>'`
-- `--json-file <path>`
-- `--json-stdin` (or trailing `@-`) — read JSON from stdin
+Body (mutually exclusive): `--json '<inline>'` / `--json-file <path>` / `--json-stdin` (or trailing `@-`).
 
-Headers:
-- `--idem <key>` — sets `Idempotency-Key`
-- `--idem-auto` — generate a unique one (use this for one-shot CLI prints)
-- `-H 'Header: value'` — repeatable extra headers (e.g. `-H 'X-Allow-Duplicate: 1'`)
+Headers: `--idem <key>` (Idempotency-Key) / `--idem-auto` (auto unique — for one-shot CLI prints) / `-H 'Header: value'` (repeatable, e.g. `-H 'X-Allow-Duplicate: 1'`).
 
-Auth role: `--auth main` (default) or `--auth metrics` (for `/metrics`).
-
-Misc: `--raw` (skip jq), `--status` (echo `[NNN]` HTTP code to stderr), `--debug`.
-
-Exit code: 0 on 2xx, 1 otherwise. Body always written to stdout.
+Auth: `--auth main` (default) or `--auth metrics` (for `/metrics`). Misc: `--raw` (skip jq), `--status` ([NNN] HTTP code to stderr), `--debug`. Exit 0 on 2xx, 1 otherwise. Body always to stdout.
 
 ## Worked example — text print + verify
 
 ```sh
-# 1. Confirm the route + body shape from the live server.
-paperboy-spec op POST /print/text
-paperboy-spec schema TextPayload     # required: text; optional: align/bold/size/cut/feed_lines
+paperboy-spec op POST /print/text                         # discover route + body
+paperboy-spec schema TextPayload                          # required: text; opt: align/bold/size/cut/feed_lines
+paperboy-api GET /readyz                                  # printer health
 
-# 2. Sanity-check the printer.
-paperboy-api GET /readyz             # {ok:true, usb_open:true, online:true, ...}
-
-# 3. Compose payload (compaction checklist 1–7 already applied).
 TEXT='[영수증]
 커피      4500
 샌드위치  6000
 ─────────────
 합계     10500'
 
-# 4. Estimate length. Exit 0 = under threshold → print. Exit 1 = ask user first.
-if echo "$TEXT" | paperboy-estimate --size 1,1 --feed-lines 0; then
-  :  # under threshold; proceed
-else
-  echo "Over threshold — show preview, get user confirmation, then proceed."
-fi
+echo "$TEXT" | paperboy-estimate --size 1,1 --feed-lines 0  # exit 1 = preview + ask user first
 
-# 5. Enqueue (auto Idempotency-Key so retries don't double-print).
 JOB=$(paperboy-api POST /print/text --idem-auto \
   --json "$(jq -n --arg t "$TEXT" '{text:$t,align:0,size:[1,1],cut:true,feed_lines:0}')" \
   | jq -r .job_id)
 
-# 6. Poll until terminal.
+# Poll until terminal: succeeded | failed_* | cancelled
 while :; do
   s=$(paperboy-api GET "/jobs/$JOB" --raw | jq -r .status)
-  case "$s" in
-    succeeded|failed_*|cancelled) echo "$s"; break ;;
-  esac
+  case "$s" in succeeded|failed_*|cancelled) echo "$s"; break ;; esac
   sleep 1
 done
 ```
 
-UTF-8 in, EUC-KR encoding handled by the server — just send Korean text as-is.
+UTF-8 in, server handles EUC-KR — send Korean text as-is.
 
 ## Worked example — raw ESC/POS bytes
 
 ```sh
-# init + text + feed 8 lines (cutter offset) + partial cut
+# init + text + 8-line feed (cutter offset) + partial cut
 B64=$(printf '\x1b\x40hello raw\x0a\x1b\x64\x08\x1d\x56\x00' | base64)
 paperboy-api POST /print/raw --idem-auto --json "{\"data_b64\":\"$B64\"}"
 ```
 
-Raw payloads are capped at 64 KiB and the server does no ESC/POS validation.
+Capped at 64 KiB, server does no ESC/POS validation.
 
 ## Idempotency rules
 
-The server accepts `Idempotency-Key` on enqueue endpoints. If absent, paperboy hashes the body and dedupes anyway (resend = same job). Practical guidance:
+Server accepts `Idempotency-Key` on enqueue endpoints. Absent → paperboy hashes body and dedupes (resend = same job).
 
 - One-shot CLI prints → `--idem-auto`.
-- Pipelines that retry their own steps → caller-supplied stable key per logical job.
-- Genuinely intentional duplicate (same body, must print twice) → `-H 'X-Allow-Duplicate: 1'`.
-- Same key + different body → server returns `409 Conflict`. Pick a fresh key.
+- Retry-driven pipelines → caller-supplied stable key per logical job.
+- Intentional duplicate (same body, print twice) → `-H 'X-Allow-Duplicate: 1'`.
+- Same key + different body → `409 Conflict`. Pick fresh key.
 
 ## Common operations
 
@@ -233,8 +198,6 @@ The server accepts `Idempotency-Key` on enqueue endpoints. If absent, paperboy h
 | Manual cut | `paperboy-api POST /control/cut --json '{}' --idem-auto` |
 | Prometheus scrape | `paperboy-api GET /metrics --auth metrics --raw` |
 
-Re-derive any of these from `paperboy-spec paths` if behaviour looks off — the server is the source of truth.
-
 ## Common mistakes
 
 | Symptom | Fix |
@@ -248,8 +211,4 @@ Re-derive any of these from `paperboy-spec paths` if behaviour looks off — the
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | Success (HTTP 2xx) |
-| 1 | HTTP non-2xx, network error, malformed openapi response |
-| 2 | Bad CLI usage / missing config / missing required env |
+`0` success (HTTP 2xx) / `1` HTTP non-2xx, network error, malformed openapi / `2` bad CLI usage, missing config or env.

@@ -5,24 +5,23 @@ description: Use when the user wants to interact with a private Harbor container
 
 # harbor-ops
 
-Browse and operate on a Harbor private container registry from the CLI. The
-read path is in `harbor-ls`; the write path is split across `harbor-project`,
-`harbor-login`, `harbor-push`, and `harbor-tag`. Zero deps beyond
-`bash >= 4.3`, `curl`, `jq` (and optionally `numfmt` for human-readable
-sizes; `docker` for `harbor-login` / `harbor-push`).
+Harbor private registry CLI. Read: `harbor-ls`. Write: `harbor-project`, `harbor-login`, `harbor-push`, `harbor-tag`. Deps: `bash >= 4.3`, `curl`, `jq` (+ `numfmt` for sizes; `docker` for login/push).
 
 ## When to use
 
-- "What projects are on our Harbor?" → `harbor-ls projects`
-- "List the tags of `myproj/api`" → `harbor-ls tags myproj/api`
-- "Did the last image push pass the vulnerability scan?" → `harbor-ls scan ...`
-- "Create a `playground` project" → `harbor-project create playground`
-- "Push this nginx image into our `playground/nginx:v1`" → `harbor-push nginx:1.27 playground/nginx:v1`
-- "Drop the old `staging:v1` tag" → `harbor-tag delete staging/api:v1`
-- "Promote `staging/api:v1` to `prod/api:v1`" → `harbor-tag copy staging/api:v1 prod/api:v1`
+- "What projects/repos/tags are on Harbor?" → `harbor-ls projects|repos|tags`
+- "Did the scan pass?" → `harbor-ls scan <project>/<repo>:<tag>`
+- "Create/delete a project" → `harbor-project create|delete <name>`
+- "Push image to Harbor" → `harbor-push <local> <project>/<repo>:<tag>`
+- "Delete/promote a tag" → `harbor-tag delete|copy ...`
 
-Do NOT use for non-Harbor registries (Docker Hub, GHCR, ECR have different
-APIs).
+Do NOT use for non-Harbor registries (Docker Hub/GHCR/ECR have different APIs).
+
+## Pre-flight check
+
+Before the first authenticated call: deps (`curl jq` + `docker` for login/push) + config file is UTF-8 no BOM + mode 0600. The config is shell-sourced — a BOM corrupts the first variable name and silently breaks auth.
+
+**PowerShell pitfall**: default `>` / `Out-File` writes UTF-16 LE BOM. Use `Set-Content -Encoding utf8NoBOM` or `[IO.File]::WriteAllText()`.
 
 ## Setup
 
@@ -44,19 +43,9 @@ APIs).
    staging_HARBOR_SECRET_FILE=~/.config/harbor-ops/secrets/staging
    ```
 
-   `chmod 600 ~/.config/harbor-ops/config`. **Never commit this file** —
-   secrets are inline. If you sync dotfiles, use the `_HARBOR_SECRET_FILE`
-   variant and exclude the secret file from version control.
+   `chmod 600 ~/.config/harbor-ops/config`. **Never commit** — secrets inline. For dotfile sync use the `_HARBOR_SECRET_FILE` variant + exclude the secret file from version control.
 
-   **Quote values that contain `$`.** Robot account names look like
-   `robot$<name>` and many secrets include `$`. Bash interprets unquoted
-   `$foo` as a parameter expansion, which silently corrupts the credential.
-   Always wrap such values in single quotes:
-
-   ```
-   prod_HARBOR_USER='robot$harbor-ls-readonly'
-   prod_HARBOR_SECRET='abc$xyz'
-   ```
+   **Quote `$` values**: robot accounts (`robot$<name>`) and many secrets contain `$`. Bash expands unquoted `$foo` and silently corrupts the credential. Always single-quote: `prod_HARBOR_USER='robot$readonly'`, `prod_HARBOR_SECRET='abc$xyz'`.
 
 3. Symlink the skill into Claude Code's skills dir:
 
@@ -66,9 +55,7 @@ APIs).
 
 ### Windows
 
-Works on Git Bash 2.x (bash 4.4+) and WSL2. NTFS ignores `chmod`, so the
-config file's mode-0600 protection is best-effort on native Git Bash; rely
-on user-directory ACLs.
+Git Bash 2.x (bash 4.4+) / WSL2 OK. NTFS ignores `chmod` — mode-0600 best-effort on native Git Bash; rely on user-directory ACLs.
 
 ## Binaries
 
@@ -110,10 +97,7 @@ an interactive tty). Project names must match Harbor's rule: lowercase
 harbor-login [--profile <name>]
 ```
 
-Persistent `docker login` against the active Harbor host using the stored
-config credentials. Modifies `~/.docker/config.json` — call this when you
-explicitly want a long-lived docker session. For one-shot pushes use
-`harbor-push` instead, which leaves the user's docker config untouched.
+Persistent `docker login` to the active Harbor host. Modifies `~/.docker/config.json` — only for long-lived sessions. Use `harbor-push` for one-shot (it leaves user docker config untouched).
 
 ### `harbor-push` (write)
 
@@ -121,10 +105,7 @@ explicitly want a long-lived docker session. For one-shot pushes use
 harbor-push <local-image> <project>/<repo>:<tag> [--profile <name>]
 ```
 
-Tags `<local-image>` for the active Harbor host and pushes it. Internally
-sets `DOCKER_CONFIG` to a fresh tmpdir for the duration of the command, so
-any login state created here is discarded on exit and the user's
-`~/.docker/config.json` is never touched.
+Tags `<local-image>` for the active Harbor host and pushes. Sets `DOCKER_CONFIG` to a fresh tmpdir for the call duration — login state discarded on exit, user's `~/.docker/config.json` untouched.
 
 ### `harbor-tag` (write)
 
@@ -139,12 +120,7 @@ promote across projects/repos without re-uploading any blob.
 
 ### Project auto-detection
 
-When a subcommand needs `<project>` (or `<project>/<repo>`) and the user
-omitted it, the skill walks up from cwd to the git root (or `$HOME`),
-scanning `Dockerfile`, `docker-compose.{yml,yaml}`, `compose.{yml,yaml}`,
-and `*.{yml,yaml}` files containing an `image:` key, in lexicographic
-order. The first reference matching `<host>/<project>/<repo>(:<tag>)?`
-where `<host>` is the active profile's Harbor host wins.
+When `<project>` (or `<project>/<repo>`) is omitted, walks cwd → git root / `$HOME` scanning `Dockerfile`, `docker-compose.{yml,yaml}`, `compose.{yml,yaml}`, `*.{yml,yaml}` (with `image:` key), lexicographic. First reference matching `<active-host>/<project>/<repo>(:<tag>)?` wins.
 
 ### Examples
 
@@ -177,10 +153,4 @@ harbor-tag delete staging/api:v1.2.0 --yes
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | API error (network, 4xx other than auth, 5xx, malformed response) |
-| 2 | Config or auth error |
-| 3 | Project auto-detect failed |
-| 4 | Invalid argument |
+`0` success / `1` API error (network, 4xx non-auth, 5xx, malformed) / `2` config or auth error / `3` project auto-detect failed / `4` invalid argument.
