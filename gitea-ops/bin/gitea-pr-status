@@ -1,0 +1,143 @@
+#!/bin/sh
+# PR entry-gate 점검: title/body/changed_files/draft/base/head 메타와 CI 상태를
+# 한 번에 출력한다. 리뷰 루프 모드 진입 전 검증용.
+#
+# Usage:
+#   gitea-pr-status <PR#> [--json] [--wait-ci]
+#                         [--ci-timeout SECONDS] [--ci-poll-interval SECONDS]
+#                         [-r owner/repo] [-u URL]
+#
+# Exit codes:
+#   0  gate_passed=true
+#   1  필수 항목 실패 또는 CI pending(--wait-ci 미사용)
+#   2  CI failure / error
+#   3  --wait-ci timeout 도달 (사용자 위임 신호; 자동 실패 아님)
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+require_cmd curl jq
+
+PR=""
+JSON=0
+WAIT_CI=0
+CI_TIMEOUT=1200
+CI_INTERVAL=30
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --json)              JSON=1; shift ;;
+        --wait-ci)           WAIT_CI=1; shift ;;
+        --ci-timeout)        CI_TIMEOUT="$2"; shift 2 ;;
+        --ci-poll-interval)  CI_INTERVAL="$2"; shift 2 ;;
+        -r|--repo)           GITEA_REPO="$2"; shift 2 ;;
+        -u|--url)            GITEA_URL="$2"; shift 2 ;;
+        -h|--help)           sed -n '2,14p' "$0"; exit 0 ;;
+        -*)                  die "알 수 없는 flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "예기치 않은 인자: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# 인자 필요"
+
+case "$CI_TIMEOUT" in
+    ''|*[!0-9]*) die "--ci-timeout 은 비음수 정수여야 함: $CI_TIMEOUT" ;;
+esac
+case "$CI_INTERVAL" in
+    ''|*[!0-9]*) die "--ci-poll-interval 은 비음수 정수여야 함: $CI_INTERVAL" ;;
+esac
+if [ "$WAIT_CI" = "1" ] && [ "$CI_INTERVAL" -le 0 ]; then
+    die "--wait-ci 사용 시 --ci-poll-interval 은 1 이상이어야 함 (무한 루프 방지)"
+fi
+
+resolve_remote
+
+pr_path="/repos/$GITEA_REPO/pulls/$PR"
+pr_json="$(gitea_get "$pr_path")"
+err_msg="$(printf '%s' "$pr_json" | jq -r '.message // empty' 2>/dev/null || true)"
+[ -z "$err_msg" ] || die "PR #$PR: $err_msg"
+
+title="$(printf '%s' "$pr_json" | jq -r '.title // ""')"
+body="$(printf '%s' "$pr_json" | jq -r '.body // ""')"
+draft="$(printf '%s' "$pr_json" | jq -r '.draft // false')"
+base_ref="$(printf '%s' "$pr_json" | jq -r '.base.ref // ""')"
+head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')"
+head_sha="$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')"
+changed_files="$(printf '%s' "$pr_json" | jq -r '.changed_files // 0')"
+
+[ -n "$title" ] && title_ok=true || title_ok=false
+[ -n "$body" ]  && body_ok=true  || body_ok=false
+
+# Fetch combined CI status for head_sha. Empty statuses → CI absent.
+ci_json="$(gitea_get "/repos/$GITEA_REPO/commits/$head_sha/status")"
+ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
+if [ "$ci_count" = "0" ]; then
+    ci_state="none"
+else
+    ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
+fi
+
+# Optional polling for pending CI.
+if [ "$WAIT_CI" = "1" ] && [ "$ci_state" = "pending" ]; then
+    elapsed=0
+    while [ "$ci_state" = "pending" ] && [ "$elapsed" -lt "$CI_TIMEOUT" ]; do
+        sleep "$CI_INTERVAL"
+        elapsed=$((elapsed + CI_INTERVAL))
+        ci_json="$(gitea_get "/repos/$GITEA_REPO/commits/$head_sha/status")"
+        ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
+        if [ "$ci_count" = "0" ]; then
+            ci_state="none"
+        else
+            ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
+        fi
+    done
+fi
+
+# Gate evaluation.
+required_ok=false
+if [ "$title_ok" = "true" ] && [ "$body_ok" = "true" ] && \
+   [ "$changed_files" -gt 0 ] && [ "$draft" = "false" ] && \
+   [ -n "$base_ref" ] && [ -n "$head_ref" ]; then
+    required_ok=true
+fi
+gate_passed=false
+if [ "$required_ok" = "true" ] && \
+   { [ "$ci_state" = "none" ] || [ "$ci_state" = "success" ]; }; then
+    gate_passed=true
+fi
+
+# Output.
+if [ "$JSON" = "1" ]; then
+    jq -n \
+       --argjson title_ok "$title_ok" \
+       --argjson body_ok "$body_ok" \
+       --argjson changed_files "$changed_files" \
+       --argjson draft "$draft" \
+       --arg base "$base_ref" \
+       --arg head "$head_ref" \
+       --arg head_sha "$head_sha" \
+       --arg ci_state "$ci_state" \
+       --argjson ci_count "$ci_count" \
+       --argjson gate_passed "$gate_passed" \
+       '{title_ok:$title_ok, body_ok:$body_ok, changed_files:$changed_files, draft:$draft, base:$base, head:$head, head_sha:$head_sha, ci_state:$ci_state, ci_count:$ci_count, gate_passed:$gate_passed}'
+else
+    printf 'title_ok=%s\n'      "$title_ok"
+    printf 'body_ok=%s\n'       "$body_ok"
+    printf 'changed_files=%s\n' "$changed_files"
+    printf 'draft=%s\n'         "$draft"
+    printf 'base=%s\n'          "$base_ref"
+    printf 'head=%s\n'          "$head_ref"
+    printf 'head_sha=%s\n'      "$head_sha"
+    printf 'ci_state=%s\n'      "$ci_state"
+    printf 'ci_count=%s\n'      "$ci_count"
+    printf 'gate_passed=%s\n'   "$gate_passed"
+fi
+
+# Exit code.
+if [ "$gate_passed" = "true" ]; then exit 0; fi
+case "$ci_state" in
+    failure|error) exit 2 ;;
+    pending)       [ "$WAIT_CI" = "1" ] && exit 3 || exit 1 ;;
+esac
+exit 1

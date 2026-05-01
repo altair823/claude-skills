@@ -50,7 +50,30 @@ Claude가 직접 머지하지 않더라도, 사람이 머지 결정을 내릴 �
 > 1. **단발** (기본) — PR만 생성.
 > 2. **리뷰 루프** — 자동 리뷰 → 수정 → 재리뷰를 모두 APPROVE될 때까지 반복.
 
+### Entry-gate
+
+리뷰 루프 모드를 선택했을 때, 루프 1회차의 `gitea-pr-diff` 호출 **전에** 다음 검증을 통과해야 한다. 통과 못 하면 루프 진입 거부, 사용자에게 누락 항목을 보고하고 PR 보완 후 재시도 안내.
+
+`gitea-pr-status <PR#> --wait-ci` 한 번으로 모두 점검 가능 (스크립트 항목 참조).
+
+#### 필수 항목 (항상)
+- `title` 비어있지 않음
+- `body` 비어있지 않음
+- `changed_files > 0`
+- `draft == false`
+- `base` / `head` branch 존재
+
+#### CI 항목 (조건부)
+PR head SHA 의 combined status 를 조회. `total_count == 0` 이면 CI 미설정으로 간주, 항목 skip. 통계가 있으면 다음 정책:
+
+- `state=success` → 통과.
+- `state=failure` 또는 `state=error` → 거부, 사용자에게 보고.
+- `state=pending` → 30초 간격으로 최대 20분 polling. 도중 success 도달 시 통과, fail 도달 시 거부.
+- 20분 경과 후에도 pending 유지 시 자동 실패 처리하지 않고 **사용자에게 위임** — Claude 는 현재 상태를 보고하고 사용자의 결정 (연장 / 중단 / 강제 진입) 을 기다린다 (`gitea-pr-status` exit 3).
+
 ### 루프 한 회차 동작
+
+회차 1 진입 전 위 [Entry-gate](#entry-gate) 를 통과해야 한다. 통과 못 한 PR 에는 리뷰 루프를 시작하지 않는다.
 
 리뷰 루프 모드에서는 매 회차마다 다음을 **반드시 모두** 수행한다. 어느 단계도 생략 금지 — 특히 (2) 의 `gitea-pr-review` 호출을 빼먹고 commit/push만 하면 그건 회차가 아니라 단순 후속 작업으로 간주된다.
 
@@ -151,6 +174,46 @@ Claude가 review 분석 input으로 사용:
 gitea-pr-diff 42 > /tmp/pr-42.txt   # 분석용 dump
 ```
 
+### `gitea-pr-status`
+
+```
+gitea-pr-status <PR#> [--json] [--wait-ci]
+                      [--ci-timeout SECONDS] [--ci-poll-interval SECONDS]
+                      [-r owner/repo] [-u URL]
+```
+
+PR entry-gate 점검에 필요한 메타와 CI 상태를 한 번에 출력한다.
+
+- `--json`: 단일 JSON 객체 출력. 미지정 시 사람-친화 `key=value` 라인.
+- `--wait-ci`: CI 가 `pending` 일 때 polling. 미지정 시 즉시 현재 상태만 출력.
+- `--ci-timeout SECONDS`: polling 최대 시간 (기본 1200 = 20분).
+- `--ci-poll-interval SECONDS`: polling 간격 (기본 30).
+
+출력 (텍스트):
+
+```
+title_ok=true
+body_ok=true
+changed_files=12
+draft=false
+base=main
+head=feat/widget
+head_sha=abc1234...
+ci_state=success
+ci_count=3
+gate_passed=true
+```
+
+`ci_state` 값: `none | pending | success | failure | error`. `gate_passed` 는 모든 필수 항목 통과 + (CI 없음 OR `ci_state=success`) 일 때만 true.
+
+#### 종료 코드
+
+- `0`: gate_passed=true.
+- `1`: 필수 항목 실패 또는 CI pending(--wait-ci 미사용).
+- `2`: CI failure / error.
+- `3`: `--wait-ci` 사용 시 timeout 도달. **자동 실패 아님** — 호출자가 결과를 사용자에게 보고하고 결정을 위임해야 한다는 신호.
+- 그 외: API 오류 등 일반 실패.
+
 ### `gitea-pr-review`
 
 ```
@@ -231,5 +294,6 @@ Claude가 본 skill을 통해 PR/release/issue/review를 작성할 때 따르는
   - **문제 (`new_position`/`old_position` 지적)**: bug, 의도 불명확, edge case 누락, 보안/성능 우려, 명명 개선 등.
   - **칭찬**: 좋은 결정, 깔끔한 추상화, 영리한 jq filter, test 커버리지 같은 의도적 잘한 부분도 inline으로 코멘트. 무미건조한 review가 아니라 진짜 읽고 있다는 신호.
   - 기본 3–10개. 문제가 많은 PR이면 더 많아도 OK. 0개는 review를 안 한 것 같음.
+- **리뷰·코멘트 영속성**: review summary, inline review comment, issue comment 는 한 번 등록되면 **수정·삭제하지 않는다**. 오타나 잘못된 판단을 발견한 경우에도 새 review 또는 새 코멘트로 정정한다 — timeline 의 회차 기록은 영구 보존되어야 한다. 본 skill 의 어떤 스크립트도 `PATCH`/`DELETE` × {`pulls/{n}/reviews/{id}`, `pulls/{n}/comments/{id}`, `issues/comments/{id}`} 6개 endpoint 를 호출하지 않는다 — `_common.sh` 상단의 `FORBIDDEN ENDPOINTS` 주석 참조. 새 스크립트 추가 시에도 이 endpoint 사용 금지.
 
 이 규칙은 Claude가 본 repo 또는 Gitea remote에 PR을 만들거나 review를 등록할 때 적용. 사용자가 "영어로", "english" 등을 명시하면 우회.

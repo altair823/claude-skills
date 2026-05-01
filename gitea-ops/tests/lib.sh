@@ -124,10 +124,27 @@ printf '%s\t%s\t%s\n' "$method" "$url" "$data" >>"$log"
 path="$(printf '%s' "$url" | sed -e 's|^https\?://[^/]*||' -e 's|?.*$||')"
 key="$(printf '%s_%s' "$method" "$path" | tr '/?&=' '____')"
 body_file="$fix/$key.body"
-if [ -r "$body_file" ]; then
+# Sequenced fixtures: $fix/<key>.seq.<N>.body in order. Counter file <key>.seq.idx
+# tracks next index. Falls back to <key>.body if no sequenced fixtures exist.
+seq_idx_file="$fix/$key.seq.idx"
+if [ -r "$fix/$key.seq.1.body" ]; then
+    idx=1
+    if [ -r "$seq_idx_file" ]; then
+        idx="$(cat "$seq_idx_file")"
+    fi
+    chosen="$fix/$key.seq.$idx.body"
+    if [ ! -r "$chosen" ]; then
+        # past the last; reuse last available
+        prev_idx=$((idx - 1))
+        chosen="$fix/$key.seq.$prev_idx.body"
+    else
+        next=$((idx + 1))
+        printf '%s' "$next" >"$seq_idx_file"
+    fi
+    cat "$chosen"
+elif [ -r "$body_file" ]; then
     cat "$body_file"
 else
-    # Default: empty body (callers using `jq -r '.field // empty'` get empty).
     :
 fi
 CURL_EOF
@@ -148,4 +165,17 @@ nth_call() {
 
 call_count() {
     wc -l <"$CALL_LOG" | tr -d ' '
+}
+
+# Sequenced fixture: each subsequent call to (method,path) returns the next body.
+# Usage: fixture_seq METHOD /path body1 body2 body3 ...
+# 기존 `fixture` 등록과 같은 (method, path) 에 대해 둘 다 존재하면 sequenced 가 우선.
+fixture_seq() {
+    method="$1"; path="$2"; shift 2
+    key="$(printf '%s_%s' "$method" "$path" | tr '/?&=' '____')"
+    n=1
+    for body in "$@"; do
+        printf '%s' "$body" >"$FIXTURE_DIR/$key.seq.$n.body"
+        n=$((n + 1))
+    done
 }
