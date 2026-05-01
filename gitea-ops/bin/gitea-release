@@ -9,20 +9,16 @@
 
 set -eu
 . "$(dirname "$0")/_common.sh"
-require_cmd curl jq git sha256sum
 
-# Echo "<prev_tag>\t<prev_created_at>" (tab-separated) or empty line if none.
 prev_release_meta() {
-    gitea_get "/repos/$GITEA_REPO/releases?limit=2&draft=false&pre-release=false" \
+    tea_api GET "/repos/{owner}/{repo}/releases?limit=2&draft=false&pre-release=false" \
         | jq -r '. | if length >= 2 then "\(.[1].tag_name)\t\(.[1].created_at)" else "" end'
 }
 
-# Build the "## 변경사항" section. Echoes empty string when no PRs to list.
-# Args: $1 = previous tag (may be empty), $2 = previous created_at (may be empty)
 build_pr_section() {
     prev_tag="$1"
     prev_created="$2"
-    pulls_json="$(gitea_get "/repos/$GITEA_REPO/pulls?state=closed&sort=updated&direction=desc&limit=50")"
+    pulls_json="$(tea_api GET "/repos/{owner}/{repo}/pulls?state=closed&sort=updated&direction=desc&limit=50")"
 
     raw_count="$(printf '%s' "$pulls_json" | jq 'length')"
     if [ "$raw_count" = "50" ]; then
@@ -70,8 +66,8 @@ while [ $# -gt 0 ]; do
 "; shift 2 ;;
         --sign) SIGN_KEY="$2"; shift 2 ;;
         --auto-notes) AUTO_NOTES="true"; shift ;;
-        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
-        -u|--url) GITEA_URL="$2"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; export GITEA_REPO; shift 2 ;;
+        -u|--url) GITEA_URL="$2"; export GITEA_URL; shift 2 ;;
         -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
         -*) die "알 수 없는 flag: $1" ;;
         *)
@@ -81,15 +77,15 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$TAG" ] || die "TAG 인자 필요"
+require_author_login
+require_cmd sha256sum
 [ -n "$SIGN_KEY" ] && require_cmd minisign
-resolve_remote
 : "${NAME:=$TAG}"
 
 if [ -z "$NOTES" ] && [ -n "$NOTES_FILE" ]; then
     NOTES="$(cat "$NOTES_FILE")"
 fi
 
-# --auto-notes: prepend a generated "## 변경사항" section.
 if [ "$AUTO_NOTES" = "true" ]; then
     meta="$(prev_release_meta)"
     prev_tag="$(printf '%s' "$meta" | cut -f1)"
@@ -105,7 +101,7 @@ $NOTES"
     fi
 fi
 
-# Push tag if local-only.
+# Push tag if local-only — tea won't do this for us.
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
         if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
@@ -115,7 +111,6 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fi
 fi
 
-# Create release
 body_json="$(jq -cn \
     --arg tag "$TAG" \
     --arg name "$NAME" \
@@ -126,7 +121,7 @@ body_json="$(jq -cn \
     '{tag_name:$tag, name:$name, body:$body, draft:$draft, prerelease:$pre}
      + (if $target != "" then {target_commitish:$target} else {} end)')"
 
-resp="$(printf '%s' "$body_json" | api_json POST "/repos/$GITEA_REPO/releases")"
+resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/releases")"
 
 rel_id="$(printf '%s' "$resp" | jq -r '.id // empty')"
 html_url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"
@@ -136,46 +131,39 @@ if [ -z "$rel_id" ] || [ "$rel_id" = "null" ]; then
 fi
 printf '[gitea-release] release 생성 완료: id=%s url=%s\n' "$rel_id" "$html_url" >&2
 
-# Upload assets
+# Upload assets: original + sha256 (always) + minisig (if --sign).
+# Each asset uploaded individually so we can build the .sha256/.minisig
+# alongside it without juggling parallel arrays. tea handles multipart.
 if [ -n "$ASSETS" ]; then
-    token="$(load_token)"
+    tmp_dir="$(mktemp -d -t gitea-release-XXXXXX)"
+    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+
+    upload_one() {
+        f="$1"
+        printf '[gitea-release] asset 업로드: %s\n' "$(basename "$f")" >&2
+        if [ -n "${GITEA_REPO:-}" ]; then
+            tea releases assets create "$TAG" "$f" \
+                --login "$GITEA_LOGIN_AUTHOR" --repo "$GITEA_REPO" >/dev/null
+        else
+            tea releases assets create "$TAG" "$f" \
+                --login "$GITEA_LOGIN_AUTHOR" >/dev/null
+        fi
+    }
+
     printf '%s' "$ASSETS" | while IFS= read -r asset; do
         [ -n "$asset" ] || continue
         [ -r "$asset" ] || die "asset 파일 없음: $asset"
 
-        # asset itself
-        base="$(basename "$asset")"
-        printf '[gitea-release] asset 업로드: %s\n' "$base" >&2
-        curl -sS -X POST \
-            -H "Authorization: token $token" \
-            -F "attachment=@$asset;filename=$base" \
-            "$GITEA_URL/api/v1/repos/$GITEA_REPO/releases/$rel_id/assets?name=$base" \
-            >/dev/null
+        upload_one "$asset"
 
-        # sha256
-        sha_file="$(mktemp)"
+        sha_file="$tmp_dir/$(basename "$asset").sha256"
         (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")") > "$sha_file"
-        sha_name="$base.sha256"
-        printf '[gitea-release] asset 업로드: %s\n' "$sha_name" >&2
-        curl -sS -X POST \
-            -H "Authorization: token $token" \
-            -F "attachment=@$sha_file;filename=$sha_name" \
-            "$GITEA_URL/api/v1/repos/$GITEA_REPO/releases/$rel_id/assets?name=$sha_name" \
-            >/dev/null
-        rm -f "$sha_file"
+        upload_one "$sha_file"
 
-        # minisig
         if [ -n "$SIGN_KEY" ]; then
-            sig_file="$asset.minisig"
             minisign -Sm "$asset" -s "$SIGN_KEY" >/dev/null 2>&1 \
                 || die "minisign 서명 실패: $asset"
-            sig_name="$base.minisig"
-            printf '[gitea-release] asset 업로드: %s\n' "$sig_name" >&2
-            curl -sS -X POST \
-                -H "Authorization: token $token" \
-                -F "attachment=@$sig_file;filename=$sig_name" \
-                "$GITEA_URL/api/v1/repos/$GITEA_REPO/releases/$rel_id/assets?name=$sig_name" \
-                >/dev/null
+            upload_one "$asset.minisig"
         fi
     done
 fi

@@ -5,7 +5,7 @@ description: Drive Gitea via REST API from the CLI — create releases with mini
 
 # gitea-ops
 
-Gitea REST API thin wrapper. 의존성은 `curl`, `jq`, `git`, 그리고 (release 서명용) `sha256sum` + `minisign` 뿐.
+Gitea REST API thin wrapper, [`tea` CLI](https://gitea.com/gitea/tea) 위에 구성. 의존성: `tea` (>= 0.14), `jq`, `git`. release 서명용 추가: `sha256sum`, `minisign`. 모든 인증·host 자동 감지·multi-byte UTF-8 송신은 tea 가 처리 — curl 직호출 없음.
 
 ## 사용 시점
 
@@ -74,21 +74,24 @@ PR head SHA combined status 조회. `total_count==0` (CI 없음) → skip. `succ
 
 ## 환경 사전 점검
 
-토큰 첫 사용 전: 의존성 (`curl jq git`, release 서명이면 `minisign sha256sum` 추가) + 토큰 파일 UTF-8 no BOM + mode 0600 확인.
+토큰 첫 사용 전: 의존성 (`tea jq git`, release 서명이면 `minisign sha256sum` 추가) + 토큰 파일 UTF-8 no BOM + mode 0600 확인.
 
-**PowerShell 함정**: 기본 `>` / `Out-File` 은 UTF-16 LE BOM 으로 저장 → Gitea 401. 반드시 `Set-Content -Encoding utf8NoBOM` 또는 `[IO.File]::WriteAllText()` 사용. `reviewer-token`, harbor-ops/paperboy-ops config 도 동일 규칙.
+**PowerShell 함정**: 기본 `>` / `Out-File` 은 UTF-16 LE BOM 으로 저장 → tea 가 token 파일 읽기 실패. 반드시 `Set-Content -Encoding utf8NoBOM` 또는 `[IO.File]::WriteAllText()` 사용. harbor-ops/paperboy-ops config 도 동일 규칙.
 
 ## 셋업
 
-1. Personal Access Token: `https://<host>/user/settings/applications` 발급. scope: **repository**, **issue**, **package** (release asset 용).
-2. `~/.config/gitea-ops/token` (mode 0600) 또는 `GITEA_TOKEN` env.
-3. (선택) `~/.config/gitea-ops/config` 에 `GITEA_URL=https://...` + `GITEA_REPO=owner/repo`. `origin` remote 가 Gitea host 면 자동 추출.
-4. **Reviewer token** — 별도 Gitea 계정 (repo write scope) 의 token. `gitea-pr-review` 전용. `~/.config/gitea-ops/reviewer-token` (mode 0600) 또는 `GITEA_REVIEWER_TOKEN` env. 빈 placeholder 거부.
+1. **Author token** 발급: `https://<host>/user/settings/applications`. scope **반드시 포함**: `read:user` (tea 가 token 검증 시 호출), `write:repository`, `write:issue`, `write:package` (release asset 용).
+2. **Reviewer token** 발급: 별도 Gitea 계정으로 로그인 후 동일 페이지에서. scope 동일 (`read:user`, `write:repository`).
+3. **tea login 등록** — 두 가지 방법:
+   - **(권장) tea 직접 등록**: `tea logins add --name gitea-ops-author --url https://<host> --token <T>` + `tea logins add --name gitea-ops-reviewer --url https://<host> --token <T>`.
+   - **(자동 마이그레이션)** `~/.config/gitea-ops/token` (author) + `~/.config/gitea-ops/reviewer-token` (reviewer) 에 토큰을 저장 (mode 0600). 첫 호출 시 스크립트가 `git remote` 의 host 를 추론해 자동으로 `tea logins add`. host 자동 감지 실패 시 `GITEA_URL` env 로 override.
+4. **호출 시 repo 자동 감지** — cwd 가 git repo 면 tea 가 `origin` 으로부터 owner/repo 추론. `-r owner/repo` 로 override 가능. 별도 config 파일 불필요.
+
+login 이름 override: `GITEA_LOGIN_AUTHOR` / `GITEA_LOGIN_REVIEWER` env.
 
 ## 스크립트
 
-모든 스크립트는 working copy 내에서 호출 시 `git remote get-url origin`으로 host + repo를
-자동 감지 (origin이 Gitea host를 가리키는 경우). `-u <URL>` / `-r <owner/repo>`로 오버라이드.
+모든 스크립트는 cwd 가 git working copy 일 때 tea 가 자동으로 `origin` 에서 host + owner/repo 를 추론한다. `-r <owner/repo>` 로 override (스크립트는 `--repo` 옵션을 그대로 tea 에 전달).
 
 ### `gitea-release`
 
@@ -187,15 +190,16 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 
 ## 에러 처리
 
-- 401 → token 누락/무효. 사용자에게 `~/.config/gitea-ops/token` 확인 안내.
-- 403 → token scope 부족.
-- `/repos/.../releases/tags/TAG`에서 404 → tag가 아직 remote에 없음. 스크립트가 push 후 1회 재시도.
+- `tea logins add` 가 `token does not have at least one of required scope(s), required=[read:user]` → token 발급 시 `read:user` 누락. 재발급 후 등록.
+- 401 (tea api 호출 시) → token 만료/회수. 새 token 으로 `tea logins edit` 또는 token 파일 갱신 후 `tea logins delete <name>` + 재등록.
+- 403 → 작업 scope 부족 (예: write:issue 없이 issue 생성).
+- `/repos/.../releases/tags/TAG` 에서 404 → tag 가 아직 remote 에 없음. `gitea-release` 가 push 후 1회 재시도.
 
 ## 인코딩 / Multi-byte 안전성
 
-JSON 본문을 POST/PATCH 할 때는 항상 `curl --data-binary @-` 를 사용한다. 일반 `--data`는 입력에서 CR/LF 등을 strip 하면서 부수 처리를 하기 때문에, 한글·이모지 같은 multi-byte UTF-8 시퀀스가 산발적으로 invalid byte로 손상되어 Gitea에 U+FFFD(`���`)로 저장되는 사례가 실제로 발생했다 (PR #11 리뷰 코멘트의 "만" → `���`).
+JSON 본문은 모두 `tea api -d @-` (stdin) 로 전송 — Go `net/http` 가 raw bytes 를 그대로 송신하므로 한글·이모지 같은 multi-byte UTF-8 손상 위험 없음. 과거 curl `--data` 경로의 CR/LF strip 함정 (PR #11 리뷰의 "만" → `���`) 은 tea 마이그레이션으로 자동 해소.
 
-`_common.sh:api_json` 과 `gitea-pr-review` 가 이 규칙을 따른다. 새 endpoint 추가 시에도 `--data-binary` 로 통일.
+`_common.sh:tea_api_json` 이 이 경로를 사용한다. 새 endpoint 추가 시에도 동일 helper 또는 직접 `tea api -X METHOD -d @-` 패턴 사용.
 
 ## 작업 후
 

@@ -15,7 +15,6 @@
 
 set -eu
 . "$(dirname "$0")/_common.sh"
-require_cmd curl jq
 
 PR=""
 JSON=0
@@ -29,8 +28,8 @@ while [ $# -gt 0 ]; do
         --wait-ci)           WAIT_CI=1; shift ;;
         --ci-timeout)        CI_TIMEOUT="$2"; shift 2 ;;
         --ci-poll-interval)  CI_INTERVAL="$2"; shift 2 ;;
-        -r|--repo)           GITEA_REPO="$2"; shift 2 ;;
-        -u|--url)            GITEA_URL="$2"; shift 2 ;;
+        -r|--repo)           GITEA_REPO="$2"; export GITEA_REPO; shift 2 ;;
+        -u|--url)            GITEA_URL="$2"; export GITEA_URL; shift 2 ;;
         -h|--help)           sed -n '2,14p' "$0"; exit 0 ;;
         -*)                  die "알 수 없는 flag: $1" ;;
         *)
@@ -50,11 +49,9 @@ esac
 if [ "$WAIT_CI" = "1" ] && [ "$CI_INTERVAL" -le 0 ]; then
     die "--wait-ci 사용 시 --ci-poll-interval 은 1 이상이어야 함 (무한 루프 방지)"
 fi
+require_author_login
 
-resolve_remote
-
-pr_path="/repos/$GITEA_REPO/pulls/$PR"
-pr_json="$(gitea_get "$pr_path")"
+pr_json="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR")"
 err_msg="$(printf '%s' "$pr_json" | jq -r '.message // empty' 2>/dev/null || true)"
 [ -z "$err_msg" ] || die "PR #$PR: $err_msg"
 
@@ -69,8 +66,7 @@ changed_files="$(printf '%s' "$pr_json" | jq -r '.changed_files // 0')"
 [ -n "$title" ] && title_ok=true || title_ok=false
 [ -n "$body" ]  && body_ok=true  || body_ok=false
 
-# Fetch combined CI status for head_sha. Empty statuses → CI absent.
-ci_json="$(gitea_get "/repos/$GITEA_REPO/commits/$head_sha/status")"
+ci_json="$(tea_api GET "/repos/{owner}/{repo}/commits/$head_sha/status")"
 ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
 if [ "$ci_count" = "0" ]; then
     ci_state="none"
@@ -78,13 +74,12 @@ else
     ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
 fi
 
-# Optional polling for pending CI.
 if [ "$WAIT_CI" = "1" ] && [ "$ci_state" = "pending" ]; then
     elapsed=0
     while [ "$ci_state" = "pending" ] && [ "$elapsed" -lt "$CI_TIMEOUT" ]; do
         sleep "$CI_INTERVAL"
         elapsed=$((elapsed + CI_INTERVAL))
-        ci_json="$(gitea_get "/repos/$GITEA_REPO/commits/$head_sha/status")"
+        ci_json="$(tea_api GET "/repos/{owner}/{repo}/commits/$head_sha/status")"
         ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
         if [ "$ci_count" = "0" ]; then
             ci_state="none"
@@ -94,7 +89,6 @@ if [ "$WAIT_CI" = "1" ] && [ "$ci_state" = "pending" ]; then
     done
 fi
 
-# Gate evaluation.
 required_ok=false
 if [ "$title_ok" = "true" ] && [ "$body_ok" = "true" ] && \
    [ "$changed_files" -gt 0 ] && [ "$draft" = "false" ] && \
@@ -107,7 +101,6 @@ if [ "$required_ok" = "true" ] && \
     gate_passed=true
 fi
 
-# Output.
 if [ "$JSON" = "1" ]; then
     jq -n \
        --argjson title_ok "$title_ok" \
@@ -134,7 +127,6 @@ else
     printf 'gate_passed=%s\n'   "$gate_passed"
 fi
 
-# Exit code.
 if [ "$gate_passed" = "true" ]; then exit 0; fi
 case "$ci_state" in
     failure|error) exit 2 ;;
