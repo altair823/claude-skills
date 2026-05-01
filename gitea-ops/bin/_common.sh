@@ -2,6 +2,18 @@
 # Shared helpers for gitea-ops scripts. Sourced, not executed.
 # Requires: curl, jq, git.
 
+# FORBIDDEN ENDPOINTS — review/comment 영속성 보장.
+# 본 skill의 어떤 스크립트도 다음 endpoint 를 호출해선 안 된다:
+#   PATCH  /repos/{owner}/{repo}/pulls/{index}/reviews/{id}
+#   DELETE /repos/{owner}/{repo}/pulls/{index}/reviews/{id}
+#   PATCH  /repos/{owner}/{repo}/pulls/{index}/comments/{id}
+#   DELETE /repos/{owner}/{repo}/pulls/{index}/comments/{id}
+#   PATCH  /repos/{owner}/{repo}/issues/comments/{id}
+#   DELETE /repos/{owner}/{repo}/issues/comments/{id}
+# 이유: 한 번 등록된 review/inline comment/issue comment 는 PR timeline 의
+# 회차 기록으로 영구 보존되어야 한다. 새 스크립트 추가 시에도 이 endpoint
+# 호출 금지.
+
 set -eu
 
 GITEA_CONFIG="${GITEA_CONFIG:-$HOME/.config/gitea-ops/config}"
