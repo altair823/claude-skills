@@ -67,8 +67,11 @@ ensure_tea_login() {
     [ -n "${tok:-}" ] || die "tea login '$name' 미등록 + token 없음 ($env_var env 또는 $file 파일 필요)"
     host="$(detect_gitea_host)" \
         || die "Gitea host 자동 감지 실패 — GITEA_URL env 또는 git remote 필요"
-    tea logins add --name "$name" --url "$host" --token "$tok" --no-version-check >/dev/null 2>&1 \
-        || die "tea login 등록 실패: $name"
+    # Capture stderr so the failure reason (e.g. "token does not have at least
+    # one of required scope(s), required=[read:user]") reaches the user instead
+    # of a bare "등록 실패".
+    err_out="$(tea logins add --name "$name" --url "$host" --token "$tok" --no-version-check 2>&1 >/dev/null)" \
+        || die "tea login 등록 실패 ($name): $err_out"
 }
 
 # Setup helpers: ensure deps + correct login is registered before any tea call.

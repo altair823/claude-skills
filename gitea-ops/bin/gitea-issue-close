@@ -28,9 +28,12 @@ require_author_login
 
 if [ -n "$COMMENT" ]; then
     body="$(jq -n --arg body "$COMMENT" '{body:$body}')"
-    printf '%s' "$body" \
-        | tea_api_json POST "/repos/{owner}/{repo}/issues/$NUM/comments" \
-        >/dev/null
+    # tea api can return exit 0 with a `.message` field on 4xx — verify the
+    # response so a failed comment doesn't silently slide into the close call.
+    comment_resp="$(printf '%s' "$body" \
+        | tea_api_json POST "/repos/{owner}/{repo}/issues/$NUM/comments")"
+    comment_err="$(printf '%s' "$comment_resp" | jq -r '.message // empty' 2>/dev/null || true)"
+    [ -z "$comment_err" ] || die "issue #$NUM 코멘트 실패: $comment_err"
 fi
 
 resp="$(printf '%s' '{"state":"closed"}' | tea_api_json PATCH "/repos/{owner}/{repo}/issues/$NUM")"

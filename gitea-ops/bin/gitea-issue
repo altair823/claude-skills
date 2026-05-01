@@ -45,22 +45,14 @@ if [ -n "$LABEL_NAMES" ]; then
     ')"
 fi
 
-if [ -n "$MILESTONE" ]; then
-    body_json="$(jq -n \
-        --arg title "$TITLE" \
-        --arg body "$BODY" \
-        --argjson labels "$LABEL_IDS_JSON" \
-        --argjson assignees "$ASSIGNEES_JSON" \
-        --argjson milestone "$MILESTONE" \
-        '{title:$title, body:$body, labels:$labels, assignees:$assignees, milestone:$milestone}')"
-else
-    body_json="$(jq -n \
-        --arg title "$TITLE" \
-        --arg body "$BODY" \
-        --argjson labels "$LABEL_IDS_JSON" \
-        --argjson assignees "$ASSIGNEES_JSON" \
-        '{title:$title, body:$body, labels:$labels, assignees:$assignees}')"
-fi
+body_json="$(jq -n \
+    --arg title "$TITLE" \
+    --arg body "$BODY" \
+    --argjson labels "$LABEL_IDS_JSON" \
+    --argjson assignees "$ASSIGNEES_JSON" \
+    --argjson milestone "${MILESTONE:-null}" \
+    '{title:$title, body:$body, labels:$labels, assignees:$assignees}
+     + (if $milestone == null then {} else {milestone:$milestone} end)')"
 
 resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/issues")"
 
