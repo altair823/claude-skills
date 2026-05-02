@@ -61,11 +61,12 @@ if [ "$PUSH_MODE" = "mirror" ]; then
     git push --mirror "$gh_url" \
         || die "git push --mirror 실패 — 'gh auth setup-git' 후 재시도"
 else
-    printf '[gitea-mirror-push] git push --all --tags to %s\n' "$GH_REPO" >&2
-    # `--all --tags` 한 호출로 atomic — branches push 후 tags push 가 분리되면
-    # 사이에서 실패 시 inconsistent (branches 만 push 된 상태) 가 됨.
-    git push "$gh_url" --all --tags \
-        || die "git push --all --tags 실패 — 'gh auth setup-git' 후 재시도. fast-forward 불가 시 --force-mirror 검토."
+    printf '[gitea-mirror-push] git push --atomic --all --tags to %s\n' "$GH_REPO" >&2
+    # `--atomic --all --tags` — 한 호출 + receive-pack 단에서 모든 ref 가
+    # 함께 atomic update. `--atomic` 없으면 일부 ref 가 fast-forward 가능 +
+    # 다른 ref reject 일 때 partial push 가 일어날 수 있음.
+    git push --atomic "$gh_url" --all --tags \
+        || die "git push --atomic --all --tags 실패 — 'gh auth setup-git' 후 재시도. fast-forward 불가 시 --force-mirror 검토."
 fi
 
 printf 'https://github.com/%s\n' "$GH_REPO"
