@@ -62,79 +62,120 @@ setup() {
 
     # Place stubs ahead of real binaries on PATH.
     export PATH="$STUB_DIR:$PATH"
+
+    # tea stub answers `tea logins ls` claiming both logins already exist,
+    # so ensure_tea_login skips the registration path during tests.
+    # install_curl_stub() (kept for back-compat name) now installs the tea stub.
 }
 
 teardown() {
     rm -rf "$TEST_TMP"
 }
 
-# Install a curl stub that responds based on URL+method match against fixture files.
-# Fixtures: $FIXTURE_DIR/<METHOD>_<urlencoded-path>.body  → response body
-#           $FIXTURE_DIR/<METHOD>_<urlencoded-path>.code  → HTTP status (default 200; only used by callers checking exit)
+# Install a tea stub that:
+#   - claims `tea logins ls` lists both expected logins (so ensure_tea_login skips add)
+#   - intercepts `tea api -X METHOD --login NAME [--repo REPO] [-d @-] /path`
+#     and serves fixture bodies by (METHOD, /api/v1/<resolved-path>) key.
+#   - no-ops `tea releases assets create <tag> <file>...` (logs the call instead).
+# Fixtures: $FIXTURE_DIR/<METHOD>_<urlencoded-path-incl-/api/v1>.body
+# Path placeholders {owner}/{repo} are resolved from $GITEA_REPO before lookup,
+# matching the original curl-era fixture keys verbatim.
 install_curl_stub() {
-    cat >"$STUB_DIR/curl" <<'CURL_EOF'
+    cat >"$STUB_DIR/tea" <<'TEA_EOF'
 #!/bin/sh
-# Stub: log invocation, then echo fixture body matching last URL arg.
 log="${CALL_LOG:?CALL_LOG unset}"
 fix="${FIXTURE_DIR:?FIXTURE_DIR unset}"
 
-method="GET"
-url=""
-data=""
-read_stdin=0
-prev=""
-for a in "$@"; do
-    case "$prev" in
-        -X) method="$a" ;;
-        --data)
-            if [ "$a" = "@-" ]; then
+cmd="${1:-}"; shift 2>/dev/null || true
+
+case "$cmd" in
+    logins)
+        sub="${1:-ls}"; shift 2>/dev/null || true
+        case "$sub" in
+            ls|list)
+                printf 'NAME,URL,SSH HOST,USER,DEFAULT\n'
+                printf 'gitea-ops-author,https://gitea.test,,user,1\n'
+                printf 'gitea-ops-reviewer,https://gitea.test,,reviewer,0\n'
+                ;;
+            *) ;;  # add/edit/delete are unreachable in tests
+        esac
+        exit 0
+        ;;
+    releases)
+        # tea releases assets create <tag> <file>... — log only.
+        all="$*"
+        printf 'tea\treleases\t%s\n' "$all" >>"$log"
+        exit 0
+        ;;
+    api) ;;  # falls through to handler below
+    *)
+        printf 'tea-stub: unknown command: %s\n' "$cmd" >&2
+        exit 1
+        ;;
+esac
+
+# --- tea api handler ---
+method="GET"; login=""; repo=""; path=""; data=""; read_stdin=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -X|--method) method="$2"; shift 2 ;;
+        -l|--login)  login="$2"; shift 2 ;;
+        -r|--repo)   repo="$2"; shift 2 ;;
+        -R|--remote) shift 2 ;;
+        -d|--data)
+            if [ "$2" = "@-" ]; then
                 read_stdin=1
+            elif [ "${2#@}" != "$2" ]; then
+                # @file — read from file
+                data="$(cat "${2#@}")"
             else
-                data="$a"
+                data="$2"
             fi
-            ;;
-        --data-binary)
-            if [ "$a" = "@-" ]; then
-                read_stdin=1
-            else
-                data="$a"
-            fi
-            ;;
-        -F) ;;
-        -H) ;;
+            shift 2 ;;
+        -H|--header) shift 2 ;;
+        -F|--Field)  shift 2 ;;
+        -f|--field)  shift 2 ;;
+        -i|--include) shift ;;
+        -o|--output) shift 2 ;;
+        --debug|--vvv) shift ;;
+        /*|http*) path="$1"; shift ;;
+        *) shift ;;
     esac
-    case "$a" in
-        https://*|http://*) url="$a" ;;
-    esac
-    prev="$a"
 done
 
-# Stdin body for `--data @-`
 if [ "$read_stdin" = "1" ]; then
     data="$(cat)"
 fi
 
-# Escape newlines/tabs in body so each call stays on one log line.
-data="$(printf '%s' "$data" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {printf "%s", $0}' | sed 's/\t/\\t/g')"
+# Resolve {owner}/{repo} placeholders: --repo wins, else GITEA_REPO env.
+src_repo="${repo:-${GITEA_REPO:-}}"
+if [ -n "$src_repo" ]; then
+    owner="${src_repo%/*}"
+    rname="${src_repo#*/}"
+    path="$(printf '%s' "$path" | sed -e "s|{owner}|$owner|g" -e "s|{repo}|$rname|g")"
+fi
 
-# Log: METHOD\turl\tbody
-printf '%s\t%s\t%s\n' "$method" "$url" "$data" >>"$log"
+# tea api auto-prefixes /api/v1 unless path already starts with /api/.
+case "$path" in
+    /api/*|http*) ;;
+    *) path="/api/v1$path" ;;
+esac
 
-# Look up fixture by method + url path.
-path="$(printf '%s' "$url" | sed -e 's|^https\?://[^/]*||' -e 's|?.*$||')"
-key="$(printf '%s_%s' "$method" "$path" | tr '/?&=' '____')"
+# Log shape preserved: METHOD<TAB>URL<TAB>BODY (URL synthesized for compatibility).
+data_log="$(printf '%s' "$data" | awk 'BEGIN{ORS=""} NR>1{printf "\\n"} {printf "%s", $0}' | sed 's/\t/\\t/g')"
+printf '%s\thttps://gitea.test%s\t%s\n' "$method" "$path" "$data_log" >>"$log"
+
+# Strip query string for fixture lookup (matches original curl stub semantics).
+path_clean="${path%%\?*}"
+key="$(printf '%s_%s' "$method" "$path_clean" | tr '/?&=' '____')"
 body_file="$fix/$key.body"
-# Sequenced fixtures: $fix/<key>.seq.<N>.body in order. Counter file <key>.seq.idx
-# tracks next index. Falls back to <key>.body if no sequenced fixtures exist.
 seq_idx_file="$fix/$key.seq.idx"
+
 if [ -r "$fix/$key.seq.1.body" ]; then
     idx=1
-    if [ -r "$seq_idx_file" ]; then
-        idx="$(cat "$seq_idx_file")"
-    fi
+    [ -r "$seq_idx_file" ] && idx="$(cat "$seq_idx_file")"
     chosen="$fix/$key.seq.$idx.body"
     if [ ! -r "$chosen" ]; then
-        # past the last; reuse last available
         prev_idx=$((idx - 1))
         chosen="$fix/$key.seq.$prev_idx.body"
     else
@@ -144,11 +185,9 @@ if [ -r "$fix/$key.seq.1.body" ]; then
     cat "$chosen"
 elif [ -r "$body_file" ]; then
     cat "$body_file"
-else
-    :
 fi
-CURL_EOF
-    chmod +x "$STUB_DIR/curl"
+TEA_EOF
+    chmod +x "$STUB_DIR/tea"
 }
 
 # Write a fixture body for a (method, path) pair.

@@ -49,15 +49,27 @@ fi
 assert_file_contains "$TEST_TMP/err" "stdin 사용 불가" "error mentions stdin conflict"
 teardown
 
-# --- reviewer-token missing → die ---
+# --- reviewer login + token both missing → die ---
+# Override the stub's `tea logins ls` so it returns no entries — that forces
+# ensure_tea_login down the registration path, which then needs a token file
+# (also absent here), producing the expected die() message.
 setup
 install_curl_stub
+cat >"$STUB_DIR/tea" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+    logins) printf 'NAME,URL,SSH HOST,USER,DEFAULT\n'; exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$STUB_DIR/tea"
 export GITEA_REVIEWER_TOKEN_FILE="$TEST_TMP/no-such-file"
 unset GITEA_REVIEWER_TOKEN || true
 if "$BIN/gitea-pr-review" 42 --event APPROVE --body ok 2>"$TEST_TMP/err"; then
     echo FAIL: expected non-zero >&2; exit 1
 fi
-assert_file_contains "$TEST_TMP/err" "reviewer token" "error mentions reviewer token"
+assert_file_contains "$TEST_TMP/err" "gitea-ops-reviewer" "error mentions reviewer login name"
+assert_file_contains "$TEST_TMP/err" "token 없음" "error mentions missing token"
 teardown
 
 # --- summary-only: POST body has event+body, no comments ---

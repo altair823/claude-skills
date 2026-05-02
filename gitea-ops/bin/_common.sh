@@ -1,6 +1,6 @@
 #!/bin/sh
 # Shared helpers for gitea-ops scripts. Sourced, not executed.
-# Requires: curl, jq, git.
+# Requires: tea (>= 0.14), jq, git.
 
 # FORBIDDEN ENDPOINTS — review/comment 영속성 보장.
 # 본 skill의 어떤 스크립트도 다음 endpoint 를 호출해선 안 된다:
@@ -12,130 +12,16 @@
 #   DELETE /repos/{owner}/{repo}/issues/comments/{id}
 # 이유: 한 번 등록된 review/inline comment/issue comment 는 PR timeline 의
 # 회차 기록으로 영구 보존되어야 한다. 새 스크립트 추가 시에도 이 endpoint
-# 호출 금지.
+# 호출 금지 (`tea api -X PATCH/DELETE` 도 동일).
 
 set -eu
 
-GITEA_CONFIG="${GITEA_CONFIG:-$HOME/.config/gitea-ops/config}"
 GITEA_TOKEN_FILE="${GITEA_TOKEN_FILE:-$HOME/.config/gitea-ops/token}"
+GITEA_REVIEWER_TOKEN_FILE="${GITEA_REVIEWER_TOKEN_FILE:-$HOME/.config/gitea-ops/reviewer-token}"
+GITEA_LOGIN_AUTHOR="${GITEA_LOGIN_AUTHOR:-gitea-ops-author}"
+GITEA_LOGIN_REVIEWER="${GITEA_LOGIN_REVIEWER:-gitea-ops-reviewer}"
 
 die() { printf 'gitea-ops: %s\n' "$*" >&2; exit 1; }
-
-load_token() {
-    if [ -n "${GITEA_TOKEN:-}" ]; then
-        printf '%s' "$GITEA_TOKEN"; return 0
-    fi
-    if [ -r "$GITEA_TOKEN_FILE" ]; then
-        cat "$GITEA_TOKEN_FILE"; return 0
-    fi
-    die "token 필요 (GITEA_TOKEN env 또는 $GITEA_TOKEN_FILE 파일)"
-}
-
-GITEA_REVIEWER_TOKEN_FILE="${GITEA_REVIEWER_TOKEN_FILE:-$HOME/.config/gitea-ops/reviewer-token}"
-
-load_reviewer_token() {
-    if [ -n "${GITEA_REVIEWER_TOKEN:-}" ]; then
-        printf '%s' "$GITEA_REVIEWER_TOKEN"; return 0
-    fi
-    # -s rejects empty placeholder files (Setup recommends `touch reviewer-token`).
-    if [ -r "$GITEA_REVIEWER_TOKEN_FILE" ] && [ -s "$GITEA_REVIEWER_TOKEN_FILE" ]; then
-        cat "$GITEA_REVIEWER_TOKEN_FILE"; return 0
-    fi
-    die "reviewer token 필요 (GITEA_REVIEWER_TOKEN env 또는 $GITEA_REVIEWER_TOKEN_FILE 파일)"
-}
-
-# Parse remote URL into "<scheme>://<host>" and "owner/repo".
-# Accepts https://host/owner/repo(.git) and ssh git@host:owner/repo(.git).
-parse_remote() {
-    url="$1"
-    case "$url" in
-        https://*)
-            base="${url#https://}"
-            host="${base%%/*}"
-            path="${base#*/}"
-            path="${path%.git}"
-            path="${path%/}"
-            printf 'https://%s\t%s\n' "$host" "$path"
-            ;;
-        http://*)
-            base="${url#http://}"
-            host="${base%%/*}"
-            path="${base#*/}"
-            path="${path%.git}"
-            path="${path%/}"
-            printf 'http://%s\t%s\n' "$host" "$path"
-            ;;
-        git@*)
-            base="${url#git@}"
-            host="${base%%:*}"
-            path="${base#*:}"
-            path="${path%.git}"
-            printf 'https://%s\t%s\n' "$host" "$path"
-            ;;
-        ssh://*)
-            base="${url#ssh://}"
-            base="${base#*@}"
-            host="${base%%/*}"
-            path="${base#*/}"
-            path="${path%.git}"
-            printf 'https://%s\t%s\n' "$host" "$path"
-            ;;
-        *) die "remote URL 파싱 실패: $url" ;;
-    esac
-}
-
-# Populate GITEA_URL and GITEA_REPO with precedence:
-#   1. CLI flags (caller sets via --url / --repo → already exported)
-#   2. Env GITEA_URL / GITEA_REPO
-#   3. Config file
-#   4. git remote origin
-resolve_remote() {
-    if [ -z "${GITEA_URL:-}" ] || [ -z "${GITEA_REPO:-}" ]; then
-        if [ -r "$GITEA_CONFIG" ]; then
-            # shellcheck disable=SC1090
-            . "$GITEA_CONFIG"
-        fi
-    fi
-    if [ -z "${GITEA_URL:-}" ] || [ -z "${GITEA_REPO:-}" ]; then
-        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            origin="$(git remote get-url origin 2>/dev/null || true)"
-            if [ -n "$origin" ]; then
-                parsed="$(parse_remote "$origin")"
-                auto_url="$(printf '%s' "$parsed" | cut -f1)"
-                auto_repo="$(printf '%s' "$parsed" | cut -f2)"
-                : "${GITEA_URL:=$auto_url}"
-                : "${GITEA_REPO:=$auto_repo}"
-            fi
-        fi
-    fi
-    [ -n "${GITEA_URL:-}" ] || die "GITEA_URL 미설정 (--url / GITEA_URL env / config 파일 중 하나 필요)"
-    [ -n "${GITEA_REPO:-}" ] || die "GITEA_REPO 미설정 (--repo / GITEA_REPO env / config 파일 중 하나 필요)"
-    export GITEA_URL GITEA_REPO
-}
-
-api() {
-    method="$1"; path="$2"; shift 2
-    token="$(load_token)"
-    url="$GITEA_URL/api/v1$path"
-    curl -sS -X "$method" \
-         -H "Authorization: token $token" \
-         -H "Content-Type: application/json" \
-         "$@" "$url"
-}
-
-# api with body from stdin
-api_json() {
-    method="$1"; path="$2"
-    token="$(load_token)"
-    url="$GITEA_URL/api/v1$path"
-    # --data-binary preserves bytes verbatim. Plain --data strips CR/LF and can
-    # subtly corrupt multi-byte UTF-8 in the wrong locale; use binary always for JSON.
-    curl -sS -X "$method" \
-         -H "Authorization: token $token" \
-         -H "Content-Type: application/json" \
-         --data-binary @- \
-         "$url"
-}
 
 require_cmd() {
     for c in "$@"; do
@@ -143,16 +29,83 @@ require_cmd() {
     done
 }
 
-# Shell-escape a value for JSON string use via jq
-jq_str() { printf '%s' "$1" | jq -Rs . ; }
+# Derive Gitea base URL from current git origin (or GITEA_URL env override).
+# Used only when registering a new tea login — tea itself handles host
+# resolution for subsequent calls via the stored login.
+detect_gitea_host() {
+    if [ -n "${GITEA_URL:-}" ]; then printf '%s' "$GITEA_URL"; return 0; fi
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        origin="$(git remote get-url origin 2>/dev/null || true)"
+        case "$origin" in
+            https://*) base="${origin#https://}"; printf 'https://%s' "${base%%/*}"; return 0 ;;
+            http://*)  base="${origin#http://}";  printf 'http://%s'  "${base%%/*}"; return 0 ;;
+            git@*)     base="${origin#git@}";     printf 'https://%s' "${base%%:*}"; return 0 ;;
+            ssh://*)   base="${origin#ssh://}"; base="${base#*@}"; printf 'https://%s' "${base%%/*}"; return 0 ;;
+        esac
+    fi
+    return 1
+}
 
-# GET helper — same auth/url, always GET, no body.
-gitea_get() {
-    path="$1"
-    token="$(load_token)"
-    url="$GITEA_URL/api/v1$path"
-    curl -sS -X GET \
-         -H "Authorization: token $token" \
-         -H "Accept: application/json" \
-         "$url"
+# Returns 0 if the named tea login already exists, 1 otherwise.
+tea_login_exists() {
+    name="$1"
+    # csv: header row + one row per login. Field 1 is NAME.
+    tea logins ls --output csv 2>/dev/null \
+        | awk -F, 'NR>1 && $1=="'"$name"'" { found=1 } END { exit found?0:1 }'
+}
+
+# Register a tea login if missing. Token resolved from env var, falling back
+# to file. Idempotent — pre-existing logins are left untouched.
+# Args: $1 login name, $2 env var name (e.g. GITEA_TOKEN), $3 fallback file path
+ensure_tea_login() {
+    name="$1"; env_var="$2"; file="$3"
+    tea_login_exists "$name" && return 0
+    eval "tok=\${$env_var:-}"
+    if [ -z "${tok:-}" ] && [ -r "$file" ] && [ -s "$file" ]; then
+        tok="$(cat "$file")"
+    fi
+    [ -n "${tok:-}" ] || die "tea login '$name' 미등록 + token 없음 ($env_var env 또는 $file 파일 필요)"
+    host="$(detect_gitea_host)" \
+        || die "Gitea host 자동 감지 실패 — GITEA_URL env 또는 git remote 필요"
+    # Capture stderr so the failure reason (e.g. "token does not have at least
+    # one of required scope(s), required=[read:user]") reaches the user instead
+    # of a bare "등록 실패".
+    err_out="$(tea logins add --name "$name" --url "$host" --token "$tok" --no-version-check 2>&1 >/dev/null)" \
+        || die "tea login 등록 실패 ($name): $err_out"
+}
+
+# Setup helpers: ensure deps + correct login is registered before any tea call.
+require_author_login() {
+    require_cmd tea jq git
+    ensure_tea_login "$GITEA_LOGIN_AUTHOR" GITEA_TOKEN "$GITEA_TOKEN_FILE"
+}
+
+require_reviewer_login() {
+    require_cmd tea jq git
+    ensure_tea_login "$GITEA_LOGIN_REVIEWER" GITEA_REVIEWER_TOKEN "$GITEA_REVIEWER_TOKEN_FILE"
+}
+
+# tea api wrapper — REST call via stored login. JSON-safe (Go net/http sends
+# raw bytes; no curl --data CR/LF stripping pitfall).
+# Honors GITEA_REPO override; otherwise tea infers owner/repo from cwd.
+# TEA_LOGIN env switches the login (default: author). Endpoint may use
+# {owner}/{repo} placeholders — tea substitutes from --repo or cwd.
+# Args: METHOD, /path, [extra tea api args...]
+tea_api() {
+    method="$1"; path="$2"; shift 2
+    if [ -n "${GITEA_REPO:-}" ]; then
+        tea api -X "$method" --login "${TEA_LOGIN:-$GITEA_LOGIN_AUTHOR}" --repo "$GITEA_REPO" "$@" "$path"
+    else
+        tea api -X "$method" --login "${TEA_LOGIN:-$GITEA_LOGIN_AUTHOR}" "$@" "$path"
+    fi
+}
+
+# tea_api with JSON body from stdin.
+tea_api_json() {
+    method="$1"; path="$2"
+    if [ -n "${GITEA_REPO:-}" ]; then
+        tea api -X "$method" --login "${TEA_LOGIN:-$GITEA_LOGIN_AUTHOR}" --repo "$GITEA_REPO" -d "@-" "$path"
+    else
+        tea api -X "$method" --login "${TEA_LOGIN:-$GITEA_LOGIN_AUTHOR}" -d "@-" "$path"
+    fi
 }

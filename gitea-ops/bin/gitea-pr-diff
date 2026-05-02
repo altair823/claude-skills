@@ -10,10 +10,9 @@
 
 set -eu
 . "$(dirname "$0")/_common.sh"
-require_cmd curl jq
 
 PR=""
-MODE="meta"   # meta | raw | json
+MODE="meta"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -23,8 +22,8 @@ while [ $# -gt 0 ]; do
         --json)
             [ "$MODE" = "raw" ] && die "--raw와 --json은 동시 사용 불가"
             MODE="json"; shift ;;
-        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
-        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; export GITEA_REPO; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; export GITEA_URL; shift 2 ;;
         -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
         -*) die "알 수 없는 flag: $1" ;;
         *)
@@ -34,11 +33,9 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$PR" ] || die "PR# 인자 필요"
-resolve_remote
+require_author_login
 
-pr_path="/repos/$GITEA_REPO/pulls/$PR"
-
-pr_json="$(gitea_get "$pr_path")"
+pr_json="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR")"
 err_msg="$(printf '%s' "$pr_json" | jq -r '.message // empty' 2>/dev/null || true)"
 if [ -n "$err_msg" ]; then
     die "PR #$PR: $err_msg"
@@ -46,10 +43,10 @@ fi
 title="$(printf '%s' "$pr_json" | jq -r '.title // empty')"
 [ -n "$title" ] || die "PR #$PR 존재하지 않음"
 
-files_json="$(gitea_get "$pr_path/files")"
+files_json="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR/files")"
 files_err="$(printf '%s' "$files_json" | jq -r '.message // empty' 2>/dev/null || true)"
 [ -z "$files_err" ] || die "PR #$PR files: $files_err"
-diff_body="$(gitea_get "$pr_path.diff")"
+diff_body="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR.diff")"
 
 if [ "$MODE" = "raw" ]; then
     printf '%s\n' "$diff_body"
@@ -69,7 +66,6 @@ if [ "$MODE" = "json" ]; then
     exit 0
 fi
 
-# Default mode: human header + diff.
 url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
 state="$(printf '%s' "$pr_json" | jq -r '.state // empty')"
 author="$(printf '%s' "$pr_json" | jq -r '.user.login // empty')"
@@ -90,7 +86,6 @@ printf 'State: %s\n' "$state"
 printf '작성자: %s\n' "$author"
 printf '변경 파일: %s개 (+%s -%s)\n' "$n_files" "$total_add" "$total_del"
 
-# Per-file lines: status code (M/A/D/...) plus additions/deletions.
 printf '%s' "$files_json" | jq -r '
     .[] |
     (.status[0:1] | ascii_upcase) as $s |

@@ -8,7 +8,6 @@
 
 set -eu
 . "$(dirname "$0")/_common.sh"
-require_cmd curl jq git
 
 TITLE=""
 BODY=""
@@ -18,10 +17,7 @@ DRAFT="false"
 ASSIGNEES_JSON="[]"
 LABELS_JSON="[]"
 
-append_json_array() {
-    # $1 = current json array literal, $2 = string to append
-    echo "$1" | jq --arg v "$2" '. + [$v]'
-}
+append_json_array() { echo "$1" | jq --arg v "$2" '. + [$v]' ; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -34,8 +30,8 @@ while [ $# -gt 0 ]; do
             ASSIGNEES_JSON="$(append_json_array "$ASSIGNEES_JSON" "$2")"; shift 2 ;;
         --label)
             LABELS_JSON="$(append_json_array "$LABELS_JSON" "$2")"; shift 2 ;;
-        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
-        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; export GITEA_REPO; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; export GITEA_URL; shift 2 ;;
         -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
         *) die "알 수 없는 인자: $1" ;;
     esac
@@ -43,9 +39,9 @@ done
 
 [ -n "$TITLE" ] || die "--title 인자 필요"
 [ -n "$HEAD" ]  || die "--head 인자 필요"
-resolve_remote
+require_author_login
 
-# Push head branch if local-only
+# Push head branch if local-only — tea pulls/api won't do this for us.
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if git show-ref --verify --quiet "refs/heads/$HEAD"; then
         if ! git ls-remote --heads origin "$HEAD" | grep -q "$HEAD"; then
@@ -55,7 +51,6 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     fi
 fi
 
-# Build body JSON
 body_json="$(jq -n \
     --arg title "$TITLE" \
     --arg body "$BODY" \
@@ -66,7 +61,7 @@ body_json="$(jq -n \
     --argjson labels "$LABELS_JSON" \
     '{title:$title, body:$body, head:$head, base:$base, draft:$draft, assignees:$assignees, labels:$labels}')"
 
-resp="$(printf '%s' "$body_json" | api_json POST "/repos/$GITEA_REPO/pulls")"
+resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/pulls")"
 
 num="$(printf '%s' "$resp" | jq -r '.number // empty')"
 url="$(printf '%s' "$resp" | jq -r '.html_url // empty')"

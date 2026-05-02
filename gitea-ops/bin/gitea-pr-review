@@ -13,7 +13,6 @@
 
 set -eu
 . "$(dirname "$0")/_common.sh"
-require_cmd curl jq
 
 PR=""
 EVENT=""
@@ -39,8 +38,8 @@ while [ $# -gt 0 ]; do
                 INLINE_FILE="$2"
             fi
             shift 2 ;;
-        -r|--repo) GITEA_REPO="$2"; shift 2 ;;
-        -u|--url)  GITEA_URL="$2"; shift 2 ;;
+        -r|--repo) GITEA_REPO="$2"; export GITEA_REPO; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; export GITEA_URL; shift 2 ;;
         -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
         -*) die "알 수 없는 flag: $1" ;;
         *)
@@ -51,6 +50,9 @@ done
 
 [ -n "$PR" ] || die "PR# 인자 필요"
 [ -n "$EVENT" ] || die "--event 인자 필요"
+require_reviewer_login
+TEA_LOGIN="$GITEA_LOGIN_REVIEWER"
+export TEA_LOGIN
 
 case "$EVENT" in
     APPROVE)         API_EVENT="APPROVED" ;;
@@ -69,22 +71,16 @@ elif [ "$INLINE_FROM_STDIN" = "true" ]; then
     INLINE_JSON="$(cat)"
 fi
 
-# Reject if neither body nor inline (file or stdin) was supplied — applies to any event.
 if [ -z "$BODY" ] && [ -z "${INLINE_JSON:-}" ] && [ -z "$INLINE_FILE" ]; then
     die "--body 또는 --inline 중 하나 이상 필요"
 fi
 
-resolve_remote
-TOKEN="$(load_reviewer_token)"
-
-# Resolve inline JSON source.
 if [ -n "$INLINE_FILE" ]; then
     [ -r "$INLINE_FILE" ] || die "inline 파일 읽을 수 없음: $INLINE_FILE"
     INLINE_JSON="$(cat "$INLINE_FILE")"
 fi
 
 if [ -n "${INLINE_JSON:-}" ]; then
-    # Validate: must be array; each element needs path, body, and one of new_position/old_position.
     if ! printf '%s' "$INLINE_JSON" | jq -e 'type == "array"' >/dev/null 2>&1; then
         die "inline JSON 오류: 배열 아님"
     fi
@@ -97,7 +93,6 @@ if [ -n "${INLINE_JSON:-}" ]; then
     [ "$bad" = "0" ] || die "inline JSON 오류: 각 항목에 path/body/new_position 또는 old_position 필요"
 fi
 
-# Build POST body (compact JSON so tests can match key:value without spaces).
 if [ -n "${INLINE_JSON:-}" ]; then
     body_json="$(jq -cn \
         --arg event "$API_EVENT" \
@@ -111,13 +106,9 @@ else
         '{event:$event, body:$body}')"
 fi
 
-# POST with reviewer token — uses load_reviewer_token(), not the author's load_token().
-url="$GITEA_URL/api/v1/repos/$GITEA_REPO/pulls/$PR/reviews"
-resp="$(printf '%s' "$body_json" | curl -sS -X POST \
-    -H "Authorization: token $TOKEN" \
-    -H "Content-Type: application/json" \
-    --data-binary @- \
-    "$url")"
+# tea api routes through the reviewer login (TEA_LOGIN exported above).
+# Multi-byte UTF-8 safe — Go net/http sends the body bytes verbatim.
+resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/pulls/$PR/reviews")"
 
 err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
 if [ -n "$err_msg" ]; then

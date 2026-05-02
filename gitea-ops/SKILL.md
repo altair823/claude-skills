@@ -5,7 +5,7 @@ description: Drive Gitea via REST API from the CLI — create releases with mini
 
 # gitea-ops
 
-Gitea REST API thin wrapper. 의존성은 `curl`, `jq`, `git`, 그리고 (release 서명용) `sha256sum` + `minisign` 뿐.
+Gitea REST API thin wrapper, [`tea` CLI](https://gitea.com/gitea/tea) 위에 구성. 의존성: `tea` (>= 0.14), `jq`, `git`. release 서명용 추가: `sha256sum`, `minisign`. 모든 인증·host 자동 감지·multi-byte UTF-8 송신은 tea 가 처리 — curl 직호출 없음.
 
 ## 사용 시점
 
@@ -58,13 +58,22 @@ PR head SHA combined status 조회. `total_count==0` (CI 없음) → skip. `succ
 
 1. `gitea-pr-diff <PR#>`로 현재 PR diff을 dump.
 2. 리뷰어 관점에서 분석 후 `gitea-pr-review` **반드시 호출** — 매 회차에 새로운 review를 한 건씩 PR에 등록해야 한다.
-   - 본문/코드에 명확한 결함, 의도 불명확, 누락, 권장 개선이 있으면 `--event REQUEST_CHANGES` + 해당 inline 코멘트.
-   - actionable한 지적이 없고 칭찬·수긍 코멘트만 남으면 `--event APPROVE`.
+   - actionable 한 지적이 **하나라도** 있으면 `--event REQUEST_CHANGES` + 해당 inline 코멘트. 명백한 결함·의도 불명확·누락·권장 개선뿐 아니라 **사소한 nit/cosmetic (코드: 오타, 명명 미세 조정, 불필요한 빈 줄, 사소한 가독성 개선; prose: 어색한 표현, 모호한 어휘, 표기 일관성) 도 포함**한다. nit 이라고 APPROVE 로 묻어 두지 않는다 — 회차 한 번 더 도는 비용보다 누락된 cleanup 이 머지 후 별도 PR 로 이어지는 비용이 더 크다.
+   - actionable 한 지적이 0건이고 칭찬·수긍 코멘트만 남으면 `--event APPROVE`.
    - summary body 첫 줄에 `회차 N` prefix를 붙여 timeline에서 회차를 식별 가능하게 한다 (예: `회차 2 — 회차 1 지적 모두 반영. 추가 권장 1건.`).
 3. **종료 조건**: 방금 등록한 review의 `event=APPROVE` 이고 inline 코멘트에 issue/suggestion 카테고리가 0개 (칭찬만 있음). 이때 루프 종료.
 4. 종료 조건 미충족: inline 코멘트와 summary를 토대로 코드/문서를 수정 → 새 커밋 → push → 다음 회차의 (1) 로 진입.
 
 > **참고**: 회차마다 `gitea-pr-review` 등록 필수. Gitea 는 commit push 시 이전 review 를 자동 dismiss 하지 않고 "Outdated" 배지만 붙임 (`dismiss_stale_approvals` 켠 환경 예외). "APPROVE 하나만 보임"은 회차 누락 신호 — UI 에서 사라진 게 아님.
+
+### 머지 안내
+
+리뷰 루프가 APPROVE 로 종료된 직후 사용자에게 "이제 사용자가 Gitea UI 에서 머지" 라고 안내할 때 **반드시 해당 PR URL 을 포함**한다 (예: `https://gitea.example/owner/repo/pulls/N`). 사용자가 한 클릭으로 머지 화면에 이동할 수 있어야 함 — URL 없이 "머지하세요" 만 보내면 사용자가 PR 번호를 다시 찾아야 한다.
+
+**PR URL 확보 방법 (권장 순)**:
+
+1. `gitea-pr` 생성 직후 출력된 PR URL 을 caller 가 보존했다가 머지 안내 시 재사용. 가장 견고 — review URL 형식이 바뀌어도 영향 없음.
+2. 보존이 어려우면 `gitea-pr-review` 출력 (`https://host/owner/repo/pulls/N#issuecomment-XXX`) 에서 `#` 앞까지 잘라내 PR URL 로 사용.
 
 ### 가드
 
@@ -74,21 +83,24 @@ PR head SHA combined status 조회. `total_count==0` (CI 없음) → skip. `succ
 
 ## 환경 사전 점검
 
-토큰 첫 사용 전: 의존성 (`curl jq git`, release 서명이면 `minisign sha256sum` 추가) + 토큰 파일 UTF-8 no BOM + mode 0600 확인.
+토큰 첫 사용 전: 의존성 (`tea jq git`, release 서명이면 `minisign sha256sum` 추가) + 토큰 파일 UTF-8 no BOM + mode 0600 확인.
 
-**PowerShell 함정**: 기본 `>` / `Out-File` 은 UTF-16 LE BOM 으로 저장 → Gitea 401. 반드시 `Set-Content -Encoding utf8NoBOM` 또는 `[IO.File]::WriteAllText()` 사용. `reviewer-token`, harbor-ops/paperboy-ops config 도 동일 규칙.
+**PowerShell 함정**: 기본 `>` / `Out-File` 은 UTF-16 LE BOM 으로 저장 → tea 가 token 파일 읽기 실패. 반드시 `Set-Content -Encoding utf8NoBOM` 또는 `[IO.File]::WriteAllText()` 사용. harbor-ops/paperboy-ops config 도 동일 규칙.
 
 ## 셋업
 
-1. Personal Access Token: `https://<host>/user/settings/applications` 발급. scope: **repository**, **issue**, **package** (release asset 용).
-2. `~/.config/gitea-ops/token` (mode 0600) 또는 `GITEA_TOKEN` env.
-3. (선택) `~/.config/gitea-ops/config` 에 `GITEA_URL=https://...` + `GITEA_REPO=owner/repo`. `origin` remote 가 Gitea host 면 자동 추출.
-4. **Reviewer token** — 별도 Gitea 계정 (repo write scope) 의 token. `gitea-pr-review` 전용. `~/.config/gitea-ops/reviewer-token` (mode 0600) 또는 `GITEA_REVIEWER_TOKEN` env. 빈 placeholder 거부.
+1. **Author token** 발급: `https://<host>/user/settings/applications`. scope **반드시 포함**: `read:user` (tea 가 token 검증 시 호출), `write:repository`, `write:issue`, `write:package` (release asset 용).
+2. **Reviewer token** 발급: 별도 Gitea 계정으로 로그인 후 동일 페이지에서. scope 동일 (`read:user`, `write:repository`).
+3. **tea login 등록** — 두 가지 방법:
+   - **(권장) tea 직접 등록**: `tea logins add --name gitea-ops-author --url https://<host> --token <T>` + `tea logins add --name gitea-ops-reviewer --url https://<host> --token <T>`.
+   - **(자동 마이그레이션)** `~/.config/gitea-ops/token` (author) + `~/.config/gitea-ops/reviewer-token` (reviewer) 에 토큰을 저장 (mode 0600). 첫 호출 시 스크립트가 `git remote` 의 host 를 추론해 자동으로 `tea logins add`. host 자동 감지 실패 시 `GITEA_URL` env 로 override.
+4. **호출 시 repo 자동 감지** — cwd 가 git repo 면 tea 가 `origin` 으로부터 owner/repo 추론. `-r owner/repo` 로 override 가능. 별도 config 파일 불필요.
+
+login 이름 override: `GITEA_LOGIN_AUTHOR` / `GITEA_LOGIN_REVIEWER` env.
 
 ## 스크립트
 
-모든 스크립트는 working copy 내에서 호출 시 `git remote get-url origin`으로 host + repo를
-자동 감지 (origin이 Gitea host를 가리키는 경우). `-u <URL>` / `-r <owner/repo>`로 오버라이드.
+모든 스크립트는 cwd 가 git working copy 일 때 tea 가 자동으로 `origin` 에서 host + owner/repo 를 추론한다. `-r <owner/repo>` 로 override (스크립트는 `--repo` 옵션을 그대로 tea 에 전달).
 
 ### `gitea-release`
 
@@ -187,15 +199,22 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 
 ## 에러 처리
 
-- 401 → token 누락/무효. 사용자에게 `~/.config/gitea-ops/token` 확인 안내.
-- 403 → token scope 부족.
-- `/repos/.../releases/tags/TAG`에서 404 → tag가 아직 remote에 없음. 스크립트가 push 후 1회 재시도.
+- `tea logins add` 가 `token does not have at least one of required scope(s), required=[read:user]` → token 발급 시 `read:user` 누락. 재발급 후 등록.
+- 401 (tea api 호출 시) → token 만료/회수. 새 token 으로 `tea logins edit` 또는 token 파일 갱신 후 `tea logins delete <name>` + 재등록.
+- 403 → 작업 scope 부족 (예: write:issue 없이 issue 생성).
+- `/repos/.../releases/tags/TAG` 에서 404 → tag 가 아직 remote 에 없음. `gitea-release` 가 push 후 1회 재시도.
 
 ## 인코딩 / Multi-byte 안전성
 
-JSON 본문을 POST/PATCH 할 때는 항상 `curl --data-binary @-` 를 사용한다. 일반 `--data`는 입력에서 CR/LF 등을 strip 하면서 부수 처리를 하기 때문에, 한글·이모지 같은 multi-byte UTF-8 시퀀스가 산발적으로 invalid byte로 손상되어 Gitea에 U+FFFD(`���`)로 저장되는 사례가 실제로 발생했다 (PR #11 리뷰 코멘트의 "만" → `���`).
+JSON 본문은 모두 `tea api -d @-` (stdin) 로 전송한다. 과거 curl `--data` 경로의 CR/LF strip 함정 (PR #11 리뷰의 "만" → `���`) 은 사라졌지만, **자동 안전성은 보장되지 않는다** — tea 0.14.0 의 stdin → HTTPS 본문 변환 어딘가에서 비결정적 multi-byte 손상이 관찰되었다 (PR #14 회차 3, 4 의 review summary body 에서 한 글자가 byte-wise replacement 로 대체된 사례). bash → jq → printf → tea read(stdin) 까지는 strace 로 정상 UTF-8 보존 확인됐고, 손상은 tea 내부 처리에서 발생.
 
-`_common.sh:api_json` 과 `gitea-pr-review` 가 이 규칙을 따른다. 새 endpoint 추가 시에도 `--data-binary` 로 통일.
+**대응**:
+
+- 다국어 본문 (한국어/일본어/이모지 등) 을 등록한 직후에는 **반드시 결과 (등록된 review/issue/PR body) 를 다시 fetch 해 손상 여부 확인**. 손상 발견 시 새 review/comment 로 정정 (영속성 규약 — 등록된 본문은 직접 수정 금지).
+- 영문 ASCII 만 들어가는 호출은 영향 없음.
+- 비결정적이라 동일 byte 시퀀스도 어떤 호출은 정상, 다른 호출은 손상. 짧은 본문 (회차 1, 2) 에서는 미발생, 긴 본문 (회차 3, 4) 에서 발생한 패턴이 있으나 단정 어려움.
+
+`_common.sh:tea_api_json` 이 이 경로를 사용한다. 새 endpoint 추가 시에도 동일 helper 또는 직접 `tea api -X METHOD -d @-` 패턴 사용. tea 상위 버전에서 fix 가 확인되면 본 절 갱신.
 
 ## 작업 후
 
