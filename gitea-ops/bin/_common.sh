@@ -34,21 +34,30 @@ require_cmd() {
     done
 }
 
+# Parse a git remote URL into "<scheme>://<host>\t<owner/repo>".
+# Returns 1 on unknown URL form. Single source of truth for origin parsing —
+# detect_gitea_host / detect_gitea_repo just take cut -f1 / -f2 of this.
+_parse_origin() {
+    url="$1"
+    case "$url" in
+        https://*) base="${url#https://}"; host="${base%%/*}"; path="${base#*/}"; path="${path%.git}"; printf 'https://%s\t%s' "$host" "$path"; return 0 ;;
+        http://*)  base="${url#http://}";  host="${base%%/*}"; path="${base#*/}"; path="${path%.git}"; printf 'http://%s\t%s'  "$host" "$path"; return 0 ;;
+        git@*)     base="${url#git@}";     host="${base%%:*}"; path="${base#*:}"; path="${path%.git}"; printf 'https://%s\t%s' "$host" "$path"; return 0 ;;
+        ssh://*)   base="${url#ssh://}"; base="${base#*@}"; host="${base%%/*}"; path="${base#*/}"; path="${path%.git}"; printf 'https://%s\t%s' "$host" "$path"; return 0 ;;
+    esac
+    return 1
+}
+
 # Derive Gitea base URL from current git origin (or GITEA_URL env override).
 # Used only when registering a new tea login — tea itself handles host
 # resolution for subsequent calls via the stored login.
 detect_gitea_host() {
     if [ -n "${GITEA_URL:-}" ]; then printf '%s' "$GITEA_URL"; return 0; fi
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        origin="$(git remote get-url origin 2>/dev/null || true)"
-        case "$origin" in
-            https://*) base="${origin#https://}"; printf 'https://%s' "${base%%/*}"; return 0 ;;
-            http://*)  base="${origin#http://}";  printf 'http://%s'  "${base%%/*}"; return 0 ;;
-            git@*)     base="${origin#git@}";     printf 'https://%s' "${base%%:*}"; return 0 ;;
-            ssh://*)   base="${origin#ssh://}"; base="${base#*@}"; printf 'https://%s' "${base%%/*}"; return 0 ;;
-        esac
-    fi
-    return 1
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    origin="$(git remote get-url origin 2>/dev/null || true)"
+    [ -n "$origin" ] || return 1
+    parsed="$(_parse_origin "$origin")" || return 1
+    printf '%s' "$parsed" | cut -f1
 }
 
 # Returns 0 if the named tea login already exists, 1 otherwise.
@@ -143,36 +152,28 @@ gh_current_user() {
 # Resolve "owner/repo" from current cwd's git origin (Gitea side).
 detect_gitea_repo() {
     if [ -n "${GITEA_REPO:-}" ]; then printf '%s' "$GITEA_REPO"; return 0; fi
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        origin="$(git remote get-url origin 2>/dev/null || true)"
-        case "$origin" in
-            https://*|http://*)
-                path="${origin#*://}"; path="${path#*/}"; path="${path%.git}"
-                printf '%s' "$path"; return 0 ;;
-            git@*)
-                path="${origin#*:}"; path="${path%.git}"
-                printf '%s' "$path"; return 0 ;;
-            ssh://*)
-                base="${origin#ssh://}"; base="${base#*@}"
-                path="${base#*/}"; path="${path%.git}"
-                printf '%s' "$path"; return 0 ;;
-        esac
-    fi
-    return 1
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    origin="$(git remote get-url origin 2>/dev/null || true)"
+    [ -n "$origin" ] || return 1
+    parsed="$(_parse_origin "$origin")" || return 1
+    printf '%s' "$parsed" | cut -f2
 }
 
 # Secret scan: greps `git log -p` for common credential patterns.
-# Returns 0 if no hits, 1 if hits found (writes file:hit lines to stdout).
+# Always returns 0; caller checks if stdout is empty (no hits) vs non-empty
+# (hits found). Fatal errors (cwd not a git tree) still die() and propagate.
+# git pathspec 으로 false-positive 흔한 경로 (`*.md`, `docs/**`) 를 git
+# 단계에서 제외 — 이전 `grep -vE '\.md:|/docs/'` 는 git log -p 출력에
+# filename prefix 가 없어 동작하지 않았음.
 # Args: $1 max-commits (default 500)
 secret_scan_history() {
     max_commits="${1:-500}"
     pat='(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|private[_-]?key|aws_(access|secret)_key|client[_-]?secret)\s*[:=]\s*["\047][^"\047[:space:]]{8,}'
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
         || die "secret_scan: cwd is not a git working copy"
-    # -i case-insensitive, -E extended, exclude SKILL.md/docs (false positive heavy)
-    git log --all --max-count="$max_commits" -p 2>/dev/null \
+    git log --all --max-count="$max_commits" -p \
+        -- ':!*.md' ':!docs/**' 2>/dev/null \
         | grep -iE "$pat" \
-        | grep -vE '\.md:|/docs/' \
-        || return 0
-    return 1
+        || true
+    return 0
 }

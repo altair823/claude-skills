@@ -22,7 +22,7 @@ done
 require_author_login
 [ -n "$GITEA_REPO_OPT" ] && { GITEA_REPO="$GITEA_REPO_OPT"; export GITEA_REPO; }
 
-resp="$(tea_api POST "/repos/{owner}/{repo}/push_mirrors-sync" 2>&1)"
+resp="$(tea_api POST "/repos/{owner}/{repo}/push_mirrors-sync")"
 err_msg="$(printf '%s' "$resp" | jq -r 'if type=="object" then .message // empty else empty end' 2>/dev/null || true)"
 [ -z "$err_msg" ] || die "sync 실패: $err_msg"
 

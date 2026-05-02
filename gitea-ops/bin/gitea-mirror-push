@@ -35,7 +35,7 @@ visibility="$(gh repo view "$GH_REPO" --json visibility --jq .visibility 2>/dev/
     || die "GitHub repo 조회 실패: $GH_REPO (없으면 gitea-mirror-init 먼저)"
 
 if [ "$visibility" = "PUBLIC" ] && [ "$SECRET_SCAN" != "skip" ]; then
-    scan_out="$(secret_scan_history)" || true
+    scan_out="$(secret_scan_history)"
     if [ -z "$scan_out" ]; then
         printf '[gitea-mirror-push] secret scan: 0 hits\n' >&2
     else
@@ -47,7 +47,11 @@ if [ "$visibility" = "PUBLIC" ] && [ "$SECRET_SCAN" != "skip" ]; then
 fi
 
 # git push --mirror — gh CLI 의 git credential helper (gh auth setup-git) 가 인증 처리.
+# 주의: --mirror 는 GitHub 측의 *모든* ref (branch + tag) 를 force-update.
+# collaborator 가 GitHub UI 에서 직접 commit 한 ref 가 있으면 손실. 단방향
+# portfolio mirror 가정의 동작.
 printf '[gitea-mirror-push] git push --mirror to %s\n' "$GH_REPO" >&2
+printf '[gitea-mirror-push] **주의**: GitHub 측 모든 ref force-update — collaborator 직접 commit 손실 위험\n' >&2
 git push --mirror "https://github.com/$GH_REPO.git" \
     || die "git push --mirror 실패 — 'gh auth setup-git' 후 재시도"
 

@@ -59,8 +59,10 @@ printf '[gitea-mirror-init] Gitea: %s → GitHub: %s (%s)\n' \
     "$gitea_repo" "$GH_REPO" "$VISIBILITY" >&2
 
 # Secret scan: public mirror 일 때만, --no-secret-scan 으로 skip, --force-secret-scan 으로 hit 무시.
+# secret_scan_history 는 hits/no-hits 모두 exit 0 (stdout 으로 분기); fatal
+# (cwd 검증 실패 등) 만 die — `|| true` 우회 없이도 set -e 안전.
 if [ "$VISIBILITY" = "public" ] && [ "$SECRET_SCAN" != "skip" ]; then
-    scan_out="$(secret_scan_history)" || true
+    scan_out="$(secret_scan_history)"
     if [ -z "$scan_out" ]; then
         printf '[gitea-mirror-init] secret scan: 0 hits\n' >&2
     else

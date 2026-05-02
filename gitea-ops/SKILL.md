@@ -223,7 +223,7 @@ Gitea repo 를 GitHub 으로 mirror — 두 가지 모드:
   - `--no-secret-scan` (검토 생략 — 사용자가 ASCII safe 라고 확신할 때)
   - `--force-secret-scan` (false positive 확인 후 강행)
   - history 정리 (git filter-repo) 후 재시도
-- false positive 가 흔한 경로 (`.md`, `/docs/`) 는 자동 제외.
+- false positive 가 흔한 경로 (`*.md`, `docs/**`) 는 git pathspec (`-- ':!*.md' ':!docs/**'`) 으로 git log 단계에서 제외.
 
 ### 명령 시그니처
 
