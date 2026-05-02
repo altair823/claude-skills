@@ -21,6 +21,11 @@ GITEA_REVIEWER_TOKEN_FILE="${GITEA_REVIEWER_TOKEN_FILE:-$HOME/.config/gitea-ops/
 GITEA_LOGIN_AUTHOR="${GITEA_LOGIN_AUTHOR:-gitea-ops-author}"
 GITEA_LOGIN_REVIEWER="${GITEA_LOGIN_REVIEWER:-gitea-ops-reviewer}"
 
+# GitHub PAT used by Gitea to push to GitHub (push mirror). Separate from gh
+# CLI's auth — gh handles repo create / list on the user's behalf, while this
+# token is stored on Gitea's side for the actual mirror push.
+GITHUB_MIRROR_TOKEN_FILE="${GITHUB_MIRROR_TOKEN_FILE:-$HOME/.config/gitea-ops/github-mirror-token}"
+
 die() { printf 'gitea-ops: %s\n' "$*" >&2; exit 1; }
 
 require_cmd() {
@@ -108,4 +113,66 @@ tea_api_json() {
     else
         tea api -X "$method" --login "${TEA_LOGIN:-$GITEA_LOGIN_AUTHOR}" -d "@-" "$path"
     fi
+}
+
+# Mirror-only helpers below — gh CLI dependency is lazy (other gitea-ops
+# commands stay gh-free).
+
+load_github_mirror_token() {
+    if [ -n "${GITHUB_MIRROR_TOKEN:-}" ]; then
+        printf '%s' "$GITHUB_MIRROR_TOKEN"; return 0
+    fi
+    if [ -r "$GITHUB_MIRROR_TOKEN_FILE" ] && [ -s "$GITHUB_MIRROR_TOKEN_FILE" ]; then
+        cat "$GITHUB_MIRROR_TOKEN_FILE"; return 0
+    fi
+    return 1
+}
+
+# Ensure gh CLI installed + authenticated. Used only by gitea-mirror-* commands.
+require_gh_auth() {
+    require_cmd gh
+    gh auth status >/dev/null 2>&1 \
+        || die "GitHub 인증 안됨 — 'gh auth login' 실행 후 재시도"
+}
+
+# Resolve current GitHub login (for default --gh-repo owner).
+gh_current_user() {
+    gh api user --jq .login 2>/dev/null || return 1
+}
+
+# Resolve "owner/repo" from current cwd's git origin (Gitea side).
+detect_gitea_repo() {
+    if [ -n "${GITEA_REPO:-}" ]; then printf '%s' "$GITEA_REPO"; return 0; fi
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        origin="$(git remote get-url origin 2>/dev/null || true)"
+        case "$origin" in
+            https://*|http://*)
+                path="${origin#*://}"; path="${path#*/}"; path="${path%.git}"
+                printf '%s' "$path"; return 0 ;;
+            git@*)
+                path="${origin#*:}"; path="${path%.git}"
+                printf '%s' "$path"; return 0 ;;
+            ssh://*)
+                base="${origin#ssh://}"; base="${base#*@}"
+                path="${base#*/}"; path="${path%.git}"
+                printf '%s' "$path"; return 0 ;;
+        esac
+    fi
+    return 1
+}
+
+# Secret scan: greps `git log -p` for common credential patterns.
+# Returns 0 if no hits, 1 if hits found (writes file:hit lines to stdout).
+# Args: $1 max-commits (default 500)
+secret_scan_history() {
+    max_commits="${1:-500}"
+    pat='(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|private[_-]?key|aws_(access|secret)_key|client[_-]?secret)\s*[:=]\s*["\047][^"\047[:space:]]{8,}'
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || die "secret_scan: cwd is not a git working copy"
+    # -i case-insensitive, -E extended, exclude SKILL.md/docs (false positive heavy)
+    git log --all --max-count="$max_commits" -p 2>/dev/null \
+        | grep -iE "$pat" \
+        | grep -vE '\.md:|/docs/' \
+        || return 0
+    return 1
 }
