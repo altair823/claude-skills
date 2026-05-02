@@ -206,9 +206,15 @@ gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 
 ## 인코딩 / Multi-byte 안전성
 
-JSON 본문은 모두 `tea api -d @-` (stdin) 로 전송 — Go `net/http` 가 raw bytes 를 그대로 송신하므로 한글·이모지 같은 multi-byte UTF-8 손상 위험 없음. 과거 curl `--data` 경로의 CR/LF strip 함정 (PR #11 리뷰의 "만" → `���`) 은 tea 마이그레이션으로 자동 해소.
+JSON 본문은 모두 `tea api -d @-` (stdin) 로 전송한다. 과거 curl `--data` 경로의 CR/LF strip 함정 (PR #11 리뷰의 "만" → `���`) 은 사라졌지만, **자동 안전성은 보장되지 않는다** — tea 0.14.0 의 stdin → HTTPS 본문 변환 어딘가에서 비결정적 multi-byte 손상이 관찰되었다 (PR #14 회차 3, 4 의 review summary body 에서 한 글자가 byte-wise replacement 로 대체된 사례). bash → jq → printf → tea read(stdin) 까지는 strace 로 정상 UTF-8 보존 확인됐고, 손상은 tea 내부 처리에서 발생.
 
-`_common.sh:tea_api_json` 이 이 경로를 사용한다. 새 endpoint 추가 시에도 동일 helper 또는 직접 `tea api -X METHOD -d @-` 패턴 사용.
+**대응**:
+
+- 다국어 본문 (한국어/일본어/이모지 등) 을 등록한 직후에는 **반드시 결과 (등록된 review/issue/PR body) 를 다시 fetch 해 손상 여부 확인**. 손상 발견 시 새 review/comment 로 정정 (영속성 규약 — 등록된 본문은 직접 수정 금지).
+- 영문 ASCII 만 들어가는 호출은 영향 없음.
+- 비결정적이라 동일 byte 시퀀스도 어떤 호출은 정상, 다른 호출은 손상. 짧은 본문 (회차 1, 2) 에서는 미발생, 긴 본문 (회차 3, 4) 에서 발생한 패턴이 있으나 단정 어려움.
+
+`_common.sh:tea_api_json` 이 이 경로를 사용한다. 새 endpoint 추가 시에도 동일 helper 또는 직접 `tea api -X METHOD -d @-` 패턴 사용. tea 상위 버전에서 fix 가 확인되면 본 절 갱신.
 
 ## 작업 후
 
