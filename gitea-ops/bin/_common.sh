@@ -162,18 +162,22 @@ detect_gitea_repo() {
 # Secret scan: greps `git log -p` for common credential patterns.
 # Always returns 0; caller checks if stdout is empty (no hits) vs non-empty
 # (hits found). Fatal errors (cwd not a git tree) still die() and propagate.
-# git pathspec 으로 false-positive 흔한 경로 (`*.md`, `docs/**`) 를 git
-# 단계에서 제외 — 이전 `grep -vE '\.md:|/docs/'` 는 git log -p 출력에
-# filename prefix 가 없어 동작하지 않았음.
+# - git pathspec 으로 false-positive 흔한 경로 (`*.md`, `docs/**`) 를 git
+#   단계에서 제외.
+# - 변수 expansion 만 들어간 line (`"$VAR"` / `"${VAR}"` / `"${!VAR}"`) 은
+#   secret 자체가 코드에 없으므로 두 번째 grep -v 로 제외 — 이전 dogfood
+#   에서 잡혔던 `HARBOR_SECRET="${!secret_var}"` 같은 false positive 차단.
 # Args: $1 max-commits (default 500)
 secret_scan_history() {
     max_commits="${1:-500}"
     pat='(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|private[_-]?key|aws_(access|secret)_key|client[_-]?secret)\s*[:=]\s*["\047][^"\047[:space:]]{8,}'
+    var_expansion='["\047](\$[A-Za-z_][A-Za-z_0-9]*|\$\{[!]?[A-Za-z_][A-Za-z_0-9]*\})["\047]'
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
         || die "secret_scan: cwd is not a git working copy"
     git log --all --max-count="$max_commits" -p \
         -- ':!*.md' ':!docs/**' 2>/dev/null \
         | grep -iE "$pat" \
+        | grep -vE "$var_expansion" \
         || true
     return 0
 }

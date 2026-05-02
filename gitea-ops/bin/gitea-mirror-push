@@ -1,10 +1,15 @@
 #!/bin/sh
-# 일회성 git push --mirror — cron 동기화 없이 즉시 GitHub 으로 한 번 push.
+# 일회성 git push — cron 동기화 없이 즉시 GitHub 으로 한 번 push.
 # Gitea push mirror 등록과 무관 (그건 gitea-mirror-init).
 #
 # Usage:
 #   gitea-mirror-push --gh-repo OWNER/NAME
+#                     [--force-mirror]
 #                     [--no-secret-scan] [--force-secret-scan]
+#
+# Default: `git push --all --tags` (로컬 branch + tag 만, force 없이).
+# --force-mirror: `git push --mirror` (모든 ref + force-update + remote-tracking
+#                 까지 포함). collaborator 직접 commit 손실 위험.
 #
 # cwd 가 git working copy 여야 한다. GitHub repo 가 이미 존재해야 한다 (없으면
 # 먼저 `gh repo create` 또는 gitea-mirror-init).
@@ -14,13 +19,15 @@ set -eu
 
 GH_REPO=""
 SECRET_SCAN="auto"
+PUSH_MODE="branches"   # branches (--all --tags) | mirror (--mirror)
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --gh-repo) GH_REPO="$2"; shift 2 ;;
+        --force-mirror)      PUSH_MODE="mirror"; shift ;;
         --no-secret-scan)    SECRET_SCAN="skip"; shift ;;
         --force-secret-scan) SECRET_SCAN="force"; shift ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) die "알 수 없는 인자: $1" ;;
     esac
 done
@@ -46,13 +53,19 @@ if [ "$visibility" = "PUBLIC" ] && [ "$SECRET_SCAN" != "skip" ]; then
     fi
 fi
 
-# git push --mirror — gh CLI 의 git credential helper (gh auth setup-git) 가 인증 처리.
-# 주의: --mirror 는 GitHub 측의 *모든* ref (branch + tag) 를 force-update.
-# collaborator 가 GitHub UI 에서 직접 commit 한 ref 가 있으면 손실. 단방향
-# portfolio mirror 가정의 동작.
-printf '[gitea-mirror-push] git push --mirror to %s\n' "$GH_REPO" >&2
-printf '[gitea-mirror-push] **주의**: GitHub 측 모든 ref force-update — collaborator 직접 commit 손실 위험\n' >&2
-git push --mirror "https://github.com/$GH_REPO.git" \
-    || die "git push --mirror 실패 — 'gh auth setup-git' 후 재시도"
+# git push — gh CLI 의 git credential helper (gh auth setup-git) 가 인증 처리.
+gh_url="https://github.com/$GH_REPO.git"
+if [ "$PUSH_MODE" = "mirror" ]; then
+    printf '[gitea-mirror-push] git push --mirror to %s\n' "$GH_REPO" >&2
+    printf '[gitea-mirror-push] **주의**: --force-mirror — GitHub 측 모든 ref (remote-tracking 포함) force-update. collaborator 직접 commit 손실 위험\n' >&2
+    git push --mirror "$gh_url" \
+        || die "git push --mirror 실패 — 'gh auth setup-git' 후 재시도"
+else
+    printf '[gitea-mirror-push] git push --all --tags to %s\n' "$GH_REPO" >&2
+    git push --all "$gh_url" \
+        || die "git push --all 실패 — 'gh auth setup-git' 후 재시도. 또는 fast-forward 불가 시 --force-mirror 검토."
+    git push --tags "$gh_url" \
+        || die "git push --tags 실패"
+fi
 
 printf 'https://github.com/%s\n' "$GH_REPO"
