@@ -1,0 +1,29 @@
+#!/bin/sh
+# 등록된 push mirror 의 즉시 sync trigger (Gitea 의 다음 cron 기다리지 않음).
+#
+# Usage: gitea-mirror-sync [--gitea-repo owner/repo]
+#
+# Gitea API 는 push mirror 단위 sync 가 아니라 repo 의 모든 push mirror 를
+# 한 번에 일괄 sync trigger 한다.
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+
+GITEA_REPO_OPT=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --gitea-repo) GITEA_REPO_OPT="$2"; shift 2 ;;
+        -h|--help)    sed -n '2,7p' "$0"; exit 0 ;;
+        *) die "알 수 없는 인자: $1" ;;
+    esac
+done
+
+require_author_login
+[ -n "$GITEA_REPO_OPT" ] && { GITEA_REPO="$GITEA_REPO_OPT"; export GITEA_REPO; }
+
+resp="$(tea_api POST "/repos/{owner}/{repo}/push_mirrors-sync")"
+err_msg="$(printf '%s' "$resp" | jq -r 'if type=="object" then .message // empty else empty end' 2>/dev/null || true)"
+[ -z "$err_msg" ] || die "sync 실패: $err_msg"
+
+printf '[gitea-mirror-sync] sync trigger 완료\n' >&2

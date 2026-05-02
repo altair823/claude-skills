@@ -1,6 +1,6 @@
 ---
 name: gitea-ops
-description: Drive Gitea via REST API from the CLI — create releases with minisign/sha256 assets, open PRs, file/close issues. Use when the user asks to cut a release, open a PR, or file/close an issue on a Gitea remote. Auto-detects host + repo from the current git remote; falls back to ~/.config/gitea-ops/config.
+description: Drive Gitea via REST API from the CLI — create releases with minisign/sha256 assets, open PRs, file/close issues, and mirror Gitea repos to GitHub (gh CLI). Use when the user asks to cut a release, open a PR, file/close an issue, or set up/control a Gitea→GitHub push mirror. Auto-detects host + repo from the current git remote.
 ---
 
 # gitea-ops
@@ -11,8 +11,9 @@ Gitea REST API thin wrapper, [`tea` CLI](https://gitea.com/gitea/tea) 위에 구
 
 - tag release + binary asset (sha256/minisign)
 - PR 작성, issue 작성/닫기, PR/issue bulk 조회
+- Gitea repo 를 GitHub 으로 mirror (push mirror 등록 + 일회성 push) — `## GitHub Mirror` 절 참조
 
-GitHub/GitLab 금지 (API 다름).
+직접적인 GitHub/GitLab API 작업에는 사용 금지 (API 다름). Gitea→GitHub mirror 는 본 skill 의 mirror 절이 담당.
 
 ## Workflow
 
@@ -196,6 +197,78 @@ gitea-issue --title "..." [--body "..."] [--label LABEL]...
 ```
 gitea-issue-close <NUMBER> [--comment "..."] [-r owner/repo] [-u URL]
 ```
+
+## GitHub Mirror
+
+Gitea repo 를 GitHub 으로 mirror — 두 가지 모드:
+
+1. **지속 자동** (`gitea-mirror-init`): GitHub repo 생성 + Gitea push mirror 등록. Gitea 가 cron (default 8h, sync_on_commit=true) 으로 자동 동기화. portfolio 용도 default.
+2. **일회성** (`gitea-mirror-push`): cron 등록 없이 `git push --mirror` 한 번. dev branch 임시 미러 등.
+
+### 추가 의존성 (mirror 명령에서만)
+
+`gh` CLI (>= 2.x) — `gh repo create` / `gh repo view` 호출. release/PR/issue 명령은 영향 없음 (lazy require_cmd). 사전 인증: `gh auth login` + (선택) `gh auth setup-git` (git credential helper 등록 시 `gitea-mirror-push` 가 매끄럽게 동작).
+
+### 셋업 (mirror 만)
+
+1. **GitHub PAT 발급**: GitHub Settings → Developer settings → Personal access tokens → Fine-grained PAT. **scope 최소화** — 해당 mirror repo 만 contents:write. gh CLI 의 auth 토큰과 별개 (Gitea 측에 저장되어 push 인증에 사용).
+2. **PAT 저장**: `~/.config/gitea-ops/github-mirror-token` (mode 0600) 또는 `GITHUB_MIRROR_TOKEN` env 또는 명령마다 `--token` / `--token-file` 명시.
+3. **gh CLI 인증**: `gh auth login`. `gh auth setup-git` 로 git credential helper 등록.
+
+### Public mirror 보호
+
+`--public` 미러는 *모든 git history 가 영구 노출*. `gitea-mirror-init` / `gitea-mirror-push` 가 호출 직전 `git log --all -p` 에 대해 정규식 secret scan (password / api_key / token / private_key / aws / client_secret + `=` 또는 `:` 후 따옴표 안 8자 이상). 발견 시:
+
+- 기본 동작: die. Claude 가 결과를 사용자에게 보고하고 다음 결정 받아 재호출:
+  - `--no-secret-scan` (검토 생략 — 사용자가 ASCII safe 라고 확신할 때)
+  - `--force-secret-scan` (false positive 확인 후 강행)
+  - history 정리 (git filter-repo) 후 재시도
+- false positive 가 흔한 경로 (`*.md`, `docs/**`) 는 git pathspec (`-- ':!*.md' ':!docs/**'`) 으로 git log 단계에서 제외.
+
+### 명령 시그니처
+
+#### `gitea-mirror-init`
+
+```
+gitea-mirror-init [--gitea-repo owner/repo] [--gh-repo OWNER/NAME]
+                  (--public|--private) [--token-file PATH | --token TOKEN]
+                  [--interval 8h0m0s] [--no-sync-on-commit]
+                  [--no-secret-scan] [--force-secret-scan]
+                  [--description TEXT]
+```
+
+- `--gh-repo` 미명시 default: `<gh user>/<gitea repo name>` (같은 이름). 이미 존재하면 die — Claude 가 사용자에게 다른 이름 받아 `--gh-repo` 로 재호출.
+- 첫 sync 자동 trigger. 실패 시 경고만 (Gitea 다음 cron 자동 재시도).
+
+#### `gitea-mirror-push`
+
+```
+gitea-mirror-push --gh-repo OWNER/NAME [--no-secret-scan] [--force-secret-scan]
+```
+
+cwd 가 git working copy + GitHub repo 가 이미 존재 필요 (없으면 `gitea-mirror-init` 또는 `gh repo create` 먼저).
+
+#### `gitea-mirror-ls`
+
+```
+gitea-mirror-ls [--gitea-repo owner/repo] [--json]
+```
+
+#### `gitea-mirror-sync`
+
+```
+gitea-mirror-sync [--gitea-repo owner/repo]
+```
+
+repo 의 모든 push mirror 를 일괄 sync trigger (Gitea API 가 mirror 단위 sync 미지원).
+
+#### `gitea-mirror-unlink`
+
+```
+gitea-mirror-unlink <mirror-name> [--gitea-repo owner/repo]
+```
+
+`<mirror-name>` 은 `gitea-mirror-ls` 출력의 첫 컬럼. GitHub repo 자체는 보존 (별도 `gh repo delete`).
 
 ## 에러 처리
 

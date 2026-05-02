@@ -1,0 +1,126 @@
+#!/bin/sh
+# Gitea repo 를 GitHub 으로 mirror — GitHub repo 생성 + Gitea push mirror 등록.
+#
+# Usage:
+#   gitea-mirror-init [--gitea-repo owner/repo] [--gh-repo OWNER/NAME]
+#                     (--public|--private) [--token-file PATH | --token TOKEN]
+#                     [--interval 8h0m0s] [--no-sync-on-commit]
+#                     [--no-secret-scan] [--force-secret-scan]
+#                     [--description TEXT]
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+
+GITEA_REPO_OPT=""
+GH_REPO=""
+VISIBILITY=""
+TOKEN_FILE_OPT=""
+TOKEN_OPT=""
+INTERVAL="8h0m0s"
+SYNC_ON_COMMIT="true"
+SECRET_SCAN="auto"
+DESCRIPTION=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --gitea-repo) GITEA_REPO_OPT="$2"; shift 2 ;;
+        --gh-repo)    GH_REPO="$2"; shift 2 ;;
+        --public)     VISIBILITY="public"; shift ;;
+        --private)    VISIBILITY="private"; shift ;;
+        --token-file) TOKEN_FILE_OPT="$2"; shift 2 ;;
+        --token)      TOKEN_OPT="$2"; shift 2 ;;
+        --interval)   INTERVAL="$2"; shift 2 ;;
+        --no-sync-on-commit) SYNC_ON_COMMIT="false"; shift ;;
+        --no-secret-scan)    SECRET_SCAN="skip"; shift ;;
+        --force-secret-scan) SECRET_SCAN="force"; shift ;;
+        --description) DESCRIPTION="$2"; shift 2 ;;
+        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        *) die "알 수 없는 인자: $1" ;;
+    esac
+done
+
+[ -n "$VISIBILITY" ] || die "--public 또는 --private 필수"
+
+require_author_login
+require_gh_auth
+
+[ -n "$GITEA_REPO_OPT" ] && { GITEA_REPO="$GITEA_REPO_OPT"; export GITEA_REPO; }
+gitea_repo="${GITEA_REPO:-$(detect_gitea_repo)}" \
+    || die "Gitea repo 자동 감지 실패 — --gitea-repo 명시"
+GITEA_REPO="$gitea_repo"; export GITEA_REPO
+
+if [ -z "$GH_REPO" ]; then
+    gh_user="$(gh_current_user)" || die "gh 사용자 조회 실패"
+    repo_name="${gitea_repo#*/}"
+    GH_REPO="$gh_user/$repo_name"
+fi
+
+printf '[gitea-mirror-init] Gitea: %s → GitHub: %s (%s)\n' \
+    "$gitea_repo" "$GH_REPO" "$VISIBILITY" >&2
+
+# Secret scan: public mirror 일 때만, --no-secret-scan 으로 skip, --force-secret-scan 으로 hit 무시.
+# secret_scan_history 는 hits/no-hits 모두 exit 0 (stdout 으로 분기); fatal
+# (cwd 검증 실패 등) 만 die — `|| true` 우회 없이도 set -e 안전.
+if [ "$VISIBILITY" = "public" ] && [ "$SECRET_SCAN" != "skip" ]; then
+    scan_out="$(secret_scan_history)"
+    if [ -z "$scan_out" ]; then
+        printf '[gitea-mirror-init] secret scan: 0 hits\n' >&2
+    else
+        printf '[gitea-mirror-init] **secret scan: 의심 패턴 발견**\n%s\n' "$scan_out" >&2
+        [ "$SECRET_SCAN" = "force" ] || die \
+            "public mirror 보호: secret 의심 패턴 발견. (a) 진짜 secret 이면 history 정리 후 재시도, (b) false positive 면 --force-secret-scan 으로 강행, (c) 검토 생략은 --no-secret-scan."
+        printf '[gitea-mirror-init] --force-secret-scan: 사용자 승인으로 진행\n' >&2
+    fi
+fi
+
+# GitHub PAT (Gitea push mirror 등록용 — gh CLI auth 와 별개)
+if [ -n "$TOKEN_OPT" ]; then
+    GH_TOKEN="$TOKEN_OPT"
+elif [ -n "$TOKEN_FILE_OPT" ]; then
+    [ -r "$TOKEN_FILE_OPT" ] || die "token 파일 읽을 수 없음: $TOKEN_FILE_OPT"
+    GH_TOKEN="$(cat "$TOKEN_FILE_OPT")"
+else
+    GH_TOKEN="$(load_github_mirror_token)" || die \
+        "GitHub mirror PAT 필요 — --token / --token-file / GITHUB_MIRROR_TOKEN env / $GITHUB_MIRROR_TOKEN_FILE 파일 중 하나"
+fi
+
+# 1. GitHub repo 생성 (이름 충돌 → die, Claude 가 다른 이름 받아 재호출)
+if gh repo view "$GH_REPO" >/dev/null 2>&1; then
+    die "GitHub repo 이미 존재: $GH_REPO — 다른 --gh-repo 명시 후 재시도"
+fi
+
+printf '[gitea-mirror-init] gh repo create %s --%s\n' "$GH_REPO" "$VISIBILITY" >&2
+if [ -n "$DESCRIPTION" ]; then
+    gh repo create "$GH_REPO" "--$VISIBILITY" --description "$DESCRIPTION" >/dev/null \
+        || die "gh repo create 실패"
+else
+    gh repo create "$GH_REPO" "--$VISIBILITY" >/dev/null \
+        || die "gh repo create 실패"
+fi
+
+# 2. Gitea push mirror 등록
+gh_user="${GH_REPO%/*}"
+gh_clone_url="https://github.com/${GH_REPO}.git"
+body_json="$(jq -cn \
+    --arg url "$gh_clone_url" \
+    --arg user "$gh_user" \
+    --arg pass "$GH_TOKEN" \
+    --arg interval "$INTERVAL" \
+    --argjson soc "$SYNC_ON_COMMIT" \
+    '{remote_address:$url, remote_username:$user, remote_password:$pass, interval:$interval, sync_on_commit:$soc}')"
+
+resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/push_mirrors")"
+err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
+if [ -n "$err_msg" ]; then
+    die "push mirror 등록 실패: $err_msg"
+fi
+
+mirror_name="$(printf '%s' "$resp" | jq -r '.remote_name // empty')"
+printf '[gitea-mirror-init] push mirror 등록 완료: name=%s\n' "$mirror_name" >&2
+
+# 3. 첫 sync trigger (실패해도 die 안 함 — Gitea 가 cron 으로 자동 시도)
+if ! tea_api POST "/repos/{owner}/{repo}/push_mirrors-sync" >/dev/null 2>&1; then
+    printf '[gitea-mirror-init] 경고: 첫 sync trigger 실패 — 다음 cron 에 자동 재시도\n' >&2
+fi
+
+printf 'https://github.com/%s\n' "$GH_REPO"
