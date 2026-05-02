@@ -98,6 +98,11 @@ if [ "$SKIP_CREATE" = "true" ]; then
     gh repo view "$GH_REPO" >/dev/null 2>&1 \
         || die "GitHub repo 없음: $GH_REPO — --skip-create 시 미리 존재해야 함. 새로 만들 거면 --skip-create 빼고 재시도."
     printf '[gitea-mirror-init] --skip-create: gh repo create 건너뜀 (기존 %s 사용)\n' "$GH_REPO" >&2
+    # visibility / description 옵션이 명시되면 silently 무시 — 사용자에게 알림.
+    if [ -n "$DESCRIPTION" ]; then
+        printf '[gitea-mirror-init] --skip-create: --description 무시 (기존 repo desc 유지)\n' >&2
+    fi
+    printf '[gitea-mirror-init] --skip-create: --%s 무시 (기존 repo visibility 유지)\n' "$VISIBILITY" >&2
 else
     if gh repo view "$GH_REPO" >/dev/null 2>&1; then
         die "GitHub repo 이미 존재: $GH_REPO — 다른 --gh-repo 명시 후 재시도. 또는 기존 repo 의 push mirror 만 재등록할 거면 --skip-create."

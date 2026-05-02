@@ -171,7 +171,9 @@ detect_gitea_repo() {
 secret_scan_history() {
     max_commits="${1:-500}"
     pat='(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|private[_-]?key|aws_(access|secret)_key|client[_-]?secret)\s*[:=]\s*["\047][^"\047[:space:]]{8,}'
-    var_expansion='["\047](\$[A-Za-z_][A-Za-z_0-9]*|\$\{[!]?[A-Za-z_][A-Za-z_0-9]*\})["\047]'
+    # `${VAR}` 외에 default/error 형식 (`${VAR:-default}`, `${VAR-default}`,
+    # `${VAR:?msg}` 등) 도 함께 제외 — 흔한 bash idiom.
+    var_expansion='["\047](\$[A-Za-z_][A-Za-z_0-9]*|\$\{[!]?[A-Za-z_][A-Za-z_0-9]*([:?-][^}]*)?\})["\047]'
     git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
         || die "secret_scan: cwd is not a git working copy"
     git log --all --max-count="$max_commits" -p \

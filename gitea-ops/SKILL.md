@@ -250,6 +250,7 @@ gitea-mirror-push --gh-repo OWNER/NAME [--force-mirror]
 ```
 
 - Default: `git push --all --tags` (로컬 branch + tag, force 없이) — fast-forward 안 되면 reject.
+  - 한계: Gitea 에서 삭제된 branch / tag 는 GitHub 에 stale 로 남음 (`--prune` 안 함, `--force-mirror` 만 GitHub 측을 완전 동기화).
 - `--force-mirror`: `git push --mirror` (모든 ref + force-update + remote-tracking 도 포함). collaborator 직접 commit 손실 위험.
 - cwd 가 git working copy + GitHub repo 가 이미 존재 필요.
 
