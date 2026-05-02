@@ -224,6 +224,7 @@ Gitea repo 를 GitHub 으로 mirror — 두 가지 모드:
   - `--force-secret-scan` (false positive 확인 후 강행)
   - history 정리 (git filter-repo) 후 재시도
 - false positive 가 흔한 경로 (`*.md`, `docs/**`) 는 git pathspec (`-- ':!*.md' ':!docs/**'`) 으로 git log 단계에서 제외.
+- 변수 expansion 만 들어간 line (`"$VAR"`, `"${VAR}"`, `"${!VAR}"` — bash indirect 포함) 은 secret 자체가 코드에 없으므로 자동 제외 (`HARBOR_SECRET="${!secret_var}"` 같은 dogfood 케이스).
 
 ### 명령 시그니처
 
@@ -234,19 +235,24 @@ gitea-mirror-init [--gitea-repo owner/repo] [--gh-repo OWNER/NAME]
                   (--public|--private) [--token-file PATH | --token TOKEN]
                   [--interval 8h0m0s] [--no-sync-on-commit]
                   [--no-secret-scan] [--force-secret-scan]
-                  [--description TEXT]
+                  [--description TEXT] [--skip-create]
 ```
 
-- `--gh-repo` 미명시 default: `<gh user>/<gitea repo name>` (같은 이름). 이미 존재하면 die — Claude 가 사용자에게 다른 이름 받아 `--gh-repo` 로 재호출.
+- `--gh-repo` 미명시 default: `<gh user>/<gitea repo name>` (같은 이름). 이미 존재하면 die — Claude 가 사용자에게 다른 이름 받아 `--gh-repo` 로 재호출, 또는 `--skip-create` 로 기존 repo 의 push mirror 만 재등록.
+- `--skip-create`: GitHub repo create 단계 건너뛰기 (기존 repo 가 이미 있다고 가정). unlink 후 같은 GitHub repo 로 재등록할 때 사용. visibility / description 옵션은 무시됨.
 - 첫 sync 자동 trigger. 실패 시 경고만 (Gitea 다음 cron 자동 재시도).
 
 #### `gitea-mirror-push`
 
 ```
-gitea-mirror-push --gh-repo OWNER/NAME [--no-secret-scan] [--force-secret-scan]
+gitea-mirror-push --gh-repo OWNER/NAME [--force-mirror]
+                  [--no-secret-scan] [--force-secret-scan]
 ```
 
-cwd 가 git working copy + GitHub repo 가 이미 존재 필요 (없으면 `gitea-mirror-init` 또는 `gh repo create` 먼저).
+- Default: `git push --all --tags` (로컬 branch + tag, force 없이) — fast-forward 안 되면 reject.
+  - 한계: Gitea 에서 삭제된 branch / tag 는 GitHub 에 stale 로 남음 (`--prune` 안 함, `--force-mirror` 만 GitHub 측을 완전 동기화).
+- `--force-mirror`: `git push --mirror` (모든 ref + force-update + remote-tracking 도 포함). collaborator 직접 commit 손실 위험.
+- cwd 가 git working copy + GitHub repo 가 이미 존재 필요.
 
 #### `gitea-mirror-ls`
 

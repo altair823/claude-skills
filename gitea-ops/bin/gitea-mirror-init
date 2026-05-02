@@ -6,7 +6,12 @@
 #                     (--public|--private) [--token-file PATH | --token TOKEN]
 #                     [--interval 8h0m0s] [--no-sync-on-commit]
 #                     [--no-secret-scan] [--force-secret-scan]
-#                     [--description TEXT]
+#                     [--description TEXT] [--skip-create]
+#
+# --skip-create: GitHub repo 가 이미 존재한다고 가정하고 gh repo create 단계
+#                건너뛰기. unlink 후 같은 GitHub repo 로 push mirror 만 재등록할
+#                때 사용. --public/--private 와 --description 도 무시됨 (기존
+#                repo 의 visibility/desc 그대로 유지).
 
 set -eu
 . "$(dirname "$0")/_common.sh"
@@ -20,6 +25,7 @@ INTERVAL="8h0m0s"
 SYNC_ON_COMMIT="true"
 SECRET_SCAN="auto"
 DESCRIPTION=""
+SKIP_CREATE="false"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -34,11 +40,14 @@ while [ $# -gt 0 ]; do
         --no-secret-scan)    SECRET_SCAN="skip"; shift ;;
         --force-secret-scan) SECRET_SCAN="force"; shift ;;
         --description) DESCRIPTION="$2"; shift 2 ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        --skip-create) SKIP_CREATE="true"; shift ;;
+        -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
         *) die "알 수 없는 인자: $1" ;;
     esac
 done
 
+# --skip-create 일 때는 visibility/description 가 의미 없음 (기존 repo 유지);
+# 그래도 사용자가 의도 명시할 수 있게 visibility 필수는 유지 — 단지 무시될 뿐.
 [ -n "$VISIBILITY" ] || die "--public 또는 --private 필수"
 
 require_author_login
@@ -84,18 +93,28 @@ else
         "GitHub mirror PAT 필요 — --token / --token-file / GITHUB_MIRROR_TOKEN env / $GITHUB_MIRROR_TOKEN_FILE 파일 중 하나"
 fi
 
-# 1. GitHub repo 생성 (이름 충돌 → die, Claude 가 다른 이름 받아 재호출)
-if gh repo view "$GH_REPO" >/dev/null 2>&1; then
-    die "GitHub repo 이미 존재: $GH_REPO — 다른 --gh-repo 명시 후 재시도"
-fi
-
-printf '[gitea-mirror-init] gh repo create %s --%s\n' "$GH_REPO" "$VISIBILITY" >&2
-if [ -n "$DESCRIPTION" ]; then
-    gh repo create "$GH_REPO" "--$VISIBILITY" --description "$DESCRIPTION" >/dev/null \
-        || die "gh repo create 실패"
+# 1. GitHub repo 생성 (또는 --skip-create 면 존재 검증만)
+if [ "$SKIP_CREATE" = "true" ]; then
+    gh repo view "$GH_REPO" >/dev/null 2>&1 \
+        || die "GitHub repo 없음: $GH_REPO — --skip-create 시 미리 존재해야 함. 새로 만들 거면 --skip-create 빼고 재시도."
+    printf '[gitea-mirror-init] --skip-create: gh repo create 건너뜀 (기존 %s 사용)\n' "$GH_REPO" >&2
+    # visibility / description 옵션이 명시되면 silently 무시 — 사용자에게 알림.
+    if [ -n "$DESCRIPTION" ]; then
+        printf '[gitea-mirror-init] --skip-create: --description 무시 (기존 repo desc 유지)\n' >&2
+    fi
+    printf '[gitea-mirror-init] --skip-create: --%s 무시 (기존 repo visibility 유지)\n' "$VISIBILITY" >&2
 else
-    gh repo create "$GH_REPO" "--$VISIBILITY" >/dev/null \
-        || die "gh repo create 실패"
+    if gh repo view "$GH_REPO" >/dev/null 2>&1; then
+        die "GitHub repo 이미 존재: $GH_REPO — 다른 --gh-repo 명시 후 재시도. 또는 기존 repo 의 push mirror 만 재등록할 거면 --skip-create."
+    fi
+    printf '[gitea-mirror-init] gh repo create %s --%s\n' "$GH_REPO" "$VISIBILITY" >&2
+    if [ -n "$DESCRIPTION" ]; then
+        gh repo create "$GH_REPO" "--$VISIBILITY" --description "$DESCRIPTION" >/dev/null \
+            || die "gh repo create 실패"
+    else
+        gh repo create "$GH_REPO" "--$VISIBILITY" >/dev/null \
+            || die "gh repo create 실패"
+    fi
 fi
 
 # 2. Gitea push mirror 등록
