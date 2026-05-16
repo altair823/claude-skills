@@ -1408,6 +1408,17 @@ t_dry_run() {
 }
 run_test "gc --dry-run mutates nothing" t_dry_run
 
+t_unsafe_path_blocked() {
+  local ws fb out; ws="$(new_workspace)"; cd "$ws"; fb="$(fixtures_path)"
+  printf 'REMOTEDEV_HOST="fakehost"\nREMOTEDEV_ARTIFACTS=(../../evil /etc/passwd)\n' > .remotedev
+  : > log
+  out="$(PATH="$fb:$PATH" RD_FAKE_LOG="$ws/log" bash "$G" 2>&1)"
+  grep -q 'rm -rf' log && _fail "unsafe path must NOT issue remote rm"
+  assert_contains "$out" "unsafe artifact path"
+  rm -rf "$ws"
+}
+run_test "gc refuses .. / absolute artifact paths" t_unsafe_path_blocked
+
 t_real_gated() {
   [ -n "${REMOTEDEV_TEST_HOST:-}" ] || { echo "  (skipped: set REMOTEDEV_TEST_HOST)"; return 0; }
   local ws H RD; ws="$(new_workspace)"; cd "$ws"; H="$REMOTEDEV_TEST_HOST"
@@ -1447,7 +1458,7 @@ set -eo pipefail
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
-[ -f "$CFG" ] || die "no .remotedev here"
+[ -f "$CFG" ] || { warn "no .remotedev here"; exit 2; }
 read_cfg "$CFG"
 [ -n "${REMOTEDEV_HOST:-}" ] || die ".remotedev has no REMOTEDEV_HOST"
 H="$REMOTEDEV_HOST"
@@ -1461,6 +1472,10 @@ fi
 freed=0; skipped=0
 for a in "${REMOTEDEV_ARTIFACTS[@]}"; do
   [ -n "$a" ] || continue
+  case "$a" in
+    /*|../*|*/../*|*/..|..)
+      warn "unsafe artifact path, skipping: $a"; skipped=$((skipped+1)); continue ;;
+  esac
   if [ -e "$ROOT/$a" ]; then
     if [ "$DRY" -eq 1 ]; then
       log "would delete: $H:$RD/$a"
@@ -1482,12 +1497,12 @@ chmod +x remotedev-ops/bin/remotedev-gc
 - [ ] **Step 4: Run the test, verify it passes**
 
 Run: `bash remotedev-ops/tests/test_gc.sh`
-Expected: `6 passed, 0 failed` (gated test prints "skipped").
+Expected: `7 passed, 0 failed` (gated test prints "skipped").
 
 - [ ] **Step 5: Run the gated real-host check**
 
 Run: `REMOTEDEV_TEST_HOST=devbox bash remotedev-ops/tests/test_gc.sh`
-Expected: `6 passed, 0 failed` with the gated test actually deleting on `devbox`.
+Expected: `7 passed, 0 failed` with the gated test actually deleting on `devbox`.
 
 - [ ] **Step 6: Commit**
 

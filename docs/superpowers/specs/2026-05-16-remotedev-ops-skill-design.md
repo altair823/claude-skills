@@ -221,6 +221,9 @@ rebuild stay intact). Requires `.remotedev` (else die, exit 2).
    runtime does: `REMOTEDEV_REMOTE_DIR` else `remotedev/$(basename ROOT)`.
 2. `host_up`. Down → nothing to do; warn, exit 0 (offline no-op).
 3. For each `REMOTEDEV_ARTIFACTS` entry `a`:
+   - `a` absolute or containing a `..` path component → **skip and warn**,
+     never issue a remote `rm` (defense-in-depth against a hand-edited
+     `.remotedev`; `remotedev-init` only ever emits safe relative paths).
    - local `$ROOT/$a` exists → it was retrieved; `ssh HOST rm -rf -- <remote
      dir>/<a>` (or print it under `--dry-run`); count as freed.
    - local `$ROOT/$a` missing → not yet retrieved; **skip and warn**
@@ -264,9 +267,10 @@ embedded runtime.
 | `uninstall`/`disable` with nothing set up | no-op, exit 0 |
 | `uninstall` with non-ours files in shim dir | remove only our links, keep dir, warn |
 | `verify` failure | trap-cleanup remote dir, non-zero exit + diagnostics |
-| `gc` with no `.remotedev` | die, exit 2 |
+| `gc` with no `.remotedev` | warn + exit 2 |
 | `gc` host unreachable | warn, exit 0 (offline no-op, nothing deleted) |
 | `gc` artifact not yet retrieved locally | skip + warn, keep remote copy |
+| `gc` artifact path absolute or with `..` component | skip + warn, never issue remote `rm` (defense-in-depth) |
 | `gc --dry-run` | print intended deletions, mutate nothing |
 
 ## Testing
@@ -294,8 +298,9 @@ No server needed; `verify` is server-gated (`REMOTEDEV_TEST_HOST`).
   idempotent; `--purge` removes `.remotedev`.
 - `test_gc` — no `.remotedev` → exit 2; fake-ssh: local artifact present →
   remote `rm` issued for the right path; local artifact absent → no `rm`,
-  warned; host down → no-op exit 0; `--dry-run` issues no `rm`. Real
-  deletion is server-gated (`REMOTEDEV_TEST_HOST`).
+  warned; host down → no-op exit 0; `--dry-run` issues no `rm`; absolute /
+  `..` artifact path → no `rm`, warned. Real deletion is server-gated
+  (`REMOTEDEV_TEST_HOST`).
 
 ## Dependencies
 
