@@ -298,7 +298,7 @@ Run:
 cd ~/.config/superpowers/worktrees/claude-skills/remotedev-ops-skill
 bash remotedev-ops/tests/test_doctor.sh; echo "exit=$?"
 ```
-Expected: `7 passed, 0 failed`, exit 0 (gated test prints "(skipped...)").
+Expected: `8 passed, 0 failed`, exit 0 (the gated test prints "(skipped...)" and its `run_test` still counts as a pass).
 
 - [ ] **Step 5: Gated real-host check against devbox**
 
