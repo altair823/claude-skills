@@ -35,8 +35,10 @@ remotedev-ops/
 
 Source of `runtime/*` is the hardened, already-tested code at
 `~/projects/remotedev` (`bin/rd-exec`, `bin/rd-shim`, `bin/rd`,
-`templates/gradlew`, `templates/mvnw`). Tasks 1–2 copy it verbatim and
-prove it still passes here; Tasks 3+ build the new skill scripts via TDD.
+`templates/gradlew`, `templates/mvnw`). Task 1 copies the `rd*` scripts
+verbatim and authors the two `*.wrapper` files with skill-accurate
+headers (the skill owns this runtime); Task 2 proves it still passes;
+Tasks 3+ build the new skill scripts via TDD.
 
 **`_common.sh` API (locked here; all later tasks use exactly these names):**
 
@@ -79,8 +81,35 @@ SRC=~/projects/remotedev
 cp "$SRC/bin/rd-exec"        remotedev-ops/runtime/rd-exec
 cp "$SRC/bin/rd-shim"        remotedev-ops/runtime/rd-shim
 cp "$SRC/bin/rd"             remotedev-ops/runtime/rd
-cp "$SRC/templates/gradlew"  remotedev-ops/runtime/gradlew.wrapper
-cp "$SRC/templates/mvnw"     remotedev-ops/runtime/mvnw.wrapper
+# Wrappers are AUTHORED here (not copied): the skill owns this runtime, so
+# their headers describe skill behaviour (installed by remotedev-init), not
+# the old standalone-project manual steps.
+cat > remotedev-ops/runtime/gradlew.wrapper <<'WRAP'
+#!/usr/bin/env bash
+# remotedev wrapper for ./gradlew  (repo-local launchers can't be PATH-shimmed)
+#
+# Installed automatically by `remotedev-init` (it runs mv gradlew
+# gradlew.real, drops this wrapper in place, and hides both from git).
+# Do not install or edit by hand; `remotedev-disable` reverses it.
+#
+# Forwards to rd-exec, which runs ./gradlew.real on the remote (or locally
+# when offline / no .remotedev).
+set -eo pipefail
+exec rd-exec ./gradlew.real "$@"
+WRAP
+cat > remotedev-ops/runtime/mvnw.wrapper <<'WRAP'
+#!/usr/bin/env bash
+# remotedev wrapper for ./mvnw  (repo-local launchers can't be PATH-shimmed)
+#
+# Installed automatically by `remotedev-init` (it runs mv mvnw mvnw.real,
+# drops this wrapper in place, and hides both from git). Do not install or
+# edit by hand; `remotedev-disable` reverses it.
+#
+# Forwards to rd-exec, which runs ./mvnw.real on the remote (or locally
+# when offline / no .remotedev).
+set -eo pipefail
+exec rd-exec ./mvnw.real "$@"
+WRAP
 chmod +x remotedev-ops/runtime/rd-exec remotedev-ops/runtime/rd-shim remotedev-ops/runtime/rd
 ```
 

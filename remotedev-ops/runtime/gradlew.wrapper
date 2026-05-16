@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # remotedev wrapper for ./gradlew  (repo-local launchers can't be PATH-shimmed)
 #
-# Install inside a Gradle repo:
-#   mv gradlew gradlew.real
-#   cp ~/project/remotedev/templates/gradlew ./gradlew
-#   chmod +x gradlew
+# Installed automatically by `remotedev-init` (it runs mv gradlew
+# gradlew.real, drops this wrapper in place, and hides both from git).
+# Do not install or edit by hand; `remotedev-disable` reverses it.
 #
 # Forwards to rd-exec, which runs ./gradlew.real on the remote (or locally
 # when offline / no .remotedev).
