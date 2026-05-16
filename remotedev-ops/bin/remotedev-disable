@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# remotedev-disable [--purge] — per-repo revert: restore launchers, clear
+# git-hide; --purge also removes .remotedev. Idempotent.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+PURGE=0; [ "${1:-}" = "--purge" ] && PURGE=1
+ROOT="$(repo_root)"; cd "$ROOT"
+
+restore() { # launcher
+  local l="$1"
+  if [ -f "$l.real" ]; then
+    mv -f "$l.real" "$l"
+    git_unhide "$l"; git_unhide "$l.real"
+    log "restored $l"
+  fi
+}
+restore gradlew
+restore mvnw
+git_unhide .remotedev
+
+if [ "$PURGE" -eq 1 ] && [ -f .remotedev ]; then
+  rm -f .remotedev; log "removed .remotedev"
+fi
