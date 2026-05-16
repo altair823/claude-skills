@@ -4,9 +4,9 @@
 
 ## 1. 목적
 
-`bitwarden-ops` 는 Claude Code 가 어느 프로젝트에서든 Bitwarden 개인 vault(`bw` CLI)의 credential 을 **해결(읽기)** 하고, 미등록분을 **즉석 등록(쓰기)** 하기 위한 CLI 스킬이다. 핵심 설계 긴장점은 **AI 에이전트가 쓰는 credential 도구의 안전성 ↔ 일상 사용 편의** 이며, 불변 규칙은 단 하나로 수렴한다: **secret 값은 Claude 의 컨텍스트·argv·디스크·로그 어디에도 남지 않는다.** 안전 모델은 검증된 `homelab-ops` 규약(`bw://` 참조, 사용자만 `bw unlock`, locked-vault 기본 거부)을 재사용한다.
+`bitwarden-ops` 는 Claude Code 가 어느 프로젝트에서든 Bitwarden 개인 vault(`bw` CLI)의 credential 을 **해결(읽기)** 하고, 미등록분을 **즉석 등록(쓰기)** 하기 위한 자족적 CLI 스킬이다. 다른 어떤 스킬도 알 필요 없이 단독으로 이해·설치·사용된다. 핵심 설계 긴장점은 **AI 에이전트가 쓰는 credential 도구의 안전성 ↔ 일상 사용 편의** 이며, 불변 규칙은 단 하나로 수렴한다: **secret 값은 Claude 의 컨텍스트·argv·디스크·로그 어디에도 남지 않는다.**
 
-의존성: `bw`(Bitwarden CLI), `jq`, `bash`. 기존 `-ops` 스킬 패밀리(gitea-ops/harbor-ops/paperboy-ops/homelab-ops)와 동일한 구조(`SKILL.md` + `bin/` + `tests/`).
+의존성: `bw`(Bitwarden CLI), `jq`, `bash`. 구조: `SKILL.md` + `bin/`(얇은 bash 래퍼) + `tests/`(pure-bash 하니스).
 
 ## 2. 사용 시점 / 범위
 
@@ -16,7 +16,7 @@
 - "아직 vault 에 없는 credential 을 지금 등록" → `bw-put` (사용자가 직접 실행)
 - "vault 잠금/sync 상태 확인" → `bw-status`
 
-범위 밖: org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일, 항목/필드 **삭제**, GitHub/GitLab 등 타 secret 백엔드. 기존 스킬(gitea/harbor/paperboy)의 평문 dotfile 마이그레이션은 본 스킬의 범위가 아니다(별도 후속 프로젝트).
+범위 밖: org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일, 항목/필드 **삭제**, GitHub/GitLab 등 타 secret 백엔드. 다른 도구의 기존 자격증명 저장 방식을 본 스킬로 옮기는 마이그레이션도 범위가 아니다(§9).
 
 ## 3. 아키텍처
 
@@ -41,16 +41,16 @@ bitwarden-ops/
   SKILL.md
 ```
 
-### 3.2 참조 문법 (homelab-ops 와 공유, 읽기·쓰기 대칭)
+### 3.2 참조 문법 (읽기·쓰기 대칭)
 
 - `bw://<item>` → 항목의 password
 - `bw://<item>/<field>` → 명명 필드 또는 커스텀 필드 `<field>` 의 값
 - `bw://<item>/notes` → notes 전체
-- `--ssh` 플래그 → notes 에 보관된 SSH private key (homelab-ops parity; stdout 전용, ssh-agent 주입 가정)
+- `--ssh` 플래그 → notes 에 보관된 SSH private key (stdout 전용, 호출자가 ssh-agent 로 주입하는 용도)
 
 `<item>` 은 항목 이름 또는 ID. 동일 문법을 `bw-get`/`bw-exec`/`bw-put` 이 공유하므로 "쓴 곳에서 읽는다" 가 대칭적이다.
 
-## 4. 세션 모델 (homelab-ops 규약 재사용)
+## 4. 세션 모델
 
 ```
 사용자가 직접: export BW_SESSION="$(bw unlock --raw)"
@@ -100,9 +100,9 @@ bw-put <bw://ref> [--type password|field|note] [--replace]
 
 - `--type` 기본: `password`(필드 미지정 시) / 필드 지정 시 `field` / `bw://x/notes` 면 `note`.
 - 쓰기 전 `bw sync` — stale 로컬 캐시가 서버 상태를 clobber 하지 않도록.
-- **overwrite-needs-eyes**: 참조 위치에 이미 비어있지 않은 값이 있으면 기본 거부하고 "이미 존재 — 덮어쓰려면 `--replace`" 안내(homelab-ops 의 destructive-needs-eyes DNA). 신규 item/field 생성은 플래그 불필요. `--replace` 명시 시에만 덮어쓴다.
+- **overwrite-needs-eyes**: 참조 위치에 이미 비어있지 않은 값이 있으면 기본 거부하고 "이미 존재 — 덮어쓰려면 `--replace`" 안내. 기존 secret 을 말없이 잃는 것은 파괴적 작업이므로 명시적 확인을 요구한다. 신규 item/field 생성은 플래그 불필요. `--replace` 명시 시에만 덮어쓴다.
 - 항목이 없으면 새 항목 생성, 있으면 해당 필드/비밀번호만 set.
-- **테스트 seam**: tty 읽기 한 줄은 `_read_secret` 함수로 분리하고 env(예: `BW_PUT_VALUE_TEST`)로만 오버라이드 가능하게 둔다(homelab-ops 의 `HOMELAB_BACKEND` 패턴과 동형). 프로덕션 경로는 항상 `/dev/tty` 이며, 테스트는 이 seam 으로 가드 로직(overwrite 거부·sync 선행·빈값 거부·ref 파싱)만 비대화식으로 검증한다 — 프로덕션 입력 경로를 약화시키지 않는다.
+- **테스트 seam**: tty 읽기 한 줄은 `_read_secret` 함수로 분리하고 전용 env 변수로만 오버라이드 가능하게 둔다(테스트 하니스만 설정, 프로덕션에서는 미설정). 프로덕션 경로는 항상 `/dev/tty` 이며, 테스트는 이 seam 으로 가드 로직(overwrite 거부·sync 선행·빈값 거부·ref 파싱)만 비대화식으로 검증한다 — 프로덕션 입력 경로를 약화시키지 않는다.
 
 ### 5.5 `bw-status`
 
@@ -132,7 +132,7 @@ bw-status [--json]
 
 ## 8. 테스트
 
-pure-bash 하니스 + `tests/stubs/bw`(결정적 가짜 vault), homelab-ops/gitea-ops 와 일관. 커버:
+의존성 없는 pure-bash 하니스 + `tests/stubs/bw`(PATH 로 실제 `bw` 를 가리는 결정적 가짜 vault). 커버:
 
 - 참조 파서: `bw://i`, `bw://i/f`, `bw://i/notes`, 잘못된 형식.
 - `bw-get`: 값이 stdout 으로만, item/field 없음 구분.
@@ -147,5 +147,4 @@ pure-bash 하니스 + `tests/stubs/bw`(결정적 가짜 vault), homelab-ops/gite
 - **항목/필드/첨부 삭제** — 에이전트 컨텍스트에서 과도하게 위험. 파괴적 vault 편집은 사용자가 Bitwarden UI 에서.
 - org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일.
 - 상시 데몬/서비스, 커스텀 MCP 서버.
-- gitea/harbor/paperboy 의 평문 dotfile → bw 마이그레이션(별도 후속, per-skill).
-- homelab-ops 와의 코드 결합 — homelab-ops 는 자체 `bw-resolve` 유지. 미래에 본 스킬로 위임 가능하나 본 설계의 전제는 아니다.
+- 다른 스킬/도구를 본 스킬로 마이그레이션하거나 통합하는 작업. 본 스킬은 자족적 독립 스킬이며, 어떤 스킬의 내부에도 의존하지 않고 어떤 스킬도 본 스킬에 결합시키지 않는다. 타 도구가 `bw-get`/`bw-exec` 를 호출해 credential 을 위임받는 것은 가능하나, 그 통합 자체는 본 설계의 범위가 아니다(필요 시 별도 프로젝트).
