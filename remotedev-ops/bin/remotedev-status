@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# remotedev-status — read-only: machine install state + repo config.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+SD="$(shim_dir)"
+if shim_installed; then echo "shim installed: yes ($SD)"; else echo "shim installed: no"; fi
+case ":$PATH:" in *":$SD:"*) echo "shim on PATH: yes" ;; *) echo "shim on PATH: no" ;; esac
+
+ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
+if [ -f "$CFG" ]; then
+  echo ".remotedev: present ($CFG)"
+  read_cfg "$CFG"
+  echo "host: ${REMOTEDEV_HOST:-<unset>}"
+  echo "build: ${BUILD_CMD:-<none>}"
+  echo "test:  ${TEST_CMD:-<none>}"
+  [ -f "$ROOT/gradlew.real" ] && echo "gradlew: swapped"
+  [ -f "$ROOT/mvnw.real" ] && echo "mvnw: swapped"
+  if [ -n "${REMOTEDEV_HOST:-}" ] && host_up "$REMOTEDEV_HOST"; then
+    echo "reachable: yes"
+  else
+    echo "reachable: no"
+  fi
+else
+  echo ".remotedev: absent"
+fi
