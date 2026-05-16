@@ -1,0 +1,151 @@
+# bitwarden-ops 설계 문서
+
+작성일: 2026-05-16
+
+## 1. 목적
+
+`bitwarden-ops` 는 Claude Code 가 어느 프로젝트에서든 Bitwarden 개인 vault(`bw` CLI)의 credential 을 **해결(읽기)** 하고, 미등록분을 **즉석 등록(쓰기)** 하기 위한 CLI 스킬이다. 핵심 설계 긴장점은 **AI 에이전트가 쓰는 credential 도구의 안전성 ↔ 일상 사용 편의** 이며, 불변 규칙은 단 하나로 수렴한다: **secret 값은 Claude 의 컨텍스트·argv·디스크·로그 어디에도 남지 않는다.** 안전 모델은 검증된 `homelab-ops` 규약(`bw://` 참조, 사용자만 `bw unlock`, locked-vault 기본 거부)을 재사용한다.
+
+의존성: `bw`(Bitwarden CLI), `jq`, `bash`. 기존 `-ops` 스킬 패밀리(gitea-ops/harbor-ops/paperboy-ops/homelab-ops)와 동일한 구조(`SKILL.md` + `bin/` + `tests/`).
+
+## 2. 사용 시점 / 범위
+
+- "이 명령에 vault 의 토큰을 넣어 실행" → `bw-exec`
+- "vault 의 키를 stdout 으로 받아 파이프(ssh-agent 등)" → `bw-get`
+- "vault 에 뭐가 있는지(값 말고 이름) 보기" → `bw-ls`
+- "아직 vault 에 없는 credential 을 지금 등록" → `bw-put` (사용자가 직접 실행)
+- "vault 잠금/sync 상태 확인" → `bw-status`
+
+범위 밖: org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일, 항목/필드 **삭제**, GitHub/GitLab 등 타 secret 백엔드. 기존 스킬(gitea/harbor/paperboy)의 평문 dotfile 마이그레이션은 본 스킬의 범위가 아니다(별도 후속 프로젝트).
+
+## 3. 아키텍처
+
+상시 데몬 없음. `bin/` 의 얇은 bash 래퍼를 Claude(또는 사용자)가 호출한다. credential 은 호출 시점에만 `bw` 로 해결되어 메모리/파이프/자식 env 로만 흐른다.
+
+### 3.1 레포 구조
+
+```
+bitwarden-ops/
+  bin/
+    bw-get       # 참조 해결 → stdout (읽기, 파이프/ssh-agent용)
+    bw-exec      # 참조들을 자식 env로 주입 후 cmd exec (읽기, CLI 래퍼용)
+    bw-ls        # item·필드 이름 나열 (메타데이터, 값 없음)
+    bw-put       # 참조 위치에 값 upsert (쓰기, 사용자가 직접 실행)
+    bw-status    # vault 잠금·sync·BW_SESSION 상태 (메타데이터)
+    _common.sh   # 공유: die, 참조 파서, locked-vault 게이트, 마스킹
+  tests/
+    run.sh
+    lib.sh
+    stubs/bw     # 결정적 가짜 vault
+    test_*.sh
+  SKILL.md
+```
+
+### 3.2 참조 문법 (homelab-ops 와 공유, 읽기·쓰기 대칭)
+
+- `bw://<item>` → 항목의 password
+- `bw://<item>/<field>` → 명명 필드 또는 커스텀 필드 `<field>` 의 값
+- `bw://<item>/notes` → notes 전체
+- `--ssh` 플래그 → notes 에 보관된 SSH private key (homelab-ops parity; stdout 전용, ssh-agent 주입 가정)
+
+`<item>` 은 항목 이름 또는 ID. 동일 문법을 `bw-get`/`bw-exec`/`bw-put` 이 공유하므로 "쓴 곳에서 읽는다" 가 대칭적이다.
+
+## 4. 세션 모델 (homelab-ops 규약 재사용)
+
+```
+사용자가 직접: export BW_SESSION="$(bw unlock --raw)"
+   (마스터 비번은 사용자만 입력 — Claude 도 파일도 절대 접근하지 않음)
+모든 명령: BW_SESSION 을 받아 그 시점에만 bw 호출
+세션 종료: 사용자가 bw lock / BW_SESSION unset (권고)
+```
+
+- `BW_SESSION` 미설정 ⇒ 모든 명령이 시작 거부 (exit 3, "locked vault").
+- `BW_SESSION` 자체가 vault 접근 권한을 부여하는 secret 이다 — 출력·로그·argv 에 노출 금지, 마스킹 대상.
+
+## 5. 명령
+
+모든 명령은 `_common.sh` 를 source 하고, 첫 동작 전 locked-vault 게이트를 통과한다.
+
+### 5.1 `bw-get`
+
+```
+bw-get <bw://ref> [--ssh]
+```
+
+참조를 해결해 값을 **stdout 으로만** 출력. 호출자가 즉시 파이프한다(`bw-get bw://x/api | consumer`). 값은 파이프로만 흐르고 Claude 는 보지 않는다. `--ssh` 는 notes 의 SSH 키를 그대로 stdout(개행 보존)으로. 해결 실패 시 item-없음 / field-없음 을 구분한 에러.
+
+### 5.2 `bw-exec`
+
+```
+bw-exec <NAME=bw://ref>... -- <cmd> [args...]
+```
+
+각 `NAME=bw://ref` 를 해결해 **자식 프로세스 env 로만** 주입하고 `cmd` 를 exec. secret 은 argv·Claude 출력·디스크 어디에도 없다. 1개 이상의 매핑 + `--` 구분자 필수. 해결 실패 시 cmd 미실행, 비0 종료.
+
+### 5.3 `bw-ls`
+
+```
+bw-ls [<search>]
+```
+
+vault 항목 이름과 (있으면) 필드 이름을 나열한다. **값은 출력하지 않는다.** `<search>` 부분 일치 필터. 무엇이 등록돼 있는지 secret 노출 없이 탐색하는 용도.
+
+### 5.4 `bw-put` (쓰기 — 사용자가 직접 실행)
+
+```
+bw-put <bw://ref> [--type password|field|note] [--replace]
+```
+
+참조 위치에 값을 upsert. **값은 제어 터미널(`/dev/tty`)의 비에코 프롬프트에서만 읽는다 — argv 도, 일반 stdin 도 아니다.** `/dev/tty` 를 쓰는 이유가 핵심이다: Claude 의 Bash 도구에는 제어 터미널이 없어 Claude 는 구조적으로 값을 공급할 수 없고, 터미널 앞의 사람만 입력할 수 있다. Claude 는 `bw://` 타깃과 `--type` 만 구성해 실행할 명령줄을 제시하고, **사용자가 자신의 터미널에서 직접 실행**해 secret 을 붙여넣는다(마스터 비번 모델과 동일 — Claude 는 값을 보지 않는다).
+
+- `--type` 기본: `password`(필드 미지정 시) / 필드 지정 시 `field` / `bw://x/notes` 면 `note`.
+- 쓰기 전 `bw sync` — stale 로컬 캐시가 서버 상태를 clobber 하지 않도록.
+- **overwrite-needs-eyes**: 참조 위치에 이미 비어있지 않은 값이 있으면 기본 거부하고 "이미 존재 — 덮어쓰려면 `--replace`" 안내(homelab-ops 의 destructive-needs-eyes DNA). 신규 item/field 생성은 플래그 불필요. `--replace` 명시 시에만 덮어쓴다.
+- 항목이 없으면 새 항목 생성, 있으면 해당 필드/비밀번호만 set.
+- **테스트 seam**: tty 읽기 한 줄은 `_read_secret` 함수로 분리하고 env(예: `BW_PUT_VALUE_TEST`)로만 오버라이드 가능하게 둔다(homelab-ops 의 `HOMELAB_BACKEND` 패턴과 동형). 프로덕션 경로는 항상 `/dev/tty` 이며, 테스트는 이 seam 으로 가드 로직(overwrite 거부·sync 선행·빈값 거부·ref 파싱)만 비대화식으로 검증한다 — 프로덕션 입력 경로를 약화시키지 않는다.
+
+### 5.5 `bw-status`
+
+```
+bw-status [--json]
+```
+
+`BW_SESSION` 설정 여부, vault 잠금 상태, 로컬 캐시 sync staleness 를 출력(secret 없음). 다른 명령 실행 전 preflight. 종료코드: `0` unlocked+세션OK / `3` locked 또는 세션 없음.
+
+## 6. 안전 계약 (불변 — 척추)
+
+1. **마스터 비번**: 사용자만, `bw unlock` 으로만. Claude 는 절대 프롬프트·수신·저장하지 않는다.
+2. **secret 값**: 읽기든 쓰기든 Claude 출력·argv·디스크·로그에 절대 없다. 읽기 → stdout / 자식 env. 쓰기 → 사용자 터미널 비에코 입력.
+3. **locked-vault 기본**: `BW_SESSION` 없으면 exit 3, 시작 거부.
+4. **overwrite-needs-eyes**: `bw-put` 이 기존 비어있지 않은 값을 덮어쓰려면 `--replace` 명시 필수.
+5. **쓰기 전 sync**: `bw-put` 은 `bw sync` 후 진행 — stale 캐시 clobber 방지.
+6. **마스킹**: `BW_SESSION`·해결된 값이 우발적으로 스트림에 섞이면 마지막 방어선으로 마스킹(`_common.sh`).
+
+## 7. 에러 처리
+
+- `BW_SESSION` 없음 → exit 3, "locked vault: BW_SESSION not set. 사용자가 `bw unlock` 필요".
+- `bw` 가 locked/만료 보고 → exit 3, 재잠금 안내.
+- 참조 문법 오류(`bw://` 아님) → 사용법 에러, exit 1.
+- item 없음 vs field 없음 → 구분된 메시지(어느 쪽이 없는지 분명히).
+- `bw-put` 에서 사용자 입력이 빈 값 → 거부(빈 secret 등록 방지), 재시도 안내.
+- `bw sync` 실패 → 경고 + 사용자 결정 위임(네트워크 단절 시 stale 쓰기 위험 고지).
+
+## 8. 테스트
+
+pure-bash 하니스 + `tests/stubs/bw`(결정적 가짜 vault), homelab-ops/gitea-ops 와 일관. 커버:
+
+- 참조 파서: `bw://i`, `bw://i/f`, `bw://i/notes`, 잘못된 형식.
+- `bw-get`: 값이 stdout 으로만, item/field 없음 구분.
+- `bw-exec`: 값이 자식 env 에만 — argv·stdout·stderr 에 secret 부재 단언.
+- `bw-ls`: 값이 출력에 부재 단언(이름만).
+- `bw-put`: 신규 생성 경로 / 기존 값에 `--replace` 없이 거부 / `--replace` 로 덮어씀 / 빈 입력 거부 / sync 선행. (값 입력은 §5.4 의 `_read_secret` 테스트 seam 으로 주입 — 프로덕션 `/dev/tty` 경로는 불변.)
+- locked-vault: 모든 명령 `BW_SESSION` 없을 때 exit 3.
+- `--ssh`: notes 키가 개행 보존되어 stdout 으로.
+
+## 9. 비목표 (YAGNI)
+
+- **항목/필드/첨부 삭제** — 에이전트 컨텍스트에서 과도하게 위험. 파괴적 vault 편집은 사용자가 Bitwarden UI 에서.
+- org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일.
+- 상시 데몬/서비스, 커스텀 MCP 서버.
+- gitea/harbor/paperboy 의 평문 dotfile → bw 마이그레이션(별도 후속, per-skill).
+- homelab-ops 와의 코드 결합 — homelab-ops 는 자체 `bw-resolve` 유지. 미래에 본 스킬로 위임 가능하나 본 설계의 전제는 아니다.
