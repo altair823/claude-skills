@@ -15,6 +15,7 @@ set -- ${args[@]+"${args[@]}"}
 case "$cmd" in
   status) echo "{\"status\":\"${BW_STUB_STATUS:-unlocked}\"}" ;;
   sync) : > "$DB.synced"; echo "Syncing complete." ;;
+  lock) : > "$DB.locked"; echo "Vault locked." ;;
   list)
     [[ "${1:-}" == items ]] || { echo "[]"; exit 0; }
     q=""; [[ "${2:-}" == --search ]] && q="${3:-}"

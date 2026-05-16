@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/_common.sh"
+require_cmd bw
+
+cache_dir="$(bwo_cache_dir)"
+[[ -n "$cache_dir" ]] || die "캐시 경로 해석 불가 (HOME 미설정·BITWARDEN_OPS_CACHE_DIR 미지정) — 세션을 임의 위치에 쓰지 않음"
+
+# Acquire the session. Production: `bw unlock --raw` prompts the master password
+# on the user's terminal (never Claude). Test seam: BITWARDEN_OPS_TEST_SESSION_FILE
+# (harness only; never set in production) supplies a fake session, bypassing bw.
+_acquire_session() {
+  if [[ -n "${BITWARDEN_OPS_TEST_SESSION_FILE:-}" ]]; then
+    cat "$BITWARDEN_OPS_TEST_SESSION_FILE"; return
+  fi
+  bw unlock --raw
+}
+session="$(_acquire_session)" || die "bw unlock 실패 — 마스터 비밀번호 확인 후 재시도"
+[[ -n "$session" ]] || die "빈 세션은 저장하지 않음"
+
+mkdir -p "$cache_dir"
+chmod 700 "$cache_dir" 2>/dev/null || true
+# mktemp creates the file 0600; write, then atomic same-dir rename. The session
+# value is never world-readable and never on durable disk outside <cache>.
+tmp="$(mktemp "$cache_dir/.session.XXXXXX")"
+# $tmp is assigned before the trap is armed, so it is always defined when the
+# trap can fire. Removes a partial/leftover temp (it still holds the session
+# key, 0600) if printf/mv fails under errexit. After a successful mv the temp
+# no longer exists, so rm -f is a harmless no-op.
+trap 'rm -f "$tmp" 2>/dev/null || true' EXIT
+printf '%s' "$session" > "$tmp"
+mv -f "$tmp" "$cache_dir/session"
+echo "세션 저장됨: $cache_dir/session (이 호스트에서 bw-lock 전까지 Claude 가 사용)"

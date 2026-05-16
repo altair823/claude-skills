@@ -62,6 +62,11 @@ bitwarden-ops/
 - `BW_SESSION` 미설정 ⇒ 모든 명령이 시작 거부 (exit 3, "locked vault").
 - `BW_SESSION` 자체가 vault 접근 권한을 부여하는 secret 이다 — 출력·로그·argv 에 노출 금지, 마스킹 대상.
 
+> **보강(2026-05-16, 세션 영속):** `BW_SESSION` 미설정 시 `$HOME/.cache/bitwarden-ops/session`
+> (0600, durable, repo 밖) 를 폴백으로 사용한다(env-wins). 사용자는 Claude 가 이미 떠 있어도
+> `bw-unlock` 으로 unlock 할 수 있고, `bw-lock` 으로 종료한다. 상세: 별도 설계 문서
+> `2026-05-16-bitwarden-ops-session-persistence-design.md`.
+
 ## 5. 명령
 
 모든 명령은 `_common.sh` 를 source 하고, 첫 동작 전 locked-vault 게이트를 통과한다.
@@ -114,18 +119,34 @@ bw-status [--json]
 
 > 참고: `bw status` 는 `{status}` 만 반환하고 마지막 sync 시각을 노출하지 않으므로 "sync staleness" 는 `bw-status` 가 제공할 수 없다(구현·SKILL.md 도 주장하지 않음). stale 캐시 방어는 `bw-put` 이 쓰기 직전 `bw sync` 를 강제하는 것으로 처리한다(§5.4·§6.5).
 
+### 5.6 `bw-unlock`
+
+```
+bw-unlock
+```
+
+사용자 실행; `bw unlock` 으로 마스터 비번을 사용자 tty 에서 받아 `$HOME/.cache/bitwarden-ops/session`(0600) 에 기록 (env-wins 폴백). Claude 가 이미 실행 중이어도 사용자가 자신의 터미널에서 호출 가능. Claude 는 이 명령을 직접 실행하지 않는다(마스터 비번은 사용자만 입력).
+
+### 5.7 `bw-lock`
+
+```
+bw-lock
+```
+
+Claude/사용자 실행; `bw lock` + 세션 파일 제거, idempotent, secret 입력 없음. 세션 파일이 없어도 오류 없이 종료한다.
+
 ## 6. 안전 계약 (불변 — 척추)
 
 1. **마스터 비번**: 사용자만, `bw unlock` 으로만. Claude 는 절대 프롬프트·수신·저장하지 않는다.
 2. **secret 값**: 읽기든 쓰기든 Claude 출력·argv·디스크·로그에 절대 없다. 읽기 → stdout / 자식 env. 쓰기 → 사용자 터미널 비에코 입력.
-3. **locked-vault 기본**: `BW_SESSION` 없으면 exit 3, 시작 거부.
+3. **locked-vault 기본**: `BW_SESSION` env 가 없고 세션 파일도 없으면 exit 3, 시작 거부 (세션 파일 폴백은 §4 보강 참조; env-wins).
 4. **overwrite-needs-eyes**: `bw-put` 이 기존 비어있지 않은 값을 덮어쓰려면 `--replace` 명시 필수.
 5. **쓰기 전 sync**: `bw-put` 은 `bw sync` 후 진행 — stale 캐시 clobber 방지.
 6. **마스킹**: `BW_SESSION`·해결된 값이 우발적으로 스트림에 섞이면 마지막 방어선으로 마스킹(`_common.sh`).
 
 ## 7. 에러 처리
 
-- `BW_SESSION` 없음 → exit 3, "locked vault: BW_SESSION not set. 사용자가 `bw unlock` 필요".
+- `BW_SESSION` 없고 세션 파일(`$HOME/.cache/bitwarden-ops/session`)도 없음 → exit 3, "locked vault: 세션 없음 — 사용자가 본인 터미널에서 'bw-unlock' 실행". 세션 파일이 존재하나 읽기 불가(권한/소유)면 source-time 가드가 exit 3 으로 명확히 die 한다(이 경우 `bw-lock` 도 같은 가드로 exit 3 — 알려진 한계; 권한 정상화 후 재시도).
 - `bw` 가 locked/만료 보고 → exit 3, 재잠금 안내.
 - 참조 문법 오류(`bw://` 아님) → 사용법 에러, exit 1.
 - item 없음 vs field 없음 → 구분된 메시지(어느 쪽이 없는지 분명히).
@@ -150,3 +171,4 @@ bw-status [--json]
 - org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일.
 - 상시 데몬/서비스, 커스텀 MCP 서버.
 - 다른 스킬/도구를 본 스킬로 마이그레이션하거나 통합하는 작업. 본 스킬은 자족적 독립 스킬이며, 어떤 스킬의 내부에도 의존하지 않고 어떤 스킬도 본 스킬에 결합시키지 않는다. 타 도구가 `bw-get`/`bw-exec` 를 호출해 credential 을 위임받는 것은 가능하나, 그 통합 자체는 본 설계의 범위가 아니다(필요 시 별도 프로젝트).
+- 세션 영속의 자가 max-age/TTL, tmpfs/`$XDG_RUNTIME_DIR`, 암호화/키링/TPM, 데몬(`bw serve`), 백엔드 교체(`rbw`). 같은-UID 공격자 방어는 범위 밖(OS 계정 보안). 위협 B(영속·백업 잔존)는 사용자가 의도적으로 수용. (근거: `2026-05-16-bitwarden-ops-session-persistence-design.md` §5·§7)
