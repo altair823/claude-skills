@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/_lib.sh"
+HERE="$(dirname "$0")"
+
+declare -A GRADE=(
+  [status]=safe [list]=safe [metrics]=safe [get]=safe [inventory]=safe
+  [start]=caution [stop]=caution [restart]=caution [snapshot]=caution [pkg-install]=caution
+  [destroy]=destructive [delete]=destructive [storage-remove]=destructive
+  [kill]=destructive [net-change]=destructive [provision]=destructive
+)
+
+_bump() { case "$1" in safe) echo caution;; caution) echo destructive;; *) echo destructive;; esac; }
+
+# grade <action> <target-id> -> prints safe|caution|destructive
+guard_grade() {
+  local action="${1:-}" target="${2:-}" g tj jrc=0
+  [[ -n "$action" && -n "$target" ]] || die "usage: guard grade <action> <target-id>"
+  g="${GRADE[$action]:-destructive}"           # deny-by-default
+  tj="$("$HERE/inv" get "$target")" || exit $?  # inv already prints a specific error
+  jq -e '(.tags? // []) | index("critical")' >/dev/null 2>&1 <<<"$tj" || jrc=$?
+  [[ $jrc -eq 5 ]] && die "cannot parse inventory JSON for target: $target"
+  [[ $jrc -eq 0 ]] && g="$(_bump "$g")"         # critical escalates one level
+  echo "$g"
+}
+
+case "${1:-}" in
+  grade)
+    [[ $# -ge 3 ]] || die "usage: guard grade <action> <target-id>"
+    guard_grade "$2" "$3" ;;
+  "")
+    die "usage: guard <action> <target-id> [--approve] [-- <extra>...]" ;;
+  *)
+    action="$1"; target="${2:-}"
+    [[ -n "$target" ]] || die "usage: guard <action> <target-id> [--approve] [-- <extra>...]"
+    shift 2
+    approve=0; extra=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --approve) approve=1; shift ;;
+        --) shift; extra=("$@"); break ;;
+        *) extra+=("$1"); shift ;;
+      esac
+    done
+
+    op="$(new_op_id)"
+    start_ms=$(date +%s%3N)
+    grade="unknown"; env_t="unknown"; tags_t="[]"
+    inv_json="null"; approver="null"; approved_at="null"; dryrun_hash="null"
+
+    _audit() { # <exit-code>
+      local end_ms; end_ms=$(date +%s%3N)
+      audit_append \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg session "$HOMELAB_SESSION_ID" --arg op "$op" \
+        --arg actor "claude" --arg action "$action" --arg target "$target" \
+        --arg grade "$grade" --arg env "$env_t" \
+        --argjson tags "$tags_t" --argjson inv "$inv_json" \
+        --arg dh "$dryrun_hash" --arg apr "$approver" --arg apat "$approved_at" \
+        --argjson ex "$1" --argjson dur "$((end_ms-start_ms))" '
+        {ts:$ts,session:$session,op:$op,actor:$actor,action:$action,
+         target:$target,grade:$grade,env:$env,tags:$tags,inv_snapshot:$inv,
+         dryrun_hash:$dh,approver:$apr,approved_at:$apat,exit:$ex,duration_ms:$dur}'
+    }
+    # Forensic guarantee (spec §6): ANY termination — normal, preflight failure,
+    # backend failure, OR operator interrupt (Ctrl-C / SIGTERM) — writes exactly
+    # one audit record (never a gap, never a double, never a false exit:0). An
+    # audit-write failure is surfaced to stderr, never silently swallowed.
+    _finish_trap() { # <exit-code>
+      local _frc="$1"
+      if [[ -z "${_DONE:-}" ]]; then
+        _DONE=1
+        _audit "$_frc" || echo "homelab-ops: AUDIT FAILED op=$op rc=$_frc" >&2
+      fi
+      [[ -n "${_rc_file:-}" ]] && rm -f "$_rc_file" 2>/dev/null || true
+    }
+    trap '_rc=$?; _finish_trap "$_rc"; exit "$_rc"' EXIT
+    trap '_finish_trap 130; trap - EXIT INT TERM; exit 130' INT
+    trap '_finish_trap 143; trap - EXIT INT TERM; exit 143' TERM
+
+    { _inv_tmp="$("$HERE/inv" get "$target")" && inv_json="$_inv_tmp"; } || die "cannot resolve target: $target"
+    env_t="$(jq -r '.env // "unknown"' <<<"$inv_json")"
+    tags_t="$(jq -rc '.tags // []' <<<"$inv_json")"
+    grade="$(guard_grade "$action" "$target")"
+    rl="$(run_log_path "$op")"
+    backend="${HOMELAB_BACKEND:-$HERE/_backend}"
+
+    # BW_SESSION gate for everything except safe.
+    if [[ "$grade" != "safe" && -z "${BW_SESSION:-}" ]]; then
+      _DONE=1; _audit 3 || echo "homelab-ops: AUDIT FAILED op=$op rc=3" >&2
+      HL_EXIT=3 die "locked vault: BW_SESSION not set"
+    fi
+
+    needs_approval=0
+    [[ "$grade" == "destructive" ]] && needs_approval=1
+    [[ "$grade" == "caution" && "$env_t" == "prod" ]] && needs_approval=1
+
+    if [[ "$grade" == "caution" ]]; then
+      echo "SUMMARY: [$grade] $action $target (env=$env_t tags=$tags_t)"
+    fi
+
+    if [[ "$needs_approval" -eq 1 ]]; then
+      dry="$("$backend" "$action" "$target" --dry-run -- ${extra[@]+"${extra[@]}"} 2>&1 || true)"
+      dryrun_hash="$(printf '%s' "$dry" | sha256sum | awk '{print $1}')"
+      if [[ "$approve" -ne 1 ]]; then
+        echo "DRY-RUN [$grade] $action $target (env=$env_t tags=$tags_t)"
+        echo "$dry" | mask
+        echo "Impact above. Re-run with --approve to execute."
+        _DONE=1; _audit 10 || echo "homelab-ops: AUDIT FAILED op=$op rc=10" >&2
+        trap - EXIT INT TERM; exit 10
+      fi
+      approver="claude+user"; approved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    fi
+
+    # Pre-op state snapshot → run log (best-effort, masked, never blocks).
+    {
+      echo "=== pre-op snapshot $(date -u +%FT%TZ) op=$op ==="
+      "$HERE/inv" resolve "$target" 2>/dev/null || true
+      "$backend" status "$target" -- 2>/dev/null || true
+      echo "=== action output ==="
+    } | mask > "$rl"
+
+    # Run the action pipeline in background so that INT/TERM signals can
+    # interrupt `wait` (bash defers traps while waiting for a foreground
+    # pipeline). sed -u makes the mask pipeline line-buffered so run-log
+    # entries appear immediately — required for real-time forensic integrity.
+    _rc_file="$(mktemp)"
+    set +e
+    # NOTE: the action runs as a background job so INT/TERM interrupt the wait
+    # promptly and get audited. Caveat: on signal we audit exit 130/143 and
+    # exit; the backgrounded backend is NOT reaped, so an interrupted
+    # destructive op may still complete after guard records "interrupted".
+    # (Killing a half-applied destructive mid-flight is its own hazard; the
+    # forensic record is intentionally accurate that an interrupt was received.)
+    {
+      "$backend" "$action" "$target" -- ${extra[@]+"${extra[@]}"} 2>&1
+      printf '%s\n' "$?" > "$_rc_file"
+    } | sed -uE \
+        -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{ s/.*/***MASKED-PRIVATE-KEY***/ }' \
+        -e 's/(BW_SESSION=)[^[:space:]]+/\1***MASKED***/g' \
+        -e 's/(Authorization:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]]+/\1***MASKED***/gI' \
+        -e 's/(("?)(token|password|secret|api[_-]?token)("?)[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1***MASKED***/gI' \
+        -e 's/(PVEAPIToken[^=]*=)[^[:space:]]+/\1***MASKED***/g' \
+        -e 's/[A-Za-z0-9+\/]{40,}={0,2}/***MASKED-BLOB***/g' | tee -a "$rl" &
+    _pipe_pid=$!
+    wait "$_pipe_pid" || true
+    rc="$(cat "$_rc_file" 2>/dev/null || echo 1)"
+    rm -f "$_rc_file"
+    set -e
+
+    _DONE=1
+    _audit "$rc" || echo "homelab-ops: AUDIT FAILED op=$op rc=$rc" >&2
+    trap - EXIT INT TERM
+    exit "$rc" ;;
+esac

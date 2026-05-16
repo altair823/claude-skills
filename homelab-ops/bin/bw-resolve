@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/_lib.sh"
+
+ssh_mode=0
+if [[ "${1:-}" == "--ssh" ]]; then ssh_mode=1; shift; fi
+ref="${1:-}"
+[[ -n "$ref" ]] || die "usage: bw-resolve [--ssh] bw://<item>[/<field>]"
+[[ -n "${BW_SESSION:-}" ]] || { HL_EXIT=3 die "locked vault: BW_SESSION not set"; }
+[[ "$ref" == bw://* ]] || die "ref must start with bw:// : $ref"
+
+path="${ref#bw://}"
+item="${path%%/*}"
+field=""
+[[ "$path" == */* ]] && field="${path#*/}"
+
+if [[ $ssh_mode -eq 1 ]]; then
+  # SSH private key: stdout only. Caller pipes into ssh-add; never touches disk.
+  bw get notes "$item" --session "$BW_SESSION" 2>/dev/null \
+    || die "bw: cannot resolve ssh key for '$item'"
+  exit 0
+fi
+
+if [[ -z "$field" || "$field" == "password" ]]; then
+  bw get password "$item" --session "$BW_SESSION" 2>/dev/null \
+    || die "bw: cannot resolve $ref"
+else
+  bw get item "$item" --session "$BW_SESSION" 2>/dev/null \
+    | jq -er --arg f "$field" '.fields[]? | select(.name==$f) | .value' \
+    || die "bw: cannot resolve field '$field' of '$item'"
+fi

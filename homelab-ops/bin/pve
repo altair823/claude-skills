@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/_lib.sh"
+HERE="$(dirname "$0")"
+
+host_id="${1:-}"; sub="${2:-}"
+[[ -n "$host_id" && -n "$sub" ]] || die "usage: pve <host-id> {api <METHOD> <path> [data] | status | vm-config <vmid> | action <verb> <target> [extra]}"
+
+inv="$("$HERE/inv" get "$host_id")" || die "no such host: $host_id"
+addr="$(jq -r '.address // empty' <<<"$inv")"
+[[ -n "$addr" && "$addr" != "null" ]] || die "host $host_id has no address in inventory"
+token_ref="$(jq -r '.access.api.token_ref // empty' <<<"$inv")"
+[[ -n "$token_ref" ]] || die "host $host_id has no access.api.token_ref"
+
+token="$("$HERE/bw-resolve" "$token_ref")" || exit $?   # propagates exit 3 if vault locked
+base="https://${addr}:8006/api2/json"
+
+call() { # METHOD path [data]
+  local m="$1" p="$2" d="${3:-}"
+  # TLS verification ON (no -k / --insecure). --fail-with-body: HTTP >=400
+  # yields a nonzero exit (so guard audits the real result) while still
+  # printing the Proxmox error body. Token via header only.
+  if [[ -n "$d" ]]; then
+    curl -sS --fail-with-body -X "$m" -H "Authorization: PVEAPIToken=${token}" \
+      --data "$d" "${base}${p}"
+  else
+    curl -sS --fail-with-body -X "$m" -H "Authorization: PVEAPIToken=${token}" "${base}${p}"
+  fi
+}
+
+case "$sub" in
+  api)     call "${3:?METHOD}" "${4:?path}" "${5:-}" ;;
+  status)  call GET "/nodes/${host_id}/status" ;;
+  vm-config)
+    vmid="${3:?vmid}"; call GET "/nodes/${host_id}/qemu/${vmid}/config" ;;
+  action)
+    verb="${3:?verb}"; tgt="${4:?target}"
+    tinv="$("$HERE/inv" get "$tgt")" || die "pve: no such target: $tgt"
+    tkind="$(jq -r '.kind' <<<"$tinv")"
+    vmid="$(jq -r '.vmid // empty' <<<"$tinv")"
+    case "$tkind" in
+      vm)  api_kind=qemu ;;
+      lxc) api_kind=lxc ;;
+      *)   die "pve: target '$tgt' kind '$tkind' is not a qemu/lxc guest" ;;
+    esac
+    [[ -n "$vmid" ]] || die "pve: target '$tgt' has no vmid in inventory"
+    case "$verb" in
+      start)    call POST "/nodes/${host_id}/${api_kind}/${vmid}/status/start" ;;
+      stop)     call POST "/nodes/${host_id}/${api_kind}/${vmid}/status/stop" ;;
+      restart)  call POST "/nodes/${host_id}/${api_kind}/${vmid}/status/reboot" ;;
+      snapshot) call POST "/nodes/${host_id}/${api_kind}/${vmid}/snapshot" "snapname=ho-$(date +%s)-$RANDOM" ;;
+      destroy)  call DELETE "/nodes/${host_id}/${api_kind}/${vmid}" ;;
+      *) die "pve: unknown action verb $verb" ;;
+    esac ;;
+  *) die "pve: unknown subcommand $sub" ;;
+esac

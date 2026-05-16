@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Echo a deterministic Proxmox-shaped JSON so bin/pve is testable offline.
+echo '{"data":{"status":"running","vmid":100,"name":"stub-vm"}}'
