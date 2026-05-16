@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/_common.sh"
+require_cmd bw jq
+
+ssh=0
+[[ "${1:-}" == "--ssh" ]] && { ssh=1; shift; }
+ref="${1:-}"
+[[ -n "$ref" ]] || die "usage: bw-get [--ssh] bw://<item>[/<field>]"
+require_session
+parse_ref "$ref"
+
+if [[ $ssh -eq 1 ]]; then
+  bw get notes "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null \
+    || die "bw: ssh 키(notes) 해결 실패 — item 없음?: $REF_ITEM"
+  exit 0
+fi
+
+case "$REF_KIND" in
+  password)
+    bw get password "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null \
+      || die "bw: 해결 실패 — item 없음?: $ref" ;;
+  notes)
+    bw get notes "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null \
+      || die "bw: notes 해결 실패 — item 없음?: $REF_ITEM" ;;
+  field)
+    item="$(bw get item "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null)" \
+      || die "bw: item 없음: $REF_ITEM"
+    jq -er --arg f "$REF_FIELD" '.fields[]? | select(.name==$f) | .value' <<<"$item" \
+      || die "bw: 필드 없음: '$REF_FIELD' (item '$REF_ITEM' 에)" ;;
+esac

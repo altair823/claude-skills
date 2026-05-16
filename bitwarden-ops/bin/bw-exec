@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(dirname "$0")"
+. "$HERE/_common.sh"
+require_cmd bw jq
+
+maps=()
+while [[ $# -gt 0 && "$1" != "--" ]]; do maps+=("$1"); shift; done
+[[ "${1:-}" == "--" ]] || die "usage: bw-exec NAME=bw://ref... -- <cmd> [args...]"
+shift
+[[ ${#maps[@]} -ge 1 ]] || die "최소 하나의 NAME=bw://ref 필요"
+[[ $# -ge 1 ]] || die "-- 뒤에 실행할 명령 필요"
+require_session
+
+for m in "${maps[@]}"; do
+  name="${m%%=*}"; ref="${m#*=}"
+  [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "잘못된 env 이름: $name"
+  [[ "$m" == *=* && "$ref" == bw://* ]] || die "형식은 NAME=bw://ref 이어야 함: $m"
+  # bw-get streams the value; capture into the env only — never into argv.
+  val="$("$HERE/bw-get" "$ref")" || exit $?
+  export "$name=$val"
+done
+
+exec "$@"

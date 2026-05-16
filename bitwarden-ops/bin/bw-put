@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/_common.sh"
+require_cmd bw jq
+
+ref=""; type=""; replace=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type)    type="${2:?--type 값 필요}"; shift 2 ;;
+    --replace) replace=1; shift ;;
+    bw://*)    ref="$1"; shift ;;
+    *) die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace]" ;;
+  esac
+done
+[[ -n "$ref" ]] || die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace]"
+require_session
+parse_ref "$ref"
+
+# Default type from the ref shape unless explicitly given.
+if [[ -z "$type" ]]; then
+  case "$REF_KIND" in password) type=password ;; notes) type=note ;; field) type=field ;; esac
+fi
+case "$type" in password|field|note) ;; *) die "잘못된 --type: $type" ;; esac
+
+# Sync first so a stale local cache cannot clobber server state.
+bw sync --session "$BW_SESSION" >/dev/null 2>&1 \
+  || die "bw sync 실패 — 네트워크 확인 후 재시도 (stale 캐시 쓰기 방지)"
+
+item_json="$(bw get item "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null || true)"
+cur=""
+if [[ -n "$item_json" ]]; then
+  case "$type" in
+    password) cur="$(jq -r '.login.password // ""' <<<"$item_json")" ;;
+    note)     cur="$(jq -r '.notes // ""' <<<"$item_json")" ;;
+    field)    cur="$(jq -r --arg f "$REF_FIELD" '(.fields[]?|select(.name==$f)|.value)//""' <<<"$item_json")" ;;
+  esac
+fi
+if [[ -n "$cur" && $replace -ne 1 ]]; then
+  die "이미 값이 존재: $ref — 덮어쓰려면 --replace (기존 secret 손실 방지)"
+fi
+
+# The ONLY secret-input path. Production: controlling terminal. Test: a file the
+# harness wrote (BITWARDEN_OPS_TEST_SECRET_FILE) — never set in production.
+# NOTE: downstream, the value is passed as `jq --arg v "$secret"`, so it is
+# transiently visible in jq's argv (/proc/<pid>/cmdline) to the same user/root
+# for jq's sub-ms runtime. Accepted for this tool's local single-user threat
+# model (same exposure class as gpg/openssl CLIs); it is NOT written to disk,
+# logs, or any persistent argv, and never reaches Claude's context.
+_read_secret() {
+  if [[ -n "${BITWARDEN_OPS_TEST_SECRET_FILE:-}" ]]; then
+    cat "$BITWARDEN_OPS_TEST_SECRET_FILE"; return
+  fi
+  local s
+  printf 'secret for %s (입력 숨김): ' "$ref" > /dev/tty
+  IFS= read -rs s < /dev/tty
+  printf '\n' > /dev/tty
+  printf '%s' "$s"
+}
+secret="$(_read_secret)"
+[[ -n "$secret" ]] || die "빈 값은 등록하지 않음 — 재시도"
+
+if [[ -z "$item_json" ]]; then
+  tpl="$(bw get template item --session "$BW_SESSION")"
+  case "$type" in
+    password) obj="$(jq -n --argjson t "$tpl" --arg n "$REF_ITEM" --arg v "$secret" \
+                 '$t + {type:1,name:$n,login:{username:null,password:$v}}')" ;;
+    note)     obj="$(jq -n --argjson t "$tpl" --arg n "$REF_ITEM" --arg v "$secret" \
+                 '$t + {type:2,name:$n,notes:$v,secureNote:{type:0}}')" ;;
+    field)    obj="$(jq -n --argjson t "$tpl" --arg n "$REF_ITEM" --arg f "$REF_FIELD" --arg v "$secret" \
+                 '$t + {type:1,name:$n,login:{username:null,password:null},fields:[{name:$f,value:$v,type:1}]}')" ;;
+  esac
+  printf '%s' "$obj" | bw encode | bw create item --session "$BW_SESSION" >/dev/null \
+    || die "bw create 실패: $ref"
+  echo "created: $ref"
+else
+  id="$(jq -r '.id' <<<"$item_json")"
+  case "$type" in
+    password) new="$(jq --arg v "$secret" '.login.password=$v' <<<"$item_json")" ;;
+    note)     new="$(jq --arg v "$secret" '.notes=$v' <<<"$item_json")" ;;
+    field)    new="$(jq --arg f "$REF_FIELD" --arg v "$secret" \
+                 'if any(.fields[]?; .name==$f)
+                  then (.fields |= map(if .name==$f then .value=$v else . end))
+                  else .fields=((.fields // []) + [{name:$f,value:$v,type:1}]) end' <<<"$item_json")" ;;
+  esac
+  printf '%s' "$new" | bw encode | bw edit item "$id" --session "$BW_SESSION" >/dev/null \
+    || die "bw edit 실패: $ref"
+  echo "updated: $ref"
+fi

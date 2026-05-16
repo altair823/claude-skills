@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/_common.sh"
+require_cmd bw jq
+
+json=0; [[ "${1:-}" == "--json" ]] && json=1
+
+sess="unset"; [[ -n "${BW_SESSION:-}" ]] && sess="set"
+if [[ "$sess" == "set" ]]; then
+  vault="$(bw status --session "$BW_SESSION" 2>/dev/null | jq -r '.status // "unknown"')" || vault="unknown"
+else
+  vault="locked"
+fi
+
+if [[ $json -eq 1 ]]; then
+  jq -n --arg s "$sess" --arg v "$vault" '{session:$s,vault:$v}'
+else
+  echo "session=$sess"
+  echo "vault=$vault"
+fi
+
+# Locked vault / no session is a non-zero (3) preflight signal.
+[[ "$sess" == "set" && "$vault" == "unlocked" ]] || { BW_EXIT=3 die "vault 미잠금해제 (session=$sess vault=$vault) — BW_SESSION 미설정이면 'export BW_SESSION=\"\$(bw unlock --raw)\"', 만료면 bw unlock 재실행"; }

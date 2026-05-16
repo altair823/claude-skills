@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Deterministic fake Bitwarden CLI. State = $BW_STUB_DB (JSON array of items).
+# Models only the surface bitwarden-ops uses: status, sync, list items,
+# get {item|password|notes|template}, encode, create item, edit item.
+set -euo pipefail
+DB="${BW_STUB_DB:?BW_STUB_DB not set}"
+[[ -f "$DB" ]] || echo '[]' > "$DB"
+cmd="${1:-}"; shift || true
+# Drop `--session VALUE` wherever it appears.
+args=(); while [[ $# -gt 0 ]]; do
+  case "$1" in --session) shift 2 || shift;; *) args+=("$1"); shift;; esac
+done
+set -- ${args[@]+"${args[@]}"}
+
+case "$cmd" in
+  status) echo "{\"status\":\"${BW_STUB_STATUS:-unlocked}\"}" ;;
+  sync) : > "$DB.synced"; echo "Syncing complete." ;;
+  list)
+    [[ "${1:-}" == items ]] || { echo "[]"; exit 0; }
+    q=""; [[ "${2:-}" == --search ]] && q="${3:-}"
+    jq --arg q "$q" '[.[]|select($q=="" or (.name|contains($q)))]' "$DB" ;;
+  get)
+    sub="${1:-}"; name="${2:-}"
+    case "$sub" in
+      template)
+        echo '{"organizationId":null,"folderId":null,"type":1,"name":"","notes":null,"favorite":false,"fields":[],"login":{"username":null,"password":null},"secureNote":null}' ;;
+      item)     jq -e --arg n "$name" '.[]|select(.name==$n or .id==$n)' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
+      password) jq -er --arg n "$name" '.[]|select(.name==$n)|.login.password // empty' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
+      notes)    jq -er --arg n "$name" '.[]|select(.name==$n)|.notes // empty' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
+      *) echo "bw-stub: unknown get '$sub'" >&2; exit 1 ;;
+    esac ;;
+  encode) base64 -w0 ;;
+  create)
+    [[ "${1:-}" == item ]] || { echo "bw-stub: create '${1:-}'?" >&2; exit 1; }
+    obj="$(base64 -d)"
+    id="stub-$(jq -r '.name' <<<"$obj")-$RANDOM"
+    obj="$(jq --arg id "$id" '.id=$id' <<<"$obj")"
+    tmp="$(mktemp)"; jq --argjson o "$obj" '. + [$o]' "$DB" > "$tmp" && mv "$tmp" "$DB"
+    jq -n --argjson o "$obj" '$o' ;;
+  edit)
+    [[ "${1:-}" == item ]] || { echo "bw-stub: edit '${1:-}'?" >&2; exit 1; }
+    id="${2:?bw-stub: edit item needs id}"; obj="$(base64 -d)"
+    tmp="$(mktemp)"; jq --arg id "$id" --argjson o "$obj" 'map(if .id==$id then $o else . end)' "$DB" > "$tmp" && mv "$tmp" "$DB"
+    echo "edited" ;;
+  *) echo "bw-stub: unknown cmd '$cmd'" >&2; exit 1 ;;
+esac
