@@ -1,6 +1,6 @@
 ---
 name: remotedev-ops
-description: Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds, or reclaim devbox disk space. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` inspect; `remotedev-gc` deletes remote artifacts already pulled back; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system.
+description: Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds, or reclaim devbox disk space. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` / `remotedev-doctor` inspect; `remotedev-gc` deletes remote artifacts already pulled back; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system.
 ---
 
 # remotedev-ops
@@ -22,6 +22,7 @@ Run scripts by path from this skill's `bin/`.
 | Set this repo up for remote builds | `bin/remotedev-init [HOST] [--force]` (HOST default `devbox`) |
 | See what's configured | `bin/remotedev-status` |
 | Confirm the server pipeline works | `bin/remotedev-verify` |
+| Check the build artifact will run locally | `bin/remotedev-doctor [--brief]` |
 | Reclaim devbox disk space | `bin/remotedev-gc [--dry-run]` |
 | Turn this repo back to local | `bin/remotedev-disable [--purge]` |
 | Remove the machine-wide layer | `bin/remotedev-uninstall` |
@@ -34,6 +35,8 @@ Run scripts by path from this skill's `bin/`.
    `.remotedev` (edit it to fix any commented-out artifact globs / verbs),
    swaps `./gradlew`/`./mvnw` if present, and hides those changes from git.
 3. `remotedev-status` to confirm; `remotedev-verify` once online.
+   `remotedev-doctor` flags arch/glibc skew that could make a devbox-built
+   native artifact unrunnable locally (init runs it once automatically).
 4. Builds now run on the host transparently. Offline → local fallback.
 5. Periodically run `remotedev-gc` (e.g. via the user's scheduler) to free
    devbox space — it deletes only artifacts already pulled back; preview
