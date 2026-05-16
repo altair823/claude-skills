@@ -139,14 +139,14 @@ Claude/사용자 실행; `bw lock` + 세션 파일 제거, idempotent, secret �
 
 1. **마스터 비번**: 사용자만, `bw unlock` 으로만. Claude 는 절대 프롬프트·수신·저장하지 않는다.
 2. **secret 값**: 읽기든 쓰기든 Claude 출력·argv·디스크·로그에 절대 없다. 읽기 → stdout / 자식 env. 쓰기 → 사용자 터미널 비에코 입력.
-3. **locked-vault 기본**: `BW_SESSION` 없으면 exit 3, 시작 거부.
+3. **locked-vault 기본**: `BW_SESSION` env 가 없고 세션 파일도 없으면 exit 3, 시작 거부 (세션 파일 폴백은 §4 보강 참조; env-wins).
 4. **overwrite-needs-eyes**: `bw-put` 이 기존 비어있지 않은 값을 덮어쓰려면 `--replace` 명시 필수.
 5. **쓰기 전 sync**: `bw-put` 은 `bw sync` 후 진행 — stale 캐시 clobber 방지.
 6. **마스킹**: `BW_SESSION`·해결된 값이 우발적으로 스트림에 섞이면 마지막 방어선으로 마스킹(`_common.sh`).
 
 ## 7. 에러 처리
 
-- `BW_SESSION` 없음 → exit 3, "locked vault: BW_SESSION not set. 사용자가 `bw unlock` 필요".
+- `BW_SESSION` 없고 세션 파일(`$HOME/.cache/bitwarden-ops/session`)도 없음 → exit 3, "locked vault: 세션 없음 — 사용자가 본인 터미널에서 'bw-unlock' 실행". 세션 파일이 존재하나 읽기 불가(권한/소유)면 source-time 가드가 exit 3 으로 명확히 die 한다(이 경우 `bw-lock` 도 같은 가드로 exit 3 — 알려진 한계; 권한 정상화 후 재시도).
 - `bw` 가 locked/만료 보고 → exit 3, 재잠금 안내.
 - 참조 문법 오류(`bw://` 아님) → 사용법 에러, exit 1.
 - item 없음 vs field 없음 → 구분된 메시지(어느 쪽이 없는지 분명히).

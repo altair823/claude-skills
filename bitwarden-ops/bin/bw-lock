@@ -9,12 +9,18 @@ bw lock >/dev/null 2>&1 || true
 
 # Remove the cached session file (best-effort shred). No secret input → safe for
 # Claude to invoke. Absent file is fine (idempotent).
-cd="$(bwo_cache_dir)"
-if [[ -n "$cd" && -e "$cd/session" ]]; then
+cache_dir="$(bwo_cache_dir)"
+removed=0
+if [[ -n "$cache_dir" && -e "$cache_dir/session" ]]; then
   if command -v shred >/dev/null 2>&1; then
-    shred -u "$cd/session" 2>/dev/null || rm -f "$cd/session"
+    shred -u "$cache_dir/session" 2>/dev/null || rm -f "$cache_dir/session"
   else
-    rm -f "$cd/session"
+    rm -f "$cache_dir/session"
   fi
+  removed=1
 fi
-echo "세션 잠금: vault locked, 세션 파일 제거"
+if [[ $removed -eq 1 ]]; then
+  echo "세션 잠금: vault locked, 세션 파일 제거"
+else
+  echo "세션 잠금: vault locked (세션 파일 없음)"
+fi
