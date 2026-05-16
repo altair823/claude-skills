@@ -61,3 +61,11 @@ emit() { # NAME VALUE  -> "NAME=..." or "# NAME=" when empty
 } > "$CFG"
 
 log "wrote $CFG (host=$HOST)"
+
+shim_installed || warn "shim not installed — run 'remotedev-install' once on this machine for builds to be intercepted"
+
+if host_up "$HOST"; then
+  log "host '$HOST' reachable"
+else
+  warn "host '$HOST' unreachable now — config written; offline builds fall back to local. Run 'remotedev-verify' once online."
+fi
