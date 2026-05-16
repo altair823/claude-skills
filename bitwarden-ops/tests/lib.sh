@@ -4,6 +4,10 @@
 # bw. Every test_*.sh cd's to the skill root before sourcing this, so $PWD is
 # the skill root here. (tests/run.sh also sets this; harmless to repeat.)
 export PATH="$PWD/tests/stubs:$PATH"
+# Session-file fallback (see _common.sh) must never pick up the developer's real
+# ~/.cache/bitwarden-ops/session during tests. Pin every test to an isolated,
+# non-existent cache dir; individual tests override BITWARDEN_OPS_CACHE_DIR as needed.
+export BITWARDEN_OPS_CACHE_DIR="$(mktemp -d)/cache"
 _FAILS=0
 
 assert_eq() { # expected actual msg
