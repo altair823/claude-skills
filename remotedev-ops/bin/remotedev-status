@@ -6,6 +6,12 @@ set -eo pipefail
 SD="$(shim_dir)"
 if shim_installed; then echo "shim installed: yes ($SD)"; else echo "shim installed: no"; fi
 case ":$PATH:" in *":$SD:"*) echo "shim on PATH: yes" ;; *) echo "shim on PATH: no" ;; esac
+RC="$(rc_file)"
+if [ -f "$RC" ] && grep -q '>>> remotedev >>>' "$RC" 2>/dev/null; then
+  echo "rc block: present ($RC)"
+else
+  echo "rc block: absent"
+fi
 
 ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
 if [ -f "$CFG" ]; then

@@ -24,4 +24,16 @@ t_status_unconfigured() {
 }
 run_test "status without config is not an error" t_status_unconfigured
 
+t_status_rc_block() {
+  local ws out; ws="$(new_workspace)"; cd "$ws"
+  printf '# >>> remotedev >>>\nexport X=1\n# <<< remotedev <<<\n' > "$ws/rc"
+  out="$(REMOTEDEV_RC="$ws/rc" bash "$ST" 2>&1)"
+  assert_contains "$out" "rc block: present"
+  : > "$ws/rc2"
+  out="$(REMOTEDEV_RC="$ws/rc2" bash "$ST" 2>&1)"
+  assert_contains "$out" "rc block: absent"
+  rm -rf "$ws"
+}
+run_test "status reports rc block presence" t_status_rc_block
+
 summary
