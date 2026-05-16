@@ -58,7 +58,7 @@ git_unhide() {
     git update-index --no-skip-worktree -- "$rel" 2>/dev/null || true
   fi
   local ex; ex="$(git rev-parse --git-dir 2>/dev/null)/info/exclude"
-  [ -f "$ex" ] && { grep -vxF -- "$rel" "$ex" > "$ex.tmp" 2>/dev/null && mv "$ex.tmp" "$ex"; }
+  if [ -f "$ex" ]; then grep -vxF -- "$rel" "$ex" > "$ex.tmp" 2>/dev/null || true; mv "$ex.tmp" "$ex"; fi
   return 0
 }
 

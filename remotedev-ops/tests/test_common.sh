@@ -44,4 +44,17 @@ t_git_hide_tracked() {
 }
 run_test "git_hide sets skip-worktree on tracked file" t_git_hide_tracked
 
+t_git_unhide_exclude() {
+  local ws; ws="$(new_workspace)"; cd "$ws"; git init -q
+  # untracked file -> git_hide adds it to .git/info/exclude
+  echo data > only
+  bash -c '. "$0"; cd "'"$ws"'"; git_hide only' "$RDO/bin/_common.sh"
+  assert_file_has .git/info/exclude "only"
+  bash -c '. "$0"; cd "'"$ws"'"; git_unhide only' "$RDO/bin/_common.sh"
+  local n; n="$(grep -c '^only$' .git/info/exclude 2>/dev/null || true)"
+  [ -e .git/info/exclude.tmp ] && _fail "exclude.tmp leaked"
+  rm -rf "$ws"; assert_eq "0" "$n"
+}
+run_test "git_unhide removes a sole exclude entry" t_git_unhide_exclude
+
 summary
