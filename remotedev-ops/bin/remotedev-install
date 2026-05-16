@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# remotedev-install — per-machine: create the PATH-first shim dir and wire
+# the shell rc. Idempotent. Run once per machine.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+RT="$(rdo_home)/runtime"
+SD="$(shim_dir)"
+RC="$(rc_file)"
+
+mkdir -p "$SD"
+for name in "${INTERCEPT[@]}"; do ln -sf "$RT/rd-shim" "$SD/$name"; done
+ln -sf "$RT/rd-exec" "$SD/rd-exec"
+ln -sf "$RT/rd"      "$SD/rd"
+
+rc_block_write "$RC"
+
+log "shim dir: $SD"
+log "intercepting: ${INTERCEPT[*]}"
+log "wired: $RC  (open a new shell or: source $RC)"
