@@ -1190,6 +1190,18 @@ t_status_unconfigured() {
 }
 run_test "status without config is not an error" t_status_unconfigured
 
+t_status_rc_block() {
+  local ws out; ws="$(new_workspace)"; cd "$ws"
+  printf '# >>> remotedev >>>\nexport X=1\n# <<< remotedev <<<\n' > "$ws/rc"
+  out="$(REMOTEDEV_RC="$ws/rc" bash "$ST" 2>&1)"
+  assert_contains "$out" "rc block: present"
+  : > "$ws/rc2"
+  out="$(REMOTEDEV_RC="$ws/rc2" bash "$ST" 2>&1)"
+  assert_contains "$out" "rc block: absent"
+  rm -rf "$ws"
+}
+run_test "status reports rc block presence" t_status_rc_block
+
 summary
 EOF
 chmod +x remotedev-ops/tests/test_status.sh
@@ -1212,6 +1224,12 @@ set -eo pipefail
 SD="$(shim_dir)"
 if shim_installed; then echo "shim installed: yes ($SD)"; else echo "shim installed: no"; fi
 case ":$PATH:" in *":$SD:"*) echo "shim on PATH: yes" ;; *) echo "shim on PATH: no" ;; esac
+RC="$(rc_file)"
+if [ -f "$RC" ] && grep -q '>>> remotedev >>>' "$RC" 2>/dev/null; then
+  echo "rc block: present ($RC)"
+else
+  echo "rc block: absent"
+fi
 
 ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
 if [ -f "$CFG" ]; then
@@ -1237,7 +1255,7 @@ chmod +x remotedev-ops/bin/remotedev-status
 - [ ] **Step 4: Run the test, verify it passes**
 
 Run: `bash remotedev-ops/tests/test_status.sh`
-Expected: `2 passed, 0 failed`.
+Expected: `3 passed, 0 failed`.
 
 - [ ] **Step 5: Commit**
 
