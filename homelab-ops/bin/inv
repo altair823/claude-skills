@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/_lib.sh"
+FLEET="$REPO_ROOT/inventory/fleet.yaml"
+GROUPS_FILE="$REPO_ROOT/inventory/groups.yaml"
+
+y2j() {
+  python3 -c 'import sys,yaml,json; json.dump(yaml.safe_load(sys.stdin) or [], sys.stdout)' < "$1" \
+    || die "y2j: failed to parse $1 (python3/PyYAML available?)"
+}
+
+cmd="${1:-}"; arg="${2:-}"
+case "$cmd" in
+  list)
+    y2j "$FLEET" | jq -r '.[].id' ;;
+  get)
+    [[ -n "$arg" ]] || die "usage: inv get <id>"
+    _f="$(y2j "$FLEET")"
+    echo "$_f" | jq -e --arg id "$arg" '.[] | select(.id==$id)' >/dev/null 2>&1 \
+      || die "no such inventory id: $arg"
+    echo "$_f" | jq --arg id "$arg" '.[] | select(.id==$id)' ;;
+  resolve)
+    [[ -n "$arg" ]] || die "usage: inv resolve <id>"
+    e="$(y2j "$FLEET")"; g="$(y2j "$GROUPS_FILE")"
+    echo "$e" | jq -e --arg id "$arg" '.[]|select(.id==$id)' >/dev/null 2>&1 \
+      || die "no such inventory id: $arg"
+    jq -n --argjson f "$e" --argjson g "$g" --arg id "$arg" '
+      ($f[] | select(.id==$id)) as $entry
+      | $entry + { groups: ($g | to_entries | map(select(.value|index($id)) | .key)) }' ;;
+  children)
+    [[ -n "$arg" ]] || die "usage: inv children <id>"
+    "$0" get "$arg" | jq -r '.children[]? // empty' ;;
+  group)
+    [[ -n "$arg" ]] || die "usage: inv group <name>"
+    y2j "$GROUPS_FILE" | jq -r --arg n "$arg" '.[$n][]? // empty' ;;
+  *)
+    die "usage: inv {list|get <id>|resolve <id>|children <id>|group <name>}" ;;
+esac

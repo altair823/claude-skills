@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/_lib.sh"
+
+cmd="${1:-}"; key="${2:-}"
+[[ -f "$AUDIT_LOG" ]] || die "no audit log at $AUDIT_LOG"
+
+case "$cmd" in
+  session)
+    [[ -n "$key" ]] || die "usage: forensics session <session-id>"
+    jq -c --arg s "$key" 'select(.session==$s)' "$AUDIT_LOG" ;;
+  target)
+    [[ -n "$key" ]] || die "usage: forensics target <target-id>"
+    jq -c --arg t "$key" 'select(.target==$t)' "$AUDIT_LOG" ;;
+  timeline)
+    [[ -n "$key" ]] || die "usage: forensics timeline <session-id>"
+    jq -r --arg s "$key" '
+      select(.session==$s)
+      | [.ts,.op,.action,.target,.grade,("exit="+(.exit|tostring))] | @tsv' \
+      "$AUDIT_LOG" | LC_ALL=C sort ;;
+  runlog)
+    [[ -n "$key" ]] || die "usage: forensics runlog <session-id>/<op>.log"
+    f="$RUNS_DIR/$key"
+    [[ -f "$f" ]] || die "no run log: $f"
+    cat "$f" ;;
+  *)
+    die "usage: forensics {session <id>|target <id>|timeline <id>|runlog <sess/op.log>}" ;;
+esac

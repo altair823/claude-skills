@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Real action dispatcher. Overridden by $HOMELAB_BACKEND in tests.
+# Usage: _backend <action> <target-id> [--dry-run] -- <extra args...>
+# SAFETY CONTRACT: under --dry-run this MUST NOT execute any mutating
+# operation; it prints what WOULD happen and exits 0. guard relies on this
+# so the destructive dry-run probe never actually runs the action.
+source "$(dirname "$0")/_lib.sh"
+HERE="$(dirname "$0")"
+action="$1"; target="$2"; shift 2
+dry=0
+[[ "${1:-}" == "--dry-run" ]] && { dry=1; shift; }
+[[ "${1:-}" == "--" ]] && shift || true
+
+inv="$("$HERE/inv" get "$target")" || die "cannot resolve target: $target"
+kind="$(jq -r .kind <<<"$inv")"
+
+# First Proxmox host whose children include $target, else $target itself.
+_owner_host() {
+  local x
+  for x in $("$HERE/inv" list); do
+    if "$HERE/inv" children "$x" | grep -qx "$target"; then echo "$x"; return; fi
+  done
+  echo "$target"
+}
+
+case "$action:$kind" in
+  status:*|metrics:*|get:*)
+    "$HERE/inv" resolve "$target" ;;
+  start:*|stop:*|restart:*|destroy:*|snapshot:*)
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: would $action $target (kind=$kind)"; exit 0
+    fi
+    if [[ "$kind" == proxmox-host || "$kind" == vm || "$kind" == lxc ]]; then
+      "$HERE/pve" "$(_owner_host)" action "$action" "$target" "$@"
+    else
+      "$HERE/ssh-run" "$target" -- "$action" "$@"
+    fi ;;
+  pkg-install:*)
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0
+    fi
+    "$HERE/ssh-run" "$target" -- sudo apt-get install -y "$@" ;;
+  provision:*)
+    if [[ $dry -eq 1 ]]; then
+      "$REPO_ROOT/provisioning/phase1" dry-run "$target" "$@"
+    else
+      "$REPO_ROOT/provisioning/phase1" apply "$target" "$@"
+    fi ;;
+  *)
+    die "no backend mapping for action '$action' on kind '$kind'" ;;
+esac

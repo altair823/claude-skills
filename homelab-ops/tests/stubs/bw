@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# bw get password|notes|item <name> --session <s>
+verb="${2:-}"; name="${3:-}"
+case "$verb" in
+  password) echo "stub-secret-$name" ;;
+  notes)    printf -- "-----BEGIN OPENSSH PRIVATE KEY-----\nSTUBKEY-%s\n-----END OPENSSH PRIVATE KEY-----\n" "$name" ;;
+  item)     printf '{"fields":[{"name":"api-token","value":"stub-token-%s"}]}\n' "$name" ;;
+  *) echo "bw-stub: unknown verb $verb" >&2; exit 1 ;;
+esac

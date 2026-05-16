@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Phase-1 provisioning backend. Stable interface; backend swappable in Phase 2.
+# Usage: phase1 {dry-run|apply} <proxmox-host-id> --from-template <vmid> --new-vmid <vmid> [--name <n>]
+# bin/_backend translates guard's dry-run probe into the literal `dry-run`
+# subcommand and a real run into `apply`; phase1 never sees a bare --dry-run
+# as its mode (the in-loop --dry-run case is only defensive for stray extras).
+source "$(dirname "$0")/../bin/_lib.sh"
+BIN="$REPO_ROOT/bin"
+
+mode="${1:-}"; target="${2:-}"; shift 2 || true
+
+tmpl=""; newid=""; name=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) mode="dry-run"; shift ;;
+    --from-template) tmpl="${2:?--from-template requires a value}"; shift 2 ;;
+    --new-vmid) newid="${2:?--new-vmid requires a value}"; shift 2 ;;
+    --name) name="${2:?--name requires a value}"; shift 2 ;;
+    --) shift ;;
+    *) shift ;;
+  esac
+done
+[[ -n "$target" ]] || die "usage: phase1 {dry-run|apply} <proxmox-host-id> --from-template <vmid> --new-vmid <vmid>"
+[[ -n "$tmpl" && -n "$newid" ]] || die "phase1 requires --from-template and --new-vmid"
+
+inv="$("$BIN/inv" get "$target")" || die "no such target: $target"
+[[ "$(jq -r '.kind' <<<"$inv")" == "proxmox-host" ]] \
+  || die "phase1: target '$target' is not a proxmox-host (provision runs on a Proxmox host)"
+host="$(jq -r '.id' <<<"$inv")"
+name="${name:-ho-${newid}}"
+
+if [[ "$mode" == "dry-run" ]]; then
+  echo "WOULD CREATE: clone template ${tmpl} -> vmid ${newid} (name=${name}) on host ${host}"
+  echo "WOULD DESTROY: nothing"
+  exit 0
+fi
+if [[ "$mode" == "apply" ]]; then
+  "$BIN/pve" "$host" api POST "/nodes/${host}/qemu/${tmpl}/clone" "newid=${newid}&name=${name}" \
+    >/dev/null || die "clone failed"
+  echo "CREATED: vmid ${newid} (name=${name}) cloned from ${tmpl} on ${host}"
+  exit 0
+fi
+die "unknown mode: $mode"

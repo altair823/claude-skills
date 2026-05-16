@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+cat >/dev/null   # consume key from stdin, never write it anywhere
+echo "Identity added (stub)" >&2
