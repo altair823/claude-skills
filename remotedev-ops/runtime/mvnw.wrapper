@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# remotedev wrapper for ./mvnw  (repo-local launchers can't be PATH-shimmed)
+#
+# Install inside a Maven repo:
+#   mv mvnw mvnw.real
+#   cp ~/project/remotedev/templates/mvnw ./mvnw
+#   chmod +x mvnw
+set -eo pipefail
+exec rd-exec ./mvnw.real "$@"

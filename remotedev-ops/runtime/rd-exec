@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# rd-exec — run a build/command on the remote dev host, transparently.
+#
+# Usage:
+#   rd-exec <command> [args...]
+# Invoked directly, or via shims named cargo/uv/make/... (see rd-shim).
+#
+# Behavior:
+#   - No .remotedev in any ancestor dir  -> run the real command LOCALLY (passthrough).
+#   - Remote host unreachable            -> run the real command LOCALLY (offline fallback).
+#   - Otherwise                          -> rsync push -> ssh exec -> rsync pull artifacts.
+#
+# Only ssh + rsync are required. No third-party tooling.
+
+set -eo pipefail
+
+info() { echo "[rd] $*" >&2; }
+die()  { echo "[rd] error: $*" >&2; exit 1; }
+
+# --- nearest ancestor containing .remotedev -------------------------------
+find_root() {
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    [ -f "$d/.remotedev" ] && { printf '%s\n' "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+# --- the REAL binary for NAME, skipping our own shim dir ------------------
+real_bin() {
+  local name="$1" shimdir="${REMOTEDEV_SHIM_DIR:-}" p
+  local IFS=:
+  for p in $PATH; do
+    [ -n "$shimdir" ] && [ "$p" = "$shimdir" ] && continue
+    [ -x "$p/$name" ] && { printf '%s\n' "$p/$name"; return 0; }
+  done
+  return 1
+}
+
+# --- run NAME ARGS... locally (passthrough / offline fallback) ------------
+run_local() {
+  local name="$1"; shift
+  # A name with a slash is an explicit path (./gradlew.real, /usr/bin/foo),
+  # not a PATH-resolved command — run it as-is, like the shell would.
+  case "$name" in
+    */*) exec "$name" "$@" ;;
+  esac
+  local bin
+  bin="$(real_bin "$name")" || die "cannot find real '$name' on PATH (only the shim?)"
+  exec "$bin" "$@"
+}
+
+host_up() {
+  ssh -o BatchMode=yes -o ConnectTimeout=4 "$REMOTEDEV_HOST" true 2>/dev/null
+}
+
+# The remote critical section: push -> exec -> (on success) pull artifacts.
+# Reads ROOT/remote_dir/rel/excl/REMOTEDEV_* from the caller's scope.
+# Returns the remote build's exit code.
+remote_run() {
+  local tflag=()
+  # -t allocates a pty; only meaningful (and only quiet) with a real tty.
+  [ -t 0 ] && tflag=(-t)
+
+  info "sync -> $REMOTEDEV_HOST:$remote_dir"
+  ssh "$REMOTEDEV_HOST" "mkdir -p $(printf '%q' "$remote_dir")"
+  rsync -az --delete "${excl[@]}" "$ROOT"/ "$REMOTEDEV_HOST:$remote_dir"/
+
+  info "remote exec: $*"
+  local quoted; quoted="$(printf '%q ' "$@")"
+  set +e
+  ssh "${tflag[@]}" "$REMOTEDEV_HOST" "cd $(printf '%q' "$remote_dir/$rel") && $quoted"
+  local rc=$?
+  set -e
+
+  if [ "$rc" -ne 0 ]; then
+    info "remote build failed (rc=$rc) -> skipping artifact fetch"
+    return "$rc"
+  fi
+
+  local a
+  for a in "${REMOTEDEV_ARTIFACTS[@]}"; do
+    [ -n "$a" ] || continue
+    info "fetch artifact: $a"
+    mkdir -p "$ROOT/$(dirname "$a")"
+    rsync -az "$REMOTEDEV_HOST:$remote_dir/$a" "$ROOT/$a" \
+      || info "  (artifact '$a' not produced)"
+  done
+  return 0
+}
+
+main() {
+  [ $# -ge 1 ] || die "usage: rd-exec <command> [args...]"
+  local cmd_name="$1"
+
+  local ROOT
+  ROOT="$(find_root)" || run_local "$@"   # no .remotedev -> pure passthrough
+
+  # --- defaults, then load per-repo config ------------------------------
+  REMOTEDEV_HOST=""
+  REMOTEDEV_REMOTE_DIR=""
+  REMOTEDEV_EXCLUDES=(.git target node_modules .venv build dist .gradle)
+  REMOTEDEV_ARTIFACTS=()
+  # shellcheck disable=SC1090,SC1091
+  source "$ROOT/.remotedev"
+  [ -n "$REMOTEDEV_HOST" ] || die ".remotedev must set REMOTEDEV_HOST"
+
+  local proj remote_dir
+  proj="$(basename "$ROOT")"
+  remote_dir="${REMOTEDEV_REMOTE_DIR:-remotedev/$proj}"
+
+  if ! host_up; then
+    info "host '$REMOTEDEV_HOST' unreachable -> building LOCALLY (offline fallback)"
+    run_local "$@"
+  fi
+
+  # path of cwd relative to project root, so the command runs in the
+  # same subdirectory on the remote.
+  local rel="${PWD#"$ROOT"}"; rel="${rel#/}"
+
+  local excl=() e
+  for e in "${REMOTEDEV_EXCLUDES[@]}"; do [ -n "$e" ] && excl+=(--exclude "$e"); done
+
+  # Serialize the remote section per repo: concurrent `cargo build` (e.g.
+  # parallel AI agents) would otherwise race rsync --delete into the same
+  # remote dir. flock is best-effort — absent it, we still run (DESIGN: only
+  # ssh+rsync are hard deps).
+  local lock rc=0
+  lock="${TMPDIR:-/tmp}/remotedev-$(cksum <<<"$ROOT" | { read -r s _; printf '%s' "$s"; }).lock"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$lock"
+    flock 9
+    remote_run "$@" || rc=$?
+    flock -u 9
+    exec 9>&-
+  else
+    info "flock not found -> no concurrency lock (best effort)"
+    remote_run "$@" || rc=$?
+  fi
+
+  exit $rc
+}
+
+main "$@"

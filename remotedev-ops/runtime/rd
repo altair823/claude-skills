@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# rd — explicit verb front-end.
+#
+#   rd build | rd test | rd run | rd <any command...>
+#
+# Verbs read BUILD_CMD / TEST_CMD / RUN_CMD from the project's .remotedev.
+# Anything else is passed straight through to rd-exec. Everything still
+# honours the offline / passthrough fallback in rd-exec.
+set -eo pipefail
+
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+find_root() {
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    [ -f "$d/.remotedev" ] && { printf '%s\n' "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
+verb="${1:-}"; shift || true
+
+case "$verb" in
+  build|test|run)
+    root="$(find_root)" || { echo "[rd] no .remotedev found" >&2; exit 1; }
+    BUILD_CMD=""; TEST_CMD=""; RUN_CMD=""
+    # shellcheck disable=SC1090,SC1091
+    source "$root/.remotedev"
+    case "$verb" in
+      build) cmd="$BUILD_CMD" ;;
+      test)  cmd="$TEST_CMD"  ;;
+      run)   cmd="$RUN_CMD"   ;;
+    esac
+    [ -n "$cmd" ] || { echo "[rd] .remotedev defines no ${verb^^}_CMD" >&2; exit 1; }
+    exec "$here/rd-exec" bash -lc "$cmd $*"
+    ;;
+  "" )
+    echo "usage: rd {build|test|run|<command...>}" >&2; exit 1 ;;
+  * )
+    exec "$here/rd-exec" "$verb" "$@" ;;
+esac
