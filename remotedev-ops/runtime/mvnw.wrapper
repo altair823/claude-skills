@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# remotedev wrapper for ./mvnw  (repo-local launchers can't be PATH-shimmed)
+#
+# Installed automatically by `remotedev-init` (it runs mv mvnw mvnw.real,
+# drops this wrapper in place, and hides both from git). Do not install or
+# edit by hand; `remotedev-disable` reverses it.
+#
+# Forwards to rd-exec, which runs ./mvnw.real on the remote (or locally
+# when offline / no .remotedev).
+set -eo pipefail
+exec rd-exec ./mvnw.real "$@"

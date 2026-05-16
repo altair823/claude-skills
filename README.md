@@ -8,6 +8,7 @@
 - [harbor-ops](harbor-ops/SKILL.md) — 사설 Harbor 컨테이너 레지스트리(프로젝트 / repo / tag / 스캔 요약)를 REST API로 read-only 브라우즈.
 - [homelab-ops](homelab-ops/SKILL.md) — 홈서버 fleet(독립 Proxmox 호스트·VM/LXC·어플라이언스)를 guard 단일 chokepoint로 안전하게 운영·프로비저닝·포렌식.
 - [paperboy-ops](paperboy-ops/SKILL.md) — paperboy(영수증 프린터 HTTP 서비스)와 상호작용. 라이브 OpenAPI로 엔드포인트 탐색 후 generic 클라이언트로 호출.
+- [remotedev-ops](remotedev-ops/SKILL.md) — 로컬 repo를 devbox에서 원격 빌드하도록 세팅/해제. PATH shim 머신당 1회 설치 + repo당 .remotedev 구성. 오프라인 시 로컬 fallback. remotedev-gc로 회수 완료 산출물 정리(devbox 공간 회수).
 
 ## Layout
 

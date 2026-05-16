@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# remotedev-uninstall — per-machine revert: remove the shim links + rc
+# block. Leaves any repo's .remotedev / swapped launchers alone (that is
+# `remotedev-disable`). Idempotent.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+RT="$(rdo_home)/runtime"
+SD="$(shim_dir)"
+RC="$(rc_file)"
+
+if [ -d "$SD" ]; then
+  for name in "${INTERCEPT[@]}" rd rd-exec; do
+    [ -L "$SD/$name" ] && rm -f "$SD/$name"
+  done
+  rmdir "$SD" 2>/dev/null || warn "shim dir not empty, left in place: $SD"
+fi
+
+rc_block_remove "$RC"
+log "removed shim links and rc wiring (open a new shell to drop the stale PATH)"

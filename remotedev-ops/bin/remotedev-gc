@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# remotedev-gc [--dry-run] — reclaim devbox space: delete only remote
+# artifacts already copied back to this local repo. Never deletes
+# unrecovered files, the source mirror, or build caches. Per repo.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
+[ -f "$CFG" ] || { warn "no .remotedev here"; exit 2; }
+read_cfg "$CFG"
+[ -n "${REMOTEDEV_HOST:-}" ] || die ".remotedev has no REMOTEDEV_HOST"
+H="$REMOTEDEV_HOST"
+RD="${REMOTEDEV_REMOTE_DIR:-remotedev/$(basename "$ROOT")}"
+
+if ! host_up "$H"; then
+  warn "host '$H' unreachable — nothing to do"
+  exit 0
+fi
+
+freed=0; skipped=0
+for a in "${REMOTEDEV_ARTIFACTS[@]}"; do
+  [ -n "$a" ] || continue
+  case "$a" in
+    /*|../*|*/../*|*/..|..)
+      warn "unsafe artifact path, skipping: $a"; skipped=$((skipped+1)); continue ;;
+  esac
+  if [ -e "$ROOT/$a" ]; then
+    if [ "$DRY" -eq 1 ]; then
+      log "would delete: $H:$RD/$a"
+    else
+      ssh "$H" "rm -rf -- $(printf '%q' "$RD/$a")"
+      log "freed: $H:$RD/$a"
+    fi
+    freed=$((freed+1))
+  else
+    warn "not retrieved locally, keeping remote: $a"
+    skipped=$((skipped+1))
+  fi
+done
+log "gc done: freed=$freed skipped=$skipped"
