@@ -60,6 +60,7 @@ that code and its installer; the standalone project is no longer required.
 | `remotedev-disable [--purge]` | per repo | Reverse launcher swap + git-hide; `--purge` also removes `.remotedev` |
 | `remotedev-status` | read-only | Machine install state + repo config/swap/reachability |
 | `remotedev-verify` | read-mostly | Standalone `rsync` push → `ssh` exec → pull round-trip vs configured host |
+| `remotedev-gc [--dry-run]` | per repo | Reclaim devbox space: delete remote artifacts already copied back locally |
 
 Default `HOST` is `devbox`. `init` accepts `--force` to overwrite an
 existing `.remotedev`. All verbs are idempotent.
@@ -209,6 +210,27 @@ exec writes a result, pull it, assert it came from the remote host; `trap`
 removes the remote dir on exit. Non-zero exit + diagnostics on failure.
 Requires `.remotedev` (else die, exit 2).
 
+### `remotedev-gc [--dry-run]` (per repo)
+
+Reclaims space on `devbox` by deleting only remote artifacts that have
+been **safely copied back to the local repo** — never anything
+unrecovered, never the source mirror or build caches (incremental rsync /
+rebuild stay intact). Requires `.remotedev` (else die, exit 2).
+
+1. `read_cfg`. Need `REMOTEDEV_HOST`; compute the remote dir exactly as the
+   runtime does: `REMOTEDEV_REMOTE_DIR` else `remotedev/$(basename ROOT)`.
+2. `host_up`. Down → nothing to do; warn, exit 0 (offline no-op).
+3. For each `REMOTEDEV_ARTIFACTS` entry `a`:
+   - local `$ROOT/$a` exists → it was retrieved; `ssh HOST rm -rf -- <remote
+     dir>/<a>` (or print it under `--dry-run`); count as freed.
+   - local `$ROOT/$a` missing → not yet retrieved; **skip and warn**
+     (keeping the remote copy so a later pull still works).
+4. Print a summary (freed / skipped counts). `--dry-run` mutates nothing.
+
+Machine-wide sweep across all repos is out of scope for v1 (no repo
+registry); periodic execution is delegated to the user's scheduler / the
+existing schedule tooling invoking this per repo.
+
 ## Config Contract
 
 The `.remotedev` format is owned entirely by this skill (no cross-repo
@@ -242,6 +264,10 @@ embedded runtime.
 | `uninstall`/`disable` with nothing set up | no-op, exit 0 |
 | `uninstall` with non-ours files in shim dir | remove only our links, keep dir, warn |
 | `verify` failure | trap-cleanup remote dir, non-zero exit + diagnostics |
+| `gc` with no `.remotedev` | die, exit 2 |
+| `gc` host unreachable | warn, exit 0 (offline no-op, nothing deleted) |
+| `gc` artifact not yet retrieved locally | skip + warn, keep remote copy |
+| `gc --dry-run` | print intended deletions, mutate nothing |
 
 ## Testing
 
@@ -266,6 +292,10 @@ No server needed; `verify` is server-gated (`REMOTEDEV_TEST_HOST`).
 - `test_status` — reflects machine + repo state accurately.
 - `test_disable` — restores launcher, clears skip-worktree/exclude,
   idempotent; `--purge` removes `.remotedev`.
+- `test_gc` — no `.remotedev` → exit 2; fake-ssh: local artifact present →
+  remote `rm` issued for the right path; local artifact absent → no `rm`,
+  warned; host down → no-op exit 0; `--dry-run` issues no `rm`. Real
+  deletion is server-gated (`REMOTEDEV_TEST_HOST`).
 
 ## Dependencies
 

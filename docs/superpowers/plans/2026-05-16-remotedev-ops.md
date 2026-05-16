@@ -1316,7 +1316,162 @@ git commit -m "feat(remotedev-ops): remotedev-verify standalone roundtrip"
 
 ---
 
-## Task 12: SKILL.md, README entry, full suite, finalize
+## Task 12: `remotedev-gc` (reclaim devbox space)
+
+**Files:**
+- Create: `remotedev-ops/bin/remotedev-gc`
+- Test: `remotedev-ops/tests/test_gc.sh`
+
+- [ ] **Step 1: Write the failing test**
+
+```bash
+cat > remotedev-ops/tests/test_gc.sh <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+G="$RDO/bin/remotedev-gc"
+
+t_no_cfg() {
+  local ws rc; ws="$(new_workspace)"; cd "$ws"
+  bash "$G" >/dev/null 2>&1; rc=$?
+  rm -rf "$ws"; assert_eq 2 "$rc"
+}
+run_test "gc without .remotedev exits 2" t_no_cfg
+
+t_delete_present() {
+  local ws fb rc; ws="$(new_workspace)"; cd "$ws"; fb="$(fixtures_path)"
+  printf 'REMOTEDEV_HOST="fakehost"\nREMOTEDEV_ARTIFACTS=(out/app)\n' > .remotedev
+  mkdir -p out; echo x > out/app; : > log
+  PATH="$fb:$PATH" RD_FAKE_LOG="$ws/log" bash "$G" >/dev/null 2>&1; rc=$?
+  assert_eq 0 "$rc"
+  assert_file_has log "rm -rf -- remotedev/$(basename "$ws")/out/app"
+  rm -rf "$ws"
+}
+run_test "gc deletes remote artifact when local copy exists" t_delete_present
+
+t_skip_absent() {
+  local ws fb out; ws="$(new_workspace)"; cd "$ws"; fb="$(fixtures_path)"
+  printf 'REMOTEDEV_HOST="fakehost"\nREMOTEDEV_ARTIFACTS=(out/app)\n' > .remotedev
+  : > log
+  out="$(PATH="$fb:$PATH" RD_FAKE_LOG="$ws/log" bash "$G" 2>&1)"
+  grep -q 'rm -rf' log && _fail "must not delete unrecovered artifact"
+  assert_contains "$out" "keeping remote"
+  rm -rf "$ws"
+}
+run_test "gc keeps remote when local copy is missing" t_skip_absent
+
+t_offline_noop() {
+  local ws fb rc; ws="$(new_workspace)"; cd "$ws"; fb="$(fixtures_path)"
+  printf 'REMOTEDEV_HOST="fakehost"\nREMOTEDEV_ARTIFACTS=(out/app)\n' > .remotedev
+  mkdir -p out; echo x > out/app; : > log
+  PATH="$fb:$PATH" RD_FAKE_HOST_UP=1 RD_FAKE_LOG="$ws/log" bash "$G" >/dev/null 2>&1; rc=$?
+  grep -q 'rm -rf' log && _fail "offline gc must not delete"
+  rm -rf "$ws"; assert_eq 0 "$rc"
+}
+run_test "gc is a no-op when host unreachable" t_offline_noop
+
+t_dry_run() {
+  local ws fb out; ws="$(new_workspace)"; cd "$ws"; fb="$(fixtures_path)"
+  printf 'REMOTEDEV_HOST="fakehost"\nREMOTEDEV_ARTIFACTS=(out/app)\n' > .remotedev
+  mkdir -p out; echo x > out/app; : > log
+  out="$(PATH="$fb:$PATH" RD_FAKE_LOG="$ws/log" bash "$G" --dry-run 2>&1)"
+  grep -q 'rm -rf' log && _fail "--dry-run must not delete"
+  assert_contains "$out" "would delete"
+  rm -rf "$ws"
+}
+run_test "gc --dry-run mutates nothing" t_dry_run
+
+t_real_gated() {
+  [ -n "${REMOTEDEV_TEST_HOST:-}" ] || { echo "  (skipped: set REMOTEDEV_TEST_HOST)"; return 0; }
+  local ws H RD; ws="$(new_workspace)"; cd "$ws"; H="$REMOTEDEV_TEST_HOST"
+  RD="remotedev/rdo-gc-$$"
+  printf 'REMOTEDEV_HOST="%s"\nREMOTEDEV_REMOTE_DIR="%s"\nREMOTEDEV_ARTIFACTS=(out/app)\n' "$H" "$RD" > .remotedev
+  ssh "$H" "mkdir -p $(printf '%q' "$RD/out")" && ssh "$H" "echo remote > $(printf '%q' "$RD/out/app")"
+  mkdir -p out; echo local > out/app          # local copy present → safe to gc
+  bash "$G" >/dev/null 2>&1 || _fail "gc failed"
+  if ssh "$H" "test -e $(printf '%q' "$RD/out/app")"; then
+    ssh "$H" "rm -rf $(printf '%q' "$RD")"; _fail "remote artifact not deleted"
+  fi
+  ssh "$H" "rm -rf $(printf '%q' "$RD")"; rm -rf "$ws"
+}
+run_test "gc deletes on the real host (gated)" t_real_gated
+
+summary
+EOF
+chmod +x remotedev-ops/tests/test_gc.sh
+```
+
+- [ ] **Step 2: Run it, verify it fails**
+
+Run: `bash remotedev-ops/tests/test_gc.sh`
+Expected: FAIL (`remotedev-gc` does not exist); gated test prints "skipped".
+
+- [ ] **Step 3: Write `bin/remotedev-gc`**
+
+```bash
+cat > remotedev-ops/bin/remotedev-gc <<'EOF'
+#!/usr/bin/env bash
+# remotedev-gc [--dry-run] — reclaim devbox space: delete only remote
+# artifacts already copied back to this local repo. Never deletes
+# unrecovered files, the source mirror, or build caches. Per repo.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
+[ -f "$CFG" ] || die "no .remotedev here"
+read_cfg "$CFG"
+[ -n "${REMOTEDEV_HOST:-}" ] || die ".remotedev has no REMOTEDEV_HOST"
+H="$REMOTEDEV_HOST"
+RD="${REMOTEDEV_REMOTE_DIR:-remotedev/$(basename "$ROOT")}"
+
+if ! host_up "$H"; then
+  warn "host '$H' unreachable — nothing to do"
+  exit 0
+fi
+
+freed=0; skipped=0
+for a in "${REMOTEDEV_ARTIFACTS[@]}"; do
+  [ -n "$a" ] || continue
+  if [ -e "$ROOT/$a" ]; then
+    if [ "$DRY" -eq 1 ]; then
+      log "would delete: $H:$RD/$a"
+    else
+      ssh "$H" "rm -rf -- $(printf '%q' "$RD/$a")"
+      log "freed: $H:$RD/$a"
+    fi
+    freed=$((freed+1))
+  else
+    warn "not retrieved locally, keeping remote: $a"
+    skipped=$((skipped+1))
+  fi
+done
+log "gc done: freed=$freed skipped=$skipped"
+EOF
+chmod +x remotedev-ops/bin/remotedev-gc
+```
+
+- [ ] **Step 4: Run the test, verify it passes**
+
+Run: `bash remotedev-ops/tests/test_gc.sh`
+Expected: `6 passed, 0 failed` (gated test prints "skipped").
+
+- [ ] **Step 5: Run the gated real-host check**
+
+Run: `REMOTEDEV_TEST_HOST=devbox bash remotedev-ops/tests/test_gc.sh`
+Expected: `6 passed, 0 failed` with the gated test actually deleting on `devbox`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add remotedev-ops/bin/remotedev-gc remotedev-ops/tests/test_gc.sh
+git commit -m "feat(remotedev-ops): remotedev-gc reclaim devbox space"
+```
+
+---
+
+## Task 13: SKILL.md, README entry, full suite, finalize
 
 **Files:**
 - Create: `remotedev-ops/SKILL.md`
@@ -1328,7 +1483,7 @@ git commit -m "feat(remotedev-ops): remotedev-verify standalone roundtrip"
 cat > remotedev-ops/SKILL.md <<'EOF'
 ---
 name: remotedev-ops
-description: Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` inspect; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system.
+description: Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds, or reclaim devbox disk space. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` inspect; `remotedev-gc` deletes remote artifacts already pulled back; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system.
 ---
 
 # remotedev-ops
@@ -1350,6 +1505,7 @@ Run scripts by path from this skill's `bin/`.
 | Set this repo up for remote builds | `bin/remotedev-init [HOST] [--force]` (HOST default `devbox`) |
 | See what's configured | `bin/remotedev-status` |
 | Confirm the server pipeline works | `bin/remotedev-verify` |
+| Reclaim devbox disk space | `bin/remotedev-gc [--dry-run]` |
 | Turn this repo back to local | `bin/remotedev-disable [--purge]` |
 | Remove the machine-wide layer | `bin/remotedev-uninstall` |
 
@@ -1362,7 +1518,10 @@ Run scripts by path from this skill's `bin/`.
    swaps `./gradlew`/`./mvnw` if present, and hides those changes from git.
 3. `remotedev-status` to confirm; `remotedev-verify` once online.
 4. Builds now run on the host transparently. Offline → local fallback.
-5. Reverse per repo with `remotedev-disable` (`--purge` also deletes
+5. Periodically run `remotedev-gc` (e.g. via the user's scheduler) to free
+   devbox space — it deletes only artifacts already pulled back; preview
+   with `--dry-run`.
+6. Reverse per repo with `remotedev-disable` (`--purge` also deletes
    `.remotedev`); remove machine-wide with `remotedev-uninstall`.
 
 ## Notes
@@ -1387,7 +1546,7 @@ In `README.md`, find the line:
 Add immediately after it:
 
 ```
-- [remotedev-ops](remotedev-ops/SKILL.md) — 로컬 repo를 devbox에서 원격 빌드하도록 세팅/해제. PATH shim 머신당 1회 설치 + repo당 .remotedev 구성. 오프라인 시 로컬 fallback.
+- [remotedev-ops](remotedev-ops/SKILL.md) — 로컬 repo를 devbox에서 원격 빌드하도록 세팅/해제. PATH shim 머신당 1회 설치 + repo당 .remotedev 구성. 오프라인 시 로컬 fallback. remotedev-gc로 회수 완료 산출물 정리(devbox 공간 회수).
 ```
 
 - [ ] **Step 3: Run the entire suite**
@@ -1432,15 +1591,18 @@ git commit -m "feat(remotedev-ops): SKILL.md + register skill in README"
 - `remotedev-disable [--purge]` → Task 9. ✓
 - `remotedev-status` → Task 10. ✓
 - `remotedev-verify` standalone + gated → Task 11. ✓
+- `remotedev-gc` (delete only locally-retrieved artifacts; offline no-op;
+  `--dry-run`; exit 2 no cfg) + server-gated real deletion → Task 12. ✓
 - Embedded `runtime/` (4 hardening fixes) + ported regression tests →
   Tasks 1, 2. ✓
 - `_common.sh` API (all helpers in the locked list) → Task 3. ✓
 - Config Contract enforcement test → Task 6 (`t_contract`). ✓
 - rc-block idempotency, fake HOME/rc + temp SHIM_DIR sandboxing → Tasks 3,
   4, 5. ✓
-- SKILL.md + sibling-pattern layout + symlink install → Task 12. ✓
+- SKILL.md + sibling-pattern layout + symlink install → Task 13. ✓
 - Error-handling rows (not-git, already-swapped, no-build-system,
-  uninstall-non-empty) → covered in Tasks 5, 6, 8 tests/impl. ✓
+  uninstall-non-empty, gc offline/skip/dry-run) → covered in Tasks 5, 6, 8,
+  12 tests/impl. ✓
 
 **Placeholder scan:** No TBD/TODO; every code step contains complete script
 content; every test step contains real assertions; modify-steps quote the
@@ -1449,7 +1611,7 @@ exact line to replace. ✓
 **Type/name consistency:** `_common.sh` names (`shim_dir`, `rc_file`,
 `rc_block_write/remove`, `git_hide/unhide`, `shim_installed`, `read_cfg`,
 `repo_root`, `host_up`, `rdo_home`, `INTERCEPT`) are defined in Task 3 and
-used with identical names/signatures in Tasks 4–11. Env override knobs
+used with identical names/signatures in Tasks 4–12. Env override knobs
 (`REMOTEDEV_SHIM_DIR`, `REMOTEDEV_RC`) are consistent across install/
 uninstall/tests. Runtime path `runtime/rd-shim` consistent between
 install impl and its test. ✓
