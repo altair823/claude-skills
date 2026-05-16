@@ -835,10 +835,12 @@ emit() { # NAME VALUE  -> "NAME=..." or "# NAME=" when empty
   printf 'REMOTEDEV_HOST="%s"\n' "$HOST"
   echo '# REMOTEDEV_REMOTE_DIR="work/myproject"'
   echo '# REMOTEDEV_EXCLUDES=(.git target node_modules .venv build dist .gradle)'
+  # Single-line array so the line-based contract check stays valid; the
+  # ported runtime sources this as bash either way.
   if [ -n "$ART" ] && [ "${ART#\#}" = "$ART" ]; then
-    printf 'REMOTEDEV_ARTIFACTS=(\n  %s\n)\n' "$ART"
+    printf 'REMOTEDEV_ARTIFACTS=(%s)\n' "$ART"
   else
-    printf 'REMOTEDEV_ARTIFACTS=(\n  %s\n)\n' "${ART:-# path/to/artifact}"
+    printf '# REMOTEDEV_ARTIFACTS=\n'
   fi
   emit BUILD_CMD "$BUILD"
   emit TEST_CMD  "$TEST"
