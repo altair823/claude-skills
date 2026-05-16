@@ -66,6 +66,16 @@ t_real_gated() {
   fi
   ssh "$H" "rm -rf $(printf '%q' "$RD")"; rm -rf "$ws"
 }
+t_unsafe_path_blocked() {
+  local ws fb out; ws="$(new_workspace)"; cd "$ws"; fb="$(fixtures_path)"
+  printf 'REMOTEDEV_HOST="fakehost"\nREMOTEDEV_ARTIFACTS=(../../evil /etc/passwd)\n' > .remotedev
+  : > log
+  out="$(PATH="$fb:$PATH" RD_FAKE_LOG="$ws/log" bash "$G" 2>&1)"
+  grep -q 'rm -rf' log && _fail "unsafe path must NOT issue remote rm"
+  assert_contains "$out" "unsafe artifact path"
+  rm -rf "$ws"
+}
+run_test "gc refuses .. / absolute artifact paths" t_unsafe_path_blocked
 run_test "gc deletes on the real host (gated)" t_real_gated
 
 summary

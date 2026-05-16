@@ -22,6 +22,10 @@ fi
 freed=0; skipped=0
 for a in "${REMOTEDEV_ARTIFACTS[@]}"; do
   [ -n "$a" ] || continue
+  case "$a" in
+    /*|../*|*/../*|*/..|..)
+      warn "unsafe artifact path, skipping: $a"; skipped=$((skipped+1)); continue ;;
+  esac
   if [ -e "$ROOT/$a" ]; then
     if [ "$DRY" -eq 1 ]; then
       log "would delete: $H:$RD/$a"
