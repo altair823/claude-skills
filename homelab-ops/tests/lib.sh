@@ -4,6 +4,14 @@
 # bw/curl/ssh. Every test_*.sh cd's to the repo root before sourcing this, so
 # $PWD is the repo root here. (tests/run.sh also sets this; harmless to repeat.)
 export PATH="$PWD/tests/stubs:$PATH"
+
+# logs/ is runtime-local and gitignored, so it is absent on a clean checkout.
+# Production code (audit_append) does its own `mkdir -p`; mirror that here so a
+# test that writes logs/audit.jsonl directly does not depend on a prior guard
+# op having created the dir. Without this the suite is order-dependent and
+# fails on the very first run after a fresh clone.
+mkdir -p logs
+
 _FAILS=0
 
 assert_eq() { # expected actual msg
