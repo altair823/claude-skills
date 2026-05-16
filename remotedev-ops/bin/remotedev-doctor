@@ -19,7 +19,10 @@ if ! host_up "$H"; then
   exit 0
 fi
 
-# first MAJOR.MINOR found, else "unknown"
+# first MAJOR.MINOR found, else "unknown".
+# MUST be called inside a "$( ... )" assignment (its no-match grep|head exits
+# non-zero; only the command-substitution-assignment context keeps that from
+# tripping `set -eo pipefail`). Do not call it bare in a top-level pipeline.
 glibc_ver() {
   local v; v="$(grep -oE '[0-9]+\.[0-9]+' | head -1)"
   [ -n "$v" ] && printf '%s' "$v" || printf 'unknown'
