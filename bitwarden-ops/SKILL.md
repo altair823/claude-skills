@@ -42,7 +42,10 @@ No `BW_SESSION` ⇒ every command refuses to start (exit 3, "locked vault").
 1. **Master password: user only.** Only the user runs `bw unlock`. Claude never
    prompts for, receives, stores, or echoes it.
 2. **Secret values never leak.** Reads → stdout / child env only. Writes → the
-   user's terminal only. Never in Claude's output, argv, disk, or logs.
+   user's terminal only. Never in Claude's context, persistent argv, disk, or
+   logs. (Sole accepted exception: `bw-put` hands the value to `jq` for one
+   sub-ms call, so it is transiently in jq's argv to the same user/root —
+   local single-user threat model only; see the NOTE in `bin/bw-put`.)
 3. **Locked-vault default.** No `BW_SESSION` ⇒ refuse (exit 3). Ask the user to
    `bw unlock`; never handle the master password.
 4. **bw-put is user-run.** It reads the secret from `/dev/tty`. Claude constructs

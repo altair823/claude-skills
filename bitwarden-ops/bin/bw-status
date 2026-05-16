@@ -20,4 +20,4 @@ else
 fi
 
 # Locked vault / no session is a non-zero (3) preflight signal.
-[[ "$sess" == "set" && "$vault" == "unlocked" ]] || { BW_EXIT=3 die "locked vault 또는 BW_SESSION 미설정"; }
+[[ "$sess" == "set" && "$vault" == "unlocked" ]] || { BW_EXIT=3 die "vault 미잠금해제 (session=$sess vault=$vault) — BW_SESSION 미설정이면 'export BW_SESSION=\"\$(bw unlock --raw)\"', 만료면 bw unlock 재실행"; }
