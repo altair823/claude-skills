@@ -14,7 +14,7 @@
 - "vault 의 키를 stdout 으로 받아 파이프(ssh-agent 등)" → `bw-get`
 - "vault 에 뭐가 있는지(값 말고 이름) 보기" → `bw-ls`
 - "아직 vault 에 없는 credential 을 지금 등록" → `bw-put` (사용자가 직접 실행)
-- "vault 잠금/sync 상태 확인" → `bw-status`
+- "vault 잠금/세션 상태 확인" → `bw-status`
 
 범위 밖: org/collection 관리, Bitwarden Secrets Manager(`bws`), 첨부파일, 항목/필드 **삭제**, GitHub/GitLab 등 타 secret 백엔드. 다른 도구의 기존 자격증명 저장 방식을 본 스킬로 옮기는 마이그레이션도 범위가 아니다(§9).
 
@@ -31,7 +31,7 @@ bitwarden-ops/
     bw-exec      # 참조들을 자식 env로 주입 후 cmd exec (읽기, CLI 래퍼용)
     bw-ls        # item·필드 이름 나열 (메타데이터, 값 없음)
     bw-put       # 참조 위치에 값 upsert (쓰기, 사용자가 직접 실행)
-    bw-status    # vault 잠금·sync·BW_SESSION 상태 (메타데이터)
+    bw-status    # vault 잠금·BW_SESSION 세션 상태 (메타데이터)
     _common.sh   # 공유: die, 참조 파서, locked-vault 게이트, 마스킹
   tests/
     run.sh
@@ -110,7 +110,9 @@ bw-put <bw://ref> [--type password|field|note] [--replace]
 bw-status [--json]
 ```
 
-`BW_SESSION` 설정 여부, vault 잠금 상태, 로컬 캐시 sync staleness 를 출력(secret 없음). 다른 명령 실행 전 preflight. 종료코드: `0` unlocked+세션OK / `3` locked 또는 세션 없음.
+`BW_SESSION` 설정 여부와 vault 잠금 상태를 출력(secret 없음). 다른 명령 실행 전 preflight. 종료코드: `0` unlocked+세션OK / `3` locked 또는 세션 없음.
+
+> 참고: `bw status` 는 `{status}` 만 반환하고 마지막 sync 시각을 노출하지 않으므로 "sync staleness" 는 `bw-status` 가 제공할 수 없다(구현·SKILL.md 도 주장하지 않음). stale 캐시 방어는 `bw-put` 이 쓰기 직전 `bw sync` 를 강제하는 것으로 처리한다(§5.4·§6.5).
 
 ## 6. 안전 계약 (불변 — 척추)
 
