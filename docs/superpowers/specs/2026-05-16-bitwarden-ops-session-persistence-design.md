@@ -76,6 +76,7 @@ bw-lock
 
 - 세션 파일이 만료/`bw lock` 됨(stale): `require_session` 은 존재만 확인(매 명령 liveness 체크는 비용 과다). stale 이면 후속 `bw` 호출이 실패 → 기존 exit-3/locked 경로. 관련 에러 메시지에 "`bw-unlock` 재실행" 힌트를 포함한다.
 - 세션 파일 존재하나 비어 있음 → 없는 것으로 간주(잠금, exit 3).
+- 세션 파일이 비어있지 않으나 **읽기 불가**(권한/소유 오류·NFS·컨테이너): `-s` 는 stat 기반이라 이를 못 거른다. `_common.sh` 의 source-time 가드(`-r` 체크)가 `BW_EXIT=3 die "세션 파일 읽기 불가: … — bw-unlock 재실행"` 로 명확히 fail-closed 한다(bare 셸 에러 대신). 같은 가드가 `bw-lock` 에도 적용돼 이 경우 `bw-lock` 도 exit 3 — **알려진 한계**(권한 정상화 후 재시도). 원 설계 `2026-05-16-bitwarden-ops-design.md` §7 과 일치.
 - `$HOME` 미설정/`CACHE_DIR` 생성 불가: `bw-unlock` 은 fail-closed(거부, 임의 위치에 쓰지 않음). reader 는 파일 없음으로 간주 → exit 3.
 - `bw-lock`: 파일 부재여도 성공(idempotent).
 
