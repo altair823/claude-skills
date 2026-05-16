@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fake ssh: logs argv; behaves on the remote command (last arg) + env knobs:
+#   RD_FAKE_LOG RD_FAKE_HOST_UP RD_FAKE_BUILD_RC RD_FAKE_SLEEP RD_FAKE_CRIT
+set -u
+[ -n "${RD_FAKE_LOG:-}" ] && printf 'ssh %s\n' "$*" >> "$RD_FAKE_LOG"
+cmd="${!#}"
+case "$cmd" in
+  true)        exit "${RD_FAKE_HOST_UP:-0}" ;;
+  "mkdir -p"*) exit 0 ;;
+  *)
+    if [ -n "${RD_FAKE_CRIT:-}" ]; then echo "ENTER $$" >> "$RD_FAKE_CRIT"; fi
+    sleep "${RD_FAKE_SLEEP:-0}"
+    if [ -n "${RD_FAKE_CRIT:-}" ]; then echo "EXIT $$" >> "$RD_FAKE_CRIT"; fi
+    exit "${RD_FAKE_BUILD_RC:-0}" ;;
+esac

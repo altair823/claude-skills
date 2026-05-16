@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake rsync: push (has --delete) succeeds; pull creates the dest file.
+set -u
+[ -n "${RD_FAKE_LOG:-}" ] && printf 'rsync %s\n' "$*" >> "$RD_FAKE_LOG"
+is_push=0; for a in "$@"; do [ "$a" = "--delete" ] && is_push=1; done
+[ "$is_push" -eq 1 ] && exit 0
+dest="${!#}"; mkdir -p "$(dirname "$dest")"; echo "PULLED" > "$dest"; exit 0
