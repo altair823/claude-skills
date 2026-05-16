@@ -86,3 +86,6 @@ swap_launcher() { # launcher  wrapper-src
 swap_launcher gradlew "$RT/gradlew.wrapper"
 swap_launcher mvnw    "$RT/mvnw.wrapper"
 ( cd "$ROOT" && git_hide .remotedev ) 2>/dev/null || true
+
+# --- advisory env-compatibility check (never blocks setup) --------------
+"$(dirname "$(readlink -f "$0")")/remotedev-doctor" --brief 2>&1 || true
