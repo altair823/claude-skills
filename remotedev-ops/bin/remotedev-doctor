@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# remotedev-doctor [--brief] — compare local vs devbox CPU arch + glibc and
+# flag when a devbox-built native artifact may not run locally. Advisory:
+# never mutates anything. Exit 0 compatible/offline, 1 warning/incomplete,
+# 2 critical(arch)/no-.remotedev.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+BRIEF=0; [ "${1:-}" = "--brief" ] && BRIEF=1
+
+ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
+[ -f "$CFG" ] || { warn "no .remotedev here"; exit 2; }
+read_cfg "$CFG"
+[ -n "${REMOTEDEV_HOST:-}" ] || die ".remotedev has no REMOTEDEV_HOST"
+H="$REMOTEDEV_HOST"
+
+if ! host_up "$H"; then
+  log "offline — compatibility not checked; re-run 'remotedev-doctor' when online"
+  exit 0
+fi
+
+# first MAJOR.MINOR found, else "unknown"
+glibc_ver() {
+  local v; v="$(grep -oE '[0-9]+\.[0-9]+' | head -1)"
+  [ -n "$v" ] && printf '%s' "$v" || printf 'unknown'
+}
+
+arch_local="${REMOTEDEV_FAKE_LOCAL_ARCH:-$(uname -m)}"
+if [ -n "${REMOTEDEV_FAKE_LOCAL_GLIBC:-}" ]; then
+  glibc_local="$REMOTEDEV_FAKE_LOCAL_GLIBC"
+else
+  glibc_local="$( { getconf GNU_LIBC_VERSION 2>/dev/null || ldd --version 2>/dev/null | head -1; } | glibc_ver )"
+fi
+
+probe="$(ssh "$H" 'uname -m; getconf GNU_LIBC_VERSION 2>/dev/null || ldd --version 2>/dev/null | head -1' 2>/dev/null)" || {
+  warn "remote probe failed on '$H' — compatibility incomplete"
+  exit 1
+}
+arch_remote="$(printf '%s\n' "$probe" | sed -n 1p)"
+glibc_remote="$(printf '%s\n' "$probe" | sed -n '2,$p' | glibc_ver)"
+
+# true if $1 > $2 as MAJOR.MINOR; false if either is "unknown"
+ver_gt() {
+  [ "$1" = unknown ] && return 1
+  [ "$2" = unknown ] && return 1
+  local a1="${1%%.*}" a2="${1#*.}" b1="${2%%.*}" b2="${2#*.}"
+  if [ "$a1" -ne "$b1" ]; then [ "$a1" -gt "$b1" ]; return; fi
+  [ "$a2" -gt "$b2" ]
+}
+
+verdict=COMPATIBLE; rc=0
+if [ "$arch_local" != "$arch_remote" ]; then
+  verdict=CRITICAL; rc=2
+elif ver_gt "$glibc_remote" "$glibc_local"; then
+  verdict=WARNING; rc=1
+fi
+
+if [ "$BRIEF" -eq 1 ]; then
+  case "$verdict" in
+    COMPATIBLE) log "env-compat: OK (arch $arch_local; glibc local $glibc_local / devbox $glibc_remote)" ;;
+    WARNING)    warn "env-compat: devbox glibc $glibc_remote > local $glibc_local — dynamically-linked native binaries may fail locally (GLIBC_x.y not found); use a static/musl target or build locally" ;;
+    CRITICAL)   warn "env-compat: arch differs (local $arch_local vs devbox $arch_remote) — native artifacts built on devbox cannot run locally; build this repo locally or target $arch_local" ;;
+  esac
+  exit "$rc"
+fi
+
+printf '                 %-12s %s\n' "local" "devbox"
+printf '  arch           %-12s %s\n' "$arch_local" "$arch_remote"
+printf '  glibc          %-12s %s\n' "$glibc_local" "$glibc_remote"
+case "$verdict" in
+  COMPATIBLE)
+    echo "  verdict: COMPATIBLE" ;;
+  WARNING)
+    echo "  verdict: WARNING — devbox glibc newer than local"
+    echo "  -> dynamically-linked native binaries may fail locally with 'GLIBC_x.y not found'"
+    echo "  -> fix: build with a static/musl target, or build this repo locally" ;;
+  CRITICAL)
+    echo "  verdict: CRITICAL — CPU architecture differs"
+    echo "  -> a native artifact built on devbox cannot exec locally"
+    echo "  -> fix: build this repo locally, or target $arch_local" ;;
+esac
+echo "  note: matters for natively-compiled artifacts (Rust/C/C++/cgo); usually moot for JVM / pure-Python"
+exit "$rc"
