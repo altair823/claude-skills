@@ -35,6 +35,7 @@ rc_block_remove() {
 
 rc_block_write() {
   local f="$1"; touch "$f"; rc_block_remove "$f"
+  if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then printf '\n' >> "$f"; fi
   { printf '%s\n' "$RDO_BEG"
     printf 'export REMOTEDEV_SHIM_DIR="%s"\n' "$(shim_dir)"
     printf 'export PATH="$REMOTEDEV_SHIM_DIR:$PATH"\n'
