@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/_common.sh"
+require_cmd bw jq
+
+search="${1:-}"
+require_session
+
+if [[ -n "$search" ]]; then
+  items="$(bw list items --search "$search" --session "$BW_SESSION" 2>/dev/null)" || items="[]"
+else
+  items="$(bw list items --session "$BW_SESSION" 2>/dev/null)" || items="[]"
+fi
+
+# Names only. Never .value / .login.password / .notes.
+jq -r '.[] | .name, (.fields[]? | "  ." + .name)' <<<"$items"
