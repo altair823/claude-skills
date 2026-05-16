@@ -398,6 +398,18 @@ t_git_unhide_exclude() {
 }
 run_test "git_unhide removes a sole exclude entry" t_git_unhide_exclude
 
+t_rc_block_no_trailing_newline() {
+  local ws; ws="$(new_workspace)"; local rc="$ws/rc"
+  printf 'export X=1' > "$rc"   # NO trailing newline
+  REMOTEDEV_SHIM_DIR="$ws/s" REMOTEDEV_RC="$rc" bash -c '. "$0"; rc_block_write "$(rc_file)"' "$RDO/bin/_common.sh"
+  REMOTEDEV_SHIM_DIR="$ws/s" REMOTEDEV_RC="$rc" bash -c '. "$0"; rc_block_write "$(rc_file)"' "$RDO/bin/_common.sh"
+  assert_eq "1" "$(grep -c '>>> remotedev >>>' "$rc")"
+  assert_file_has "$rc" "export X=1"
+  grep -q '^# >>> remotedev >>>$' "$rc" || _fail "sentinel not on its own line"
+  rm -rf "$ws"
+}
+run_test "rc_block_write tolerates no trailing newline" t_rc_block_no_trailing_newline
+
 summary
 EOF
 chmod +x remotedev-ops/tests/test_common.sh
@@ -449,6 +461,7 @@ rc_block_remove() {
 
 rc_block_write() {
   local f="$1"; touch "$f"; rc_block_remove "$f"
+  if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then printf '\n' >> "$f"; fi
   { printf '%s\n' "$RDO_BEG"
     printf 'export REMOTEDEV_SHIM_DIR="%s"\n' "$(shim_dir)"
     printf 'export PATH="$REMOTEDEV_SHIM_DIR:$PATH"\n'
