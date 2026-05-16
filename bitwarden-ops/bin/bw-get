@@ -26,6 +26,9 @@ case "$REF_KIND" in
   field)
     item="$(bw get item "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null)" \
       || die "bw: item 없음: $REF_ITEM"
-    jq -er --arg f "$REF_FIELD" '.fields[]? | select(.name==$f) | .value' <<<"$item" \
+    # -j: raw output, no trailing newline — stay byte-consistent with the
+    # password/notes paths (which forward `bw get` verbatim). -e is kept so a
+    # missing field still exits non-zero and triggers die.
+    jq -ej --arg f "$REF_FIELD" '.fields[]? | select(.name==$f) | .value' <<<"$item" \
       || die "bw: 필드 없음: '$REF_FIELD' (item '$REF_ITEM' 에)" ;;
 esac

@@ -77,7 +77,7 @@ bitwarden-ops/
 bw-get <bw://ref> [--ssh]
 ```
 
-참조를 해결해 값을 **stdout 으로만** 출력. 호출자가 즉시 파이프한다(`bw-get bw://x/api | consumer`). 값은 파이프로만 흐르고 Claude 는 보지 않는다. `--ssh` 는 notes 의 SSH 키를 그대로 stdout(개행 보존)으로. 해결 실패 시 item-없음 / field-없음 을 구분한 에러.
+참조를 해결해 값을 **stdout 으로만** 출력. 호출자가 즉시 파이프한다(`bw-get bw://x/api | consumer`). 값은 파이프로만 흐르고 Claude 는 보지 않는다. 출력은 **byte-verbatim** 이다 — password/field/notes 세 종류 모두 후행 개행을 덧붙이지 않는다(`field` 경로의 추출은 `jq -ej`, password/notes 는 `bw get` 출력을 그대로 전달). 단 `--ssh` 는 notes 의 SSH 키를 그대로 stdout(키에 포함된 개행 보존)으로. 해결 실패 시 item-없음 / field-없음 을 구분한 에러.
 
 ### 5.2 `bw-exec`
 
@@ -158,7 +158,7 @@ Claude/사용자 실행; `bw lock` + 세션 파일 제거, idempotent, secret �
 의존성 없는 pure-bash 하니스 + `tests/stubs/bw`(PATH 로 실제 `bw` 를 가리는 결정적 가짜 vault). 커버:
 
 - 참조 파서: `bw://i`, `bw://i/f`, `bw://i/notes`, 잘못된 형식.
-- `bw-get`: 값이 stdout 으로만, item/field 없음 구분.
+- `bw-get`: 값이 stdout 으로만, item/field 없음 구분, field 경로 후행 개행 없음(바이트 정확 단언).
 - `bw-exec`: 값이 자식 env 에만 — argv·stdout·stderr 에 secret 부재 단언.
 - `bw-ls`: 값이 출력에 부재 단언(이름만).
 - `bw-put`: 신규 생성 경로 / 기존 값에 `--replace` 없이 거부 / `--replace` 로 덮어씀 / 빈 입력 거부 / sync 선행. (값 입력은 §5.4 의 `_read_secret` 테스트 seam 으로 주입 — 프로덕션 `/dev/tty` 경로는 불변.)
