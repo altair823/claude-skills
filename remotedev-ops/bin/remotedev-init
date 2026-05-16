@@ -69,3 +69,20 @@ if host_up "$HOST"; then
 else
   warn "host '$HOST' unreachable now — config written; offline builds fall back to local. Run 'remotedev-verify' once online."
 fi
+
+# --- Gradle/Maven repo-local launcher swap + git-hide --------------------
+RT="$(rdo_home)/runtime"
+swap_launcher() { # launcher  wrapper-src
+  local l="$1" src="$2"
+  [ -f "$ROOT/$l" ] || [ -f "$ROOT/$l.real" ] || return 0
+  if [ -f "$ROOT/$l.real" ]; then
+    log "$l already swapped — refreshing wrapper"
+  else
+    mv "$ROOT/$l" "$ROOT/$l.real"
+  fi
+  cp "$src" "$ROOT/$l"; chmod +x "$ROOT/$l"
+  ( cd "$ROOT" && git_hide "$l" && git_hide "$l.real" ) 2>/dev/null || true
+}
+swap_launcher gradlew "$RT/gradlew.wrapper"
+swap_launcher mvnw    "$RT/mvnw.wrapper"
+( cd "$ROOT" && git_hide .remotedev ) 2>/dev/null || true
