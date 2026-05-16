@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# remotedev-verify — standalone end-to-end check of the configured host
+# (no rd-exec): unique remote dir, rsync push, ssh exec, pull, assert,
+# cleanup. Exit 2 if no .remotedev.
+set -eo pipefail
+. "$(dirname "$(readlink -f "$0")")/_common.sh"
+
+ROOT="$(repo_root)"; CFG="$ROOT/.remotedev"
+[ -f "$CFG" ] || { warn "no .remotedev here"; exit 2; }
+read_cfg "$CFG"
+[ -n "${REMOTEDEV_HOST:-}" ] || die ".remotedev has no REMOTEDEV_HOST"
+H="$REMOTEDEV_HOST"
+
+RDIR="remotedev/rd-verify-$$"
+WS="$(mktemp -d)"
+cleanup() { ssh "$H" "rm -rf $(printf '%q' "$RDIR")" 2>/dev/null || true; rm -rf "$WS"; }
+trap cleanup EXIT
+
+echo "marker-$$" > "$WS/src.txt"
+ssh "$H" "mkdir -p $(printf '%q' "$RDIR")"
+rsync -az "$WS"/ "$H:$RDIR"/
+ssh "$H" "cd $(printf '%q' "$RDIR") && echo built-on=\$(hostname) > out.txt && cat src.txt >> out.txt"
+rsync -az "$H:$RDIR/out.txt" "$WS/out.txt"
+
+grep -q "built-on=" "$WS/out.txt" || die "verify failed: no remote marker"
+grep -q "marker-$$" "$WS/out.txt" || die "verify failed: source not round-tripped"
+log "verify OK against '$H' ($(sed -n 's/built-on=//p' "$WS/out.txt"))"
