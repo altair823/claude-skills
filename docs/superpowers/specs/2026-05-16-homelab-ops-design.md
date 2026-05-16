@@ -37,7 +37,7 @@ homelab-ops/
     forensics             # 감사 로그/스냅샷 기반 타임라인 재구성 조회
   provisioning/           # Phase 2: Ansible/Terraform 백엔드 (guard가 호출)
   logs/
-    audit.jsonl           # 추가-전용 감사 로그 (운영자 로컬, gitignore)
+    audit.jsonl           # 추가-전용 감사 로그 (운영자 로컬·git 미추적)
     runs/<세션ID>/<작업ID>.log
   .gitignore              # secret·세션·.env·tfstate 류 전부 제외
   CLAUDE.md               # Claude 작업 철칙
@@ -113,7 +113,7 @@ homelab-ops/
 ## 7. Claude 인터페이스
 
 - `homelab-ops` **글로벌(개인) 스킬 1개** — `~/.claude/skills/homelab-ops/SKILL.md`. harbor-ops/gitea-ops와 정확히 동일한 패턴(글로벌 스킬 + `~/.config/homelab-ops/config` 레포 포인터). 어느 프로젝트에서 작업 중이든 fleet 상태/메트릭 조회 및 `guard` 호출 가능 (cross-project 운영 요구 충족)
-- 스킬은 얇은 포인터일 뿐, single source of truth는 git 레포(`bin/`·`inventory/`·`logs/audit.jsonl`). 스킬은 `~/.config/homelab-ops/config`의 `HOMELAB_REPO`(기본 `~/projects/homelab-ops`)로 레포를 찾아 `$HOMELAB_REPO/bin/*` 호출. 안전 모델은 스크립트가 강제하므로 스킬 위치와 무관
+- 스킬은 얇은 포인터일 뿐, single source of truth는 git 레포의 *도구*(`bin/`·`inventory/`). `logs/audit.jsonl`은 git 미추적 런타임 산출물이라 SSOT가 아니다(§6). 스킬은 `~/.config/homelab-ops/config`의 `HOMELAB_REPO`(기본 `~/projects/homelab-ops`)로 레포를 찾아 `$HOMELAB_REPO/bin/*` 호출. 안전 모델은 스크립트가 강제하므로 스킬 위치와 무관
 - 스킬/설정은 레포에 git-tracked 원본(`skill/SKILL.md`)을 두고 `bin/install-skill`로 1회 설치(idempotent). 상시 미러/심볼링크 없음
 - 인벤토리 조회 → 변경은 무조건 `guard` 경유
 - `CLAUDE.md` 철칙: guard 우회 금지, 변경 시 BW_SESSION 필수, deny-by-default, 기록 누락 금지

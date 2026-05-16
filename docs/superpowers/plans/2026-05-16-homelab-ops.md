@@ -1539,7 +1539,8 @@ HOMELAB_REPO="$( . "$HOME/.config/homelab-ops/config" 2>/dev/null; echo "${HOMEL
 ```
 Then call `"$HOMELAB_REPO/bin/inv"`, `"$HOMELAB_REPO/bin/guard"`, `"$HOMELAB_REPO/bin/forensics"`.
 Paths are absolute, so this works from any project's cwd. The repo is the single source of
-truth (inventory, guard, append-only `logs/audit.jsonl`).
+truth for tooling (inventory, guard); `logs/audit.jsonl` is runtime-local and gitignored
+(append-only, not part of the tracked source — see design §6/§10).
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `$HOMELAB_REPO/bin/inv list|get|resolve`, `guard status <id>`
