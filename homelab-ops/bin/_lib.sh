@@ -46,3 +46,30 @@ run_log_path() { # <op-id> -> path (creates session run dir)
   mkdir -p "$RUNS_DIR/$HOMELAB_SESSION_ID"
   echo "$RUNS_DIR/$HOMELAB_SESSION_ID/$1.log"
 }
+
+# op_transport <action> <kind> -> pve | ssh | none
+# bin/_backend 의 디스패치 결정을 그대로 미러링하는 단일 출처. _backend·guard
+# 게이트·guard --plan 이 모두 이 함수를 거쳐 같은 판단을 쓴다 (drift 방지).
+op_transport() {
+  local action="${1:?op_transport: action required}" kind="${2:-}"
+  case "$action" in
+    status|metrics|get) echo none ;;
+    start|stop|restart|destroy|snapshot)
+      case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
+    pkg-install) echo ssh ;;
+    provision)   echo pve ;;
+    *)           echo none ;;
+  esac
+}
+
+# owner_host <target> -> 그 target 을 children 으로 가진 첫 Proxmox 호스트 id,
+# 없으면 target 자신. (bin/_backend 의 기존 _owner_host 와 동일 로직)
+owner_host() {
+  local target="${1:?owner_host: target required}" x
+  for x in $("$REPO_ROOT/bin/inv" list); do
+    if "$REPO_ROOT/bin/inv" children "$x" | grep -qx "$target"; then
+      echo "$x"; return 0
+    fi
+  done
+  echo "$target"
+}
