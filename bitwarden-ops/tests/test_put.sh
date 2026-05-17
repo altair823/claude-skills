@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 source tests/lib.sh
 export BW_STUB_DB="$(mktemp)"; echo '[]' > "$BW_STUB_DB"
 SECRET="$(mktemp)"
-trap 'rm -f "$BW_STUB_DB" "$BW_STUB_DB.synced" "$SECRET" "$KEYF"' EXIT
+trap 'rm -f "$BW_STUB_DB" "$BW_STUB_DB.synced" "$SECRET"' EXIT
 export BITWARDEN_OPS_TEST_SECRET_FILE="$SECRET"
 
 # 1) Create new password item.
