@@ -1,0 +1,5 @@
+# EXAMPLE groups — copy to inventory/groups.yaml. Logical groups over the
+# fleet, membership by inventory id. Operator-local; gitignored.
+pve-hosts:     [pve-01]
+observability: [vm-100]
+storage:       [nas-01]

@@ -1,3 +1,6 @@
+# Test fixture inventory — stable, decoupled from the operator's live
+# inventory/fleet.yaml. The stub-driven suite points HOMELAB_INVENTORY_DIR
+# here (see tests/lib.sh). Do NOT put real hosts/credentials in this file.
 # Credentials are REFERENCES ONLY (bw://...). No secret value lives in any file.
 - id: pve-01
   kind: proxmox-host

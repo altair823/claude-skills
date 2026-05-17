@@ -8,9 +8,10 @@ chmod +x bin/guard 2>/dev/null || true
 out="$(bin/guard --plan status vm-100)"
 assert_eq "" "$out" "safe op → empty plan"
 
-# critical bump 으로 caution 이지만 transport none → 빈 출력
+# status on critical stays safe (read-only exempt from the critical bump);
+# --plan exits early for safe ops → empty plan, no credential needed.
 out="$(bin/guard --plan status pve-01)"
-assert_eq "" "$out" "status on critical (caution, transport none) → empty plan"
+assert_eq "" "$out" "status on critical (safe, read-only exempt) → empty plan"
 
 # vm action → 소유 Proxmox 호스트의 api token_ref
 out="$(bin/guard --plan stop vm-100)"

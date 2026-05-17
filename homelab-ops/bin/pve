@@ -14,16 +14,32 @@ addr="$(jq -r '.address // empty' <<<"$inv")"
 token="$PVE_TOKEN"
 base="https://${addr}:8006/api2/json"
 
+# Per-host CA trust. A homelab Proxmox serves a self-signed cert from its
+# built-in CA (named "PVE Cluster Manager CA" even on a standalone node), so
+# system trust alone fails verification. inventory access.api.ca_path pins
+# that CA via curl --cacert — verification stays ON (never -k/--insecure).
+# Absent ca_path ⇒ fall back to system trust (unchanged default). A declared
+# but unreadable CA fails CLOSED (never silently weaken TLS).
+ca_path="$(jq -r '.access.api.ca_path // empty' <<<"$inv")"
+ca_opt=()
+if [[ -n "$ca_path" && "$ca_path" != "null" ]]; then
+  [[ "$ca_path" == "~"* ]] && ca_path="${ca_path/#\~/$HOME}"
+  [[ "$ca_path" != /* ]] && ca_path="$REPO_ROOT/$ca_path"
+  [[ -r "$ca_path" ]] || die "ca_path not readable: $ca_path (host $host_id)"
+  ca_opt=(--cacert "$ca_path")
+fi
+
 call() { # METHOD path [data]
   local m="$1" p="$2" d="${3:-}"
   # TLS verification ON (no -k / --insecure). --fail-with-body: HTTP >=400
   # yields a nonzero exit (so guard audits the real result) while still
   # printing the Proxmox error body. Token via header only.
   if [[ -n "$d" ]]; then
-    curl -sS --fail-with-body -X "$m" -H "Authorization: PVEAPIToken=${token}" \
-      --data "$d" "${base}${p}"
+    curl -sS --fail-with-body ${ca_opt[@]+"${ca_opt[@]}"} -X "$m" \
+      -H "Authorization: PVEAPIToken=${token}" --data "$d" "${base}${p}"
   else
-    curl -sS --fail-with-body -X "$m" -H "Authorization: PVEAPIToken=${token}" "${base}${p}"
+    curl -sS --fail-with-body ${ca_opt[@]+"${ca_opt[@]}"} -X "$m" \
+      -H "Authorization: PVEAPIToken=${token}" "${base}${p}"
   fi
 }
 

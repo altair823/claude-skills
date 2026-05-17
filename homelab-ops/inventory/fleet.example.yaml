@@ -1,0 +1,49 @@
+# EXAMPLE inventory — copy to inventory/fleet.yaml and replace with your fleet.
+# (inventory/fleet.yaml + groups.yaml + ca/ are gitignored: operator-local,
+# environment-specific. The test suite never reads these — it uses
+# tests/fixtures/ via HOMELAB_INVENTORY_DIR.)
+#
+# Rules:
+#  - Credentials are REFERENCES ONLY (bw://...). No secret value in any file.
+#  - A proxmox-host `id` MUST equal the real PVE node name (API paths are
+#    /nodes/<id>/...).
+#  - access.api.ca_path → that node's /etc/pve/pve-root-ca.pem so curl keeps
+#    TLS verification ON (independent nodes each have a DISTINCT CA).
+#  - Place each node's CA yourself: copy /etc/pve/pve-root-ca.pem from the node
+#    to inventory/ca/<host-id>-ca.pem (inventory/ca/ is gitignored, so it is
+#    empty on a fresh clone — ca_path will fail closed until you populate it).
+- id: pve-01
+  kind: proxmox-host
+  address: 10.0.0.11
+  env: prod
+  access:
+    api: { token_ref: "bw://Proxmox pve-01/api-token", ca_path: "inventory/ca/pve-01-ca.pem" }
+    ssh: { user: root, key_ref: "bw://ssh-pve-01" }
+  children: [vm-100, lxc-201]
+  tags: [critical]
+
+- id: vm-100
+  kind: vm
+  address: 10.0.0.100
+  env: prod
+  vmid: 100
+  access:
+    ssh: { user: ops, key_ref: "bw://ssh-vm-100" }
+  tags: []
+
+- id: lxc-201
+  kind: lxc
+  address: 10.0.0.201
+  env: prod
+  vmid: 201
+  access:
+    ssh: { user: root, key_ref: "bw://ssh-lxc-201" }
+  tags: []
+
+- id: nas-01
+  kind: appliance
+  address: 10.0.0.50
+  env: prod
+  access:
+    ssh: { user: admin, key_ref: "bw://ssh-nas-01" }
+  tags: [critical]
