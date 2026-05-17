@@ -65,8 +65,10 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 >   (키는 vault item notes 에 저장; `bw-put ... --type note --from-file` 로
 >   등록). `guard --plan` 은 key_ref 를 verbatim 으로 `HL_SSH_KEY` 에 싣는다.
 > - SSH **패스워드** 호스트는 `access.ssh.auth: password` + `pass_ref:
->   "bw://ssh-<id>-pass"` (single-line, `bw-put` tty 경로로 등록 가능).
+>   "bw://ssh-<id>-pass"` (single-line; `bw-put` tty 또는 `--from-file` 로 등록).
 >   `guard --plan` 은 `HL_SSH_PASS` 를, `ssh-run` 은 `sshpass -e` 를 쓴다.
+>   (StrictHostKeyChecking=yes 유지 — 패스워드 호스트도 첫 접속 전 host key 가
+>   known_hosts 에 미리 등록돼 있어야 한다.)
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`

@@ -19,12 +19,11 @@ if [[ "$auth" == "password" ]]; then
   # fail-closed(exit 3). 비번은 SSHPASS env 로만 흐르고 argv 에 안 닿는다.
   [[ -n "${HL_SSH_PASS:-}" ]] || { HL_EXIT=3 die "missing HL_SSH_PASS — bitwarden-ops bw-exec 로 감싸 실행 (참고: \"$HERE/guard\" --plan)"; }
   command -v sshpass >/dev/null 2>&1 || { HL_EXIT=3 die "sshpass 미설치 — password 인증 호스트($target) 조작에 필요"; }
-  SSHPASS="$HL_SSH_PASS" sshpass -e ssh \
+  exec env SSHPASS="$HL_SSH_PASS" sshpass -e ssh \
       -o StrictHostKeyChecking=yes -o BatchMode=no \
       -o PubkeyAuthentication=no -o PreferredAuthentications=password \
       -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
       "${user}@${addr}" -- "$@"
-  exit $?
 fi
 
 # 키 인증(기본). 키는 bitwarden-ops bw-exec 가 HL_SSH_KEY env 로 주입한다.
