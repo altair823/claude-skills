@@ -1,3 +1,22 @@
 #!/usr/bin/env bash
-# Echo a deterministic Proxmox-shaped JSON so bin/pve is testable offline.
-echo '{"data":{"status":"running","vmid":100,"name":"stub-vm"}}'
+# Offline Proxmox 스텁. task-aware:
+#  - GET .../tasks/<upid>/status      → 즉시 stopped/OK (폴링 성공 경로)
+#  - POST/DELETE 비동기 변형 엔드포인트 → UPID 문자열 반환
+#  - 그 외(GET /nodes, status, vm-config, clone 외 read) → running 블롭
+args="$*"
+method="GET"
+case "$args" in *" -X "*) method="$(sed -E 's/.* -X ([A-Z]+).*/\1/' <<<"$args")";; esac
+url="$(tr ' ' '\n' <<<"$args" | grep -m1 '^https://' || true)"
+
+if [[ "$url" == *"/tasks/"*"/status"* ]]; then
+  echo '{"data":{"status":"stopped","exitstatus":"OK"}}'
+elif [[ "$method" == "POST" || "$method" == "DELETE" ]] && \
+     { [[ "$url" == *"/status/start"*  ]] || [[ "$url" == *"/status/stop"* ]] || \
+       [[ "$url" == *"/status/reboot"* ]] || [[ "$url" == *"/snapshot"*    ]] || \
+       [[ "$url" == *"/vzdump"*        ]] || [[ "$url" == *"/clone"*       ]] || \
+       [[ "$url" == *"/qemu/"* && "$method" == "DELETE" ]] || \
+       [[ "$url" == *"/lxc/"*  && "$method" == "DELETE" ]]; }; then
+  echo '{"data":"UPID:stub:0000FFFF:00000000:00000000:stubtype:0:root@pam:"}'
+else
+  echo '{"data":{"status":"running","vmid":100,"name":"stub-vm"}}'
+fi

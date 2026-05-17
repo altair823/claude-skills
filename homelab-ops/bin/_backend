@@ -19,6 +19,8 @@ case "$action:$kind" in
     "$HERE/inv" resolve "$target" ;;
   # NOTE: 이 mutating action 목록은 _lib.sh op_transport 의 동명 arm 과 반드시
   # 함께 갱신해야 한다 (transport 결정의 단일 출처 — 둘이 어긋나면 오라우팅).
+  # backup:* / pkg-install:* / provision:* 는 의도적으로 별도 arm 으로 분리되어 있으며,
+  # 동일한 단일 출처 ACTIONS 테이블과 parity 테스트로 함께 커버된다.
   start:*|stop:*|restart:*|destroy:*|snapshot:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would $action $target (kind=$kind)"; exit 0
@@ -28,6 +30,12 @@ case "$action:$kind" in
     else
       "$HERE/ssh-run" "$target" -- "$action" "$@"
     fi ;;
+  backup:*)
+    if [[ $dry -eq 1 ]]; then
+      bvmid="$(jq -r '.vmid // "?"' <<<"$inv")"
+      echo "DRY-RUN: would vzdump $target (vmid=$bvmid) storage=${1:-<none>} mode=${2:-snapshot} compress=${3:-zstd}"; exit 0
+    fi
+    "$HERE/pve" "$(owner_host "$target")" backup "$target" "$@" ;; # $@ = storage [mode] [compress] (→ pve backup sub $4/$5/$6)
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0

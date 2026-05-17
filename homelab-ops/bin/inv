@@ -3,7 +3,21 @@ source "$(dirname "$0")/_lib.sh"
 # Inventory dir defaults to the repo's inventory/ (the operator's real fleet).
 # HOMELAB_INVENTORY_DIR overrides it so the stub-driven test suite can point at
 # a fixed fixture without coupling to the live inventory.
-INV_DIR="${HOMELAB_INVENTORY_DIR:-$REPO_ROOT/inventory}"
+# 인벤토리 발견(첫 매치 승, 매치 = 그 디렉터리에 fleet.yaml 존재):
+#  1. $HOMELAB_INVENTORY_DIR  — 명시 override(테스트 fixture 경로). 비어있지 않으면
+#     무조건 사용(존재 검사 없이 — 명시 의도 존중; 부재면 y2j 가 명확히 실패).
+#  2. ${XDG_CONFIG_HOME:-~/.config}/homelab-ops  — 운영자-로컬 정식 위치.
+#  3. $REPO_ROOT/inventory  — 레거시·예시·테스트 호환.
+_xdg_inv="${XDG_CONFIG_HOME:-${HOME:-}/.config}/homelab-ops"
+if [[ -n "${HOMELAB_INVENTORY_DIR:-}" ]]; then
+  INV_DIR="$HOMELAB_INVENTORY_DIR"
+elif [[ -f "$_xdg_inv/fleet.yaml" ]]; then
+  INV_DIR="$_xdg_inv"
+elif [[ -f "$REPO_ROOT/inventory/fleet.yaml" ]]; then
+  INV_DIR="$REPO_ROOT/inventory"
+else
+  die "no inventory found. Tried: \$HOMELAB_INVENTORY_DIR (unset), $_xdg_inv/fleet.yaml, $REPO_ROOT/inventory/fleet.yaml — copy $REPO_ROOT/inventory/fleet.example.yaml (and groups.example.yaml) to $_xdg_inv/"
+fi
 FLEET="$INV_DIR/fleet.yaml"
 GROUPS_FILE="$INV_DIR/groups.yaml"
 

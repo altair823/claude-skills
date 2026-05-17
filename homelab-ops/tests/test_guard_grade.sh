@@ -18,6 +18,13 @@ assert_eq "destructive" "$(bin/guard grade stop nas-01)"         "stop on critic
 assert_eq "destructive" "$(bin/guard grade frobnicate vm-100)"   "unknown action = destructive"
 # provision is always destructive
 assert_eq "destructive" "$(bin/guard grade provision lab-vm-900)" "provision = destructive"
+# delete 는 destroy 의 별칭 → 동일 등급
+assert_eq "destructive" "$(bin/guard grade delete vm-100)" "delete (alias) = destructive"
+assert_eq "destructive" "$(bin/guard grade delete pve-01)" "delete on critical stays destructive"
+# 유령 verb 는 테이블에 없음 → deny-default destructive (광고 제거돼도 안전 거부)
+assert_eq "destructive" "$(bin/guard grade kill vm-100)"          "kill = destructive (deny-default)"
+assert_eq "destructive" "$(bin/guard grade net-change vm-100)"    "net-change = destructive (deny-default)"
+assert_eq "destructive" "$(bin/guard grade storage-remove vm-100)"  "storage-remove = destructive (deny-default)"
 # destructive + critical stays destructive (the _bump *) branch)
 assert_eq "destructive" "$(bin/guard grade destroy pve-01)" "destroy on critical stays destructive"
 # empty action is rejected cleanly (not a raw bash array-subscript error)

@@ -2,20 +2,13 @@
 source "$(dirname "$0")/_lib.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-declare -A GRADE=(
-  [status]=safe [list]=safe [metrics]=safe [get]=safe [inventory]=safe
-  [start]=caution [stop]=caution [restart]=caution [snapshot]=caution [pkg-install]=caution
-  [destroy]=destructive [delete]=destructive [storage-remove]=destructive
-  [kill]=destructive [net-change]=destructive [provision]=destructive
-)
-
 _bump() { case "$1" in safe) echo caution;; caution) echo destructive;; *) echo destructive;; esac; }
 
 # grade <action> <target-id> -> prints safe|caution|destructive
 guard_grade() {
   local action="${1:-}" target="${2:-}" g tj jrc=0
   [[ -n "$action" && -n "$target" ]] || die "usage: guard grade <action> <target-id>"
-  g="${GRADE[$action]:-destructive}"           # deny-by-default
+  g="$(action_grade "$action")"                # deny-by-default (단일 테이블)
   tj="$("$HERE/inv" get "$target")" || exit $?  # inv already prints a specific error
   jq -e '(.tags? // []) | index("critical")' >/dev/null 2>&1 <<<"$tj" || jrc=$?
   [[ $jrc -eq 5 ]] && die "cannot parse inventory JSON for target: $target"
@@ -72,6 +65,8 @@ case "${1:-}" in
     action="$1"; target="${2:-}"
     [[ -n "$target" ]] || die "usage: guard <action> <target-id> [--approve] [-- <extra>...]"
     shift 2
+    orig_action="$action"
+    action="$(canon_action "$action")"   # 별칭(delete→destroy) 정규화: 등급·경로·감사 일관
     approve=0; extra=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -85,6 +80,7 @@ case "${1:-}" in
     start_ms=$(date +%s%3N)
     grade="unknown"; env_t="unknown"; tags_t="[]"
     inv_json="null"; approver="null"; approved_at="null"; dryrun_hash="null"
+    task_upid=""; task_xs=""
 
     _audit() { # <exit-code>
       local end_ms; end_ms=$(date +%s%3N)
@@ -95,10 +91,13 @@ case "${1:-}" in
         --arg grade "$grade" --arg env "$env_t" \
         --argjson tags "$tags_t" --argjson inv "$inv_json" \
         --arg dh "$dryrun_hash" --arg apr "$approver" --arg apat "$approved_at" \
+        --arg tu "$task_upid" --arg tx "$task_xs" \
         --argjson ex "$1" --argjson dur "$((end_ms-start_ms))" '
         {ts:$ts,session:$session,op:$op,actor:$actor,action:$action,
          target:$target,grade:$grade,env:$env,tags:$tags,inv_snapshot:$inv,
-         dryrun_hash:$dh,approver:$apr,approved_at:$apat,exit:$ex,duration_ms:$dur}'
+         dryrun_hash:$dh,approver:$apr,approved_at:$apat,exit:$ex,duration_ms:$dur,
+         task_upid:($tu|if .=="" then null else . end),
+         task_exitstatus:($tx|if .=="" then null else . end)}'
     }
     # Forensic guarantee (spec §6): ANY termination — normal, preflight failure,
     # backend failure, OR operator interrupt (Ctrl-C / SIGTERM) — writes exactly
@@ -169,7 +168,7 @@ case "${1:-}" in
 
     # Pre-op state snapshot → run log (best-effort, masked, never blocks).
     {
-      echo "=== pre-op snapshot $(date -u +%FT%TZ) op=$op ==="
+      echo "=== pre-op snapshot $(date -u +%FT%TZ) op=$op action=$orig_action(→$action) ==="
       "$HERE/inv" resolve "$target" 2>/dev/null || true
       "$backend" status "$target" -- 2>/dev/null || true
       echo "=== action output ==="
@@ -187,6 +186,12 @@ case "${1:-}" in
     # destructive op may still complete after guard records "interrupted".
     # (Killing a half-applied destructive mid-flight is its own hazard; the
     # forensic record is intentionally accurate that an interrupt was received.)
+    # 추가 caveat (태스크 폴링 도입 이후): mutating verb 는 pve_wait_task 가
+    # HOMELAB_TASK_TIMEOUT (기본 600s) 동안 PVE 태스크를 폴링하므로, 인터럽트
+    # 시 고아 백엔드 프로세스가 최대 ~600s 계속 실행될 수 있음. 또한 INT/TERM
+    # 경로에서는 _finish_trap 의 HO-TASK 파싱이 실행되지 않으므로 감사 레코드의
+    # task_upid 는 null 로 기록됨 — 단, 발행된 UPID 자체는 run-log 의 raw
+    # {"data":"UPID:..."} 라인에서 사후 복구 가능(포렌식 무결성 유지).
     {
       "$backend" "$action" "$target" -- ${extra[@]+"${extra[@]}"} 2>&1
       printf '%s\n' "$?" > "$_rc_file"
@@ -203,6 +208,12 @@ case "${1:-}" in
     rc="$(cat "$_rc_file" 2>/dev/null || echo 1)"
     rm -f "$_rc_file"
     set -e
+
+    # Parse HO-TASK from the run-log rather than capturing backend stdout directly:
+    # the action runs inside the background mask pipeline (… | sed -u | tee "$rl" &),
+    # so $rl is the only place the structured HO-TASK line is available post-hoc.
+    task_upid="$(sed -n 's/^HO-TASK upid=\([^ ]*\).*/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
+    task_xs="$(sed -n 's/^HO-TASK .*exitstatus=\(.*\)$/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
 
     _DONE=1
     _audit "$rc" || echo "homelab-ops: AUDIT FAILED op=$op rc=$rc" >&2

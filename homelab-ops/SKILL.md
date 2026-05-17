@@ -1,6 +1,6 @@
 ---
 name: homelab-ops
-description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy/storage/network changes, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
+description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy, backup, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
 ---
 
 # homelab-ops
@@ -18,13 +18,15 @@ HL="<absolute path of the directory containing this SKILL.md>"   # this skill's 
 Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
 
 ## Inventory & TLS
-- Inventory lives in `inventory/{fleet.yaml,groups.yaml}` (the operator's REAL
-  fleet). **First-time setup:** copy `inventory/{fleet,groups}.example.yaml` to
-  `inventory/{fleet,groups}.yaml` (the live files + `inventory/ca/` are
-  gitignored — operator-local) and edit. `HOMELAB_INVENTORY_DIR` overrides that
-  directory — the test suite points it at `tests/fixtures/` so tests never
-  couple to the live inventory. A `proxmox-host` entry's `id` MUST equal the
-  real PVE node name (API paths are `/nodes/<id>/...`).
+- **Inventory 발견 순서**(첫 매치 승, 매치=그 디렉터리에 `fleet.yaml`):
+  1. `$HOMELAB_INVENTORY_DIR` (명시 override; 테스트가 `tests/fixtures/` 지정)
+  2. `${XDG_CONFIG_HOME:-~/.config}/homelab-ops/` ← **운영자-로컬 정식 위치**
+  3. `$REPO_ROOT/inventory/` (레거시·예시·테스트 호환)
+  **First-time setup:** `inventory/{fleet,groups}.example.yaml` 를
+  `~/.config/homelab-ops/{fleet,groups}.yaml` 로 복사해 편집(레포 밖이라
+  백업 용이; repo `inventory/` 도 여전히 동작). 셋 다 없으면 `bin/inv` 가
+  세 후보 경로를 출력하고 종료한다. A `proxmox-host` entry's `id` MUST
+  equal the real PVE node name (API paths are `/nodes/<id>/...`).
 - **Per-host CA.** A homelab Proxmox serves a self-signed cert from its built-in
   CA (Proxmox names it "PVE Cluster Manager CA" even on a standalone, non-
   clustered node), so system trust alone fails verification. Set
@@ -73,9 +75,15 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`
 - "Start/stop/restart/snapshot X" → `"$HL/bin/guard" <verb> <id>` (prod ⇒ needs `--approve`)
-- "Destroy/delete/storage/network change" → `"$HL/bin/guard" <verb> <id>` → show the DRY-RUN/impact → re-run with `--approve`
+- "Back up X (vzdump)" → `"$HL/bin/guard" backup <id> -- <storage> [mode] [compress]` (caution; prod ⇒ `--approve`)
+- "Destroy/delete X" → `"$HL/bin/guard" destroy <id>` (`delete` = `destroy` 별칭) → show the DRY-RUN/impact → re-run with `--approve`
+- storage/network 변경은 **미지원**(Phase 2 후보). 임의 verb 를 던지면 deny-by-default 가 destructive 로 거부한다.
 - "Provision a VM" → `"$HL/bin/guard" provision <pve-host-id> -- --from-template <vmid> --new-vmid <vmid>`
 - "What happened / why did X fail?" → `"$HL/bin/forensics" {session|target|timeline} <id>`, `"$HL/bin/forensics" runlog <session>/<op>.log`
+- PVE 변경(start/stop/restart/snapshot/destroy/backup/provision)은 task UPID
+  완료까지 폴링되어 감사 `exit`/`task_exitstatus` 가 **실제 결과**를 반영한다
+  (타임아웃 시 exit 75 + `task_upid` 보존). 기본 한도 `HOMELAB_TASK_TIMEOUT`
+  600s.
 
 Not for: non-Proxmox virt, Proxmox cluster/HA/migration (targets are independent hosts), or IaC (Phase 2, not yet).
 
