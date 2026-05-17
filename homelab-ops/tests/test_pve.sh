@@ -19,7 +19,14 @@ assert_status 3 'env -u PVE_TOKEN bin/pve pve-01 status' "pve without PVE_TOKEN 
 cat > /tmp/curl-spy <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> /tmp/curl-args
-echo '{"data":{"status":"running"}}'
+a="$*"
+if [[ "$a" == *"/tasks/"*"/status"* ]]; then
+  echo '{"data":{"status":"stopped","exitstatus":"OK"}}'
+elif [[ "$a" == *"-X POST"* || "$a" == *"-X DELETE"* ]]; then
+  echo '{"data":"UPID:stub:1:1:1:t:0:root@pam:"}'
+else
+  echo '{"data":{"status":"running"}}'
+fi
 EOF
 chmod +x /tmp/curl-spy
 : > /tmp/curl-args
@@ -40,6 +47,13 @@ PATH="/tmp/spybin:$PWD/tests/stubs:$PATH" bin/pve pve-01 action stop lxc-201 >/d
 grep -q -- '/nodes/pve-01/lxc/201/status/stop' /tmp/curl-args \
   && echo "  ok: lxc action → /lxc/<vmid>" \
   || { echo "  FAIL: lxc action path wrong: $(cat /tmp/curl-args)"; exit 1; }
+
+# mutating verb 가 UPID 를 받으면 task status 를 폴링한다(HO-TASK emit).
+out="$(HOMELAB_TASK_POLL_INTERVAL=0 PATH="/tmp/spybin:$PWD/tests/stubs:$PATH" bin/pve pve-01 action stop vm-100)"
+assert_contains "$out" "HO-TASK upid=UPID:stub" "pve mutating verb polls task to completion"
+grep -q -- '/nodes/pve-01/tasks/UPID' /tmp/curl-args \
+  && echo "  ok: task status polled via api GET" \
+  || { echo "  FAIL: task status not polled: $(cat /tmp/curl-args)"; exit 1; }
 
 # Per-host CA: inventory access.api.ca_path → curl --cacert <path> so TLS
 # verification stays ON against Proxmox's self-signed built-in CA.

@@ -43,6 +43,18 @@ call() { # METHOD path [data]
   fi
 }
 
+# 비동기 변형: UPID 를 받으면 응답을 출력한 뒤 완료까지 폴링.
+# host_id 는 이 스크립트 스코프 변수 (5행에서 설정).
+_run_task() { # METHOD path [data]
+  local resp upid crc=0
+  resp="$(call "$@")" || crc=$?
+  printf '%s\n' "$resp"
+  if (( crc != 0 )); then return "$crc"; fi
+  upid="$(jq -r 'if (.data|type)=="string" then .data else empty end' <<<"$resp" 2>/dev/null || true)"
+  if [[ "$upid" == UPID:* ]]; then pve_wait_task "$host_id" "$upid"; return $?; fi
+  return 0
+}
+
 case "$sub" in
   api)     call "${3:?METHOD}" "${4:?path}" "${5:-}" ;;
   status)  call GET "/nodes/${host_id}/status" ;;
@@ -60,11 +72,11 @@ case "$sub" in
     esac
     [[ -n "$vmid" ]] || die "pve: target '$tgt' has no vmid in inventory"
     case "$verb" in
-      start)    call POST "/nodes/${host_id}/${api_kind}/${vmid}/status/start" ;;
-      stop)     call POST "/nodes/${host_id}/${api_kind}/${vmid}/status/stop" ;;
-      restart)  call POST "/nodes/${host_id}/${api_kind}/${vmid}/status/reboot" ;;
-      snapshot) call POST "/nodes/${host_id}/${api_kind}/${vmid}/snapshot" "snapname=ho-$(date +%s)-$RANDOM" ;;
-      destroy)  call DELETE "/nodes/${host_id}/${api_kind}/${vmid}" ;;
+      start)    _run_task POST "/nodes/${host_id}/${api_kind}/${vmid}/status/start" ;;
+      stop)     _run_task POST "/nodes/${host_id}/${api_kind}/${vmid}/status/stop" ;;
+      restart)  _run_task POST "/nodes/${host_id}/${api_kind}/${vmid}/status/reboot" ;;
+      snapshot) _run_task POST "/nodes/${host_id}/${api_kind}/${vmid}/snapshot" "snapname=ho-$(date +%s)-$RANDOM" ;;
+      destroy)  _run_task DELETE "/nodes/${host_id}/${api_kind}/${vmid}" ;;
       *) die "pve: unknown action verb $verb" ;;
     esac ;;
   *) die "pve: unknown subcommand $sub" ;;
