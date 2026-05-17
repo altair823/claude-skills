@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/_backend 2>/dev/null || true
-export PVE_TOKEN="stub-token-value"
+export PVE_TOKEN="stub-token-value"  # 방어적 설정: dry-run 시 bin/pve 는 호출되지 않지만 set -u 환경에서 guard/_backend 가 변수 참조 시 오류 없이 동작하도록 보장
 
 # 테이블을 셸로 로드해 키를 열거 (probe 패턴 재사용).
 cat > /tmp/_tblprobe.sh <<'EOF'
@@ -16,6 +16,7 @@ esac
 EOF
 cp /tmp/_tblprobe.sh bin/_tblprobe.sh
 trap 'rm -f bin/_tblprobe.sh' EXIT
+[[ -n "$(bash bin/_tblprobe.sh keys)" ]] || { echo "  FAIL: _tblprobe.sh produced no ACTIONS keys"; exit 1; }
 
 # Direction 1: 모든 비-safe 액션은 backend 에서 라우팅되어 "no backend
 # mapping" 으로 떨어지지 않는다 (dry-run 안전 계약 하에).
@@ -29,18 +30,19 @@ done < <(bash bin/_tblprobe.sh keys)
 # Direction 2: backend 가 디스패치하는 모든 mutating verb 는 테이블에 있다.
 tbl_keys="$(bash bin/_tblprobe.sh keys | awk '{print $1}' | sort -u | tr '\n' ' ')"
 backend_verbs="$(grep -oE '[a-z][a-z-]*:\*' bin/_backend | sed 's/:\*$//' | sort -u)"
+[[ -n "$backend_verbs" ]] || { echo "  FAIL: no backend verbs extracted from bin/_backend — grep pattern or _backend arm syntax changed"; exit 1; }
 for v in $backend_verbs; do
   case " $tbl_keys " in
     *" $v "*) echo "  ok: backend verb '$v' present in ACTIONS" ;;
-    *) echo "  FAIL: backend verb '$v' missing from ACTIONS table"; exit 1 ;;
+    *) echo "  FAIL: backend verb '$v' missing from ACTIONS table"; _FAILS=$((_FAILS+1)) ;;
   esac
 done
 
 # Direction 3: 모든 별칭은 실재하는 ACTIONS 키를 가리킨다.
-while read -r alias target; do
+while read -r al target; do
   case " $tbl_keys " in
-    *" $target "*) echo "  ok: alias '$alias'→'$target' targets a real action" ;;
-    *) echo "  FAIL: alias '$alias' targets non-existent action '$target'"; exit 1 ;;
+    *" $target "*) echo "  ok: alias '$al'→'$target' targets a real action" ;;
+    *) echo "  FAIL: alias '$al' targets non-existent action '$target'"; _FAILS=$((_FAILS+1)) ;;
   esac
 done < <(bash bin/_tblprobe.sh aliases)
 
