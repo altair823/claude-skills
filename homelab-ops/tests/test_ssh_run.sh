@@ -14,8 +14,8 @@ export HL_SSH_KEY="$(printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nSTUBKEY-ssh
 export TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# locked vault refusal (key resolved via bw-resolve --ssh)
-assert_status 3 'env -u BW_SESSION bin/ssh-run nas-01 -- uname -a' "ssh-run without BW_SESSION exits 3"
+# no key injected: ssh-run must refuse before spawning an agent (exit 3)
+assert_status 3 'env -u HL_SSH_KEY bin/ssh-run nas-01 -- uname -a' "ssh-run without HL_SSH_KEY exits 3"
 
 out="$(bin/ssh-run nas-01 -- uname -a 2>err.txt; cat err.txt)"
 assert_contains "$out" "stub-ssh-output" "ssh-run runs remote command"
