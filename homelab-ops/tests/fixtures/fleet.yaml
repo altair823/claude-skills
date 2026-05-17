@@ -55,3 +55,11 @@
   access:
     ssh: { user: ops, key_ref: "bw://ssh-keyhost-notes/notes" }
   tags: []
+
+- id: pwhost
+  kind: appliance
+  address: 10.0.0.61
+  env: lab
+  access:
+    ssh: { user: ops, auth: password, pass_ref: "bw://ssh-pwhost-pass" }
+  tags: []

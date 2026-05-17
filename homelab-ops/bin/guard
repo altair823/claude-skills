@@ -50,8 +50,14 @@ case "${1:-}" in
                 | jq -r '.access.api.token_ref // empty')"
         [[ -n "$pref" ]] && printf 'PVE_TOKEN=%s\n' "$pref" ;;
       ssh)
-        pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pinv")"
-        [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref" ;;
+        pauth="$(jq -r '.access.ssh.auth // "key"' <<<"$pinv")"
+        if [[ "$pauth" == "password" ]]; then
+          pref="$(jq -r '.access.ssh.pass_ref // empty' <<<"$pinv")"
+          [[ -n "$pref" ]] && printf 'HL_SSH_PASS=%s\n' "$pref"
+        else
+          pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pinv")"
+          [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref"
+        fi ;;
       none)
         # status|metrics|get 은 정당한 무자격 read-only. 그 외(deny-default
         # destructive 로 등급된 미매핑 액션)는 stdout 계약을 더럽히지 않도록
