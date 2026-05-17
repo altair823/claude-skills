@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 source "$(dirname "$0")/_lib.sh"
-FLEET="$REPO_ROOT/inventory/fleet.yaml"
-GROUPS_FILE="$REPO_ROOT/inventory/groups.yaml"
+# Inventory dir defaults to the repo's inventory/ (the operator's real fleet).
+# HOMELAB_INVENTORY_DIR overrides it so the stub-driven test suite can point at
+# a fixed fixture without coupling to the live inventory.
+INV_DIR="${HOMELAB_INVENTORY_DIR:-$REPO_ROOT/inventory}"
+FLEET="$INV_DIR/fleet.yaml"
+GROUPS_FILE="$INV_DIR/groups.yaml"
 
 y2j() {
   python3 -c 'import sys,yaml,json; json.dump(yaml.safe_load(sys.stdin) or [], sys.stdout)' < "$1" \

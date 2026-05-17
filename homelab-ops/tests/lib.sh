@@ -5,6 +5,11 @@
 # $PWD is the repo root here. (tests/run.sh also sets this; harmless to repeat.)
 export PATH="$PWD/tests/stubs:$PATH"
 
+# Decouple the suite from the operator's live inventory/: every test reads the
+# fixed fixture instead. (run.sh also exports this; harmless to repeat. Tests
+# that exercise the override set HOMELAB_INVENTORY_DIR inline per command.)
+export HOMELAB_INVENTORY_DIR="$PWD/tests/fixtures"
+
 # logs/ is runtime-local and gitignored, so it is absent on a clean checkout.
 # Production code (audit_append) does its own `mkdir -p`; mirror that here so a
 # test that writes logs/audit.jsonl directly does not depend on a prior guard

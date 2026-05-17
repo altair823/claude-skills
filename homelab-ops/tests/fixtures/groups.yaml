@@ -1,0 +1,4 @@
+pve-hosts:     [pve-01]
+observability: [vm-100]
+storage:       [nas-01]
+lab:           [lab-vm-900]
