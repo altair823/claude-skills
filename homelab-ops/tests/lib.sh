@@ -27,6 +27,10 @@ assert_contains() { # haystack needle msg
   if [[ "$1" == *"$2"* ]]; then echo "  ok: $3";
   else echo "  FAIL: $3 — [$1] does not contain [$2]"; _FAILS=$((_FAILS+1)); fi
 }
+assert_not_contains() { # haystack needle msg
+  if [[ "$1" != *"$2"* ]]; then echo "  ok: $3";
+  else echo "  FAIL: $3 — [$1] unexpectedly contains [$2]"; _FAILS=$((_FAILS+1)); fi
+}
 # assert_status: the command MUST be passed as ONE single-quoted string,
 # e.g. assert_status 3 'env -u BW_SESSION bin/foo bar' "msg"
 # (unquoted multi-token commands are silently truncated and give wrong verdicts)

@@ -33,4 +33,19 @@ if grep -rqI "STUBKEY-ssh-nas-01" "$TMPDIR" logs 2>/dev/null; then
 fi
 echo "  ok: ssh key never written to disk"
 
+# password 인증 경로: sshpass -e 사용, 비번은 SSHPASS env(argv 미노출),
+# StrictHostKeyChecking=yes 유지.
+export SSHPASS_SPY="$(mktemp)"; : > "$SSHPASS_SPY"
+: > /tmp/ssh-args 2>/dev/null || true
+out="$(HL_SSH_PASS='p@ss w0rd' bin/ssh-run pwhost -- echo hi 2>&1)"
+spy="$(cat "$SSHPASS_SPY")"
+assert_contains "$spy" "sshpass -e" "password path invokes sshpass -e"
+assert_not_contains "$spy" "p@ss w0rd" "password never in sshpass argv"
+sa="$(cat /tmp/ssh-args 2>/dev/null || true)"
+assert_contains "$sa" "StrictHostKeyChecking=yes" "password path keeps host key check"
+assert_contains "$sa" "PubkeyAuthentication=no" "password path disables pubkey"
+assert_status 3 'env -u HL_SSH_PASS bin/ssh-run pwhost -- echo hi' "password path without HL_SSH_PASS exits 3"
+assert_status 3 'env -u HL_SSH_KEY bin/ssh-run keyhost-notes -- echo hi' "key host still needs HL_SSH_KEY"
+rm -f "$SSHPASS_SPY"
+
 finish; echo "PASS test_ssh_run"

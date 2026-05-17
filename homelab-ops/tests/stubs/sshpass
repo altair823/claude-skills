@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Test stub: record argv (NOT $SSHPASS), then exec the wrapped command
+# (`ssh ...`, itself stubbed). `-e` means password comes from $SSHPASS env.
+echo "sshpass $*" >> "${SSHPASS_SPY:-/tmp/sshpass-args}"
+[[ "${1:-}" == "-e" ]] && shift
+exec "$@"

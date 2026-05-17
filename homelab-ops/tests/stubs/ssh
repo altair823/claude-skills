@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 # Record args so tests can assert StrictHostKeyChecking; echo a marker.
+echo "ssh $*" >> /tmp/ssh-args
 echo "ssh-stub args: $*" >&2
 echo "stub-ssh-output"
