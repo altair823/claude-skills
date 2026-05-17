@@ -35,10 +35,12 @@ if [[ "$mode" == "dry-run" ]]; then
   exit 0
 fi
 if [[ "$mode" == "apply" ]]; then
+  # pve 의 `api` sub 는 _run_task 를 거치지 않으므로, phase1 이 직접 UPID 를
+  # 캡처해 폴링한다. 로직은 bin/pve 의 _run_task 와 동일하다.
   resp="$("$BIN/pve" "$host" api POST "/nodes/${host}/qemu/${tmpl}/clone" "newid=${newid}&name=${name}")" \
     || die "clone API call failed"
   upid="$(jq -r 'if (.data|type)=="string" then .data else empty end' <<<"$resp" 2>/dev/null || true)"
-  [[ "$upid" == UPID:* ]] || die "clone did not return a task UPID: $resp"
+  [[ "$upid" == UPID:* ]] || die "clone did not return a task UPID (got: $(jq -c '.data // "null"' <<<"$resp" 2>/dev/null | head -c 120))"
   pve_wait_task "$host" "$upid" || die "clone task did not complete OK (vmid ${newid}); see HO-TASK line"
   echo "CREATED: vmid ${newid} (name=${name}) cloned from ${tmpl} on ${host}"
   exit 0

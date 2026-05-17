@@ -22,6 +22,7 @@ assert_contains "$out" "CREATED" "apply performs clone"
 
 # clone task 가 실패하면 phase1 은 CREATED 를 찍지 않고 비-0 종료
 faild="$(mktemp -d)"
+trap 'rm -rf "$faild"' EXIT
 cat > "$faild/curl" <<'EOF'
 #!/usr/bin/env bash
 a="$*"
@@ -35,7 +36,6 @@ o="$(PATH="$faild:$PWD/tests/stubs:$PATH" provisioning/phase1 apply pve-01 --fro
 set -e
 [[ "$rc" -ne 0 ]] && echo "  ok: failed clone task → nonzero" || { echo "  FAIL: failed clone returned 0"; exit 1; }
 [[ "$o" != *"CREATED"* ]] && echo "  ok: no false CREATED on clone failure" || { echo "  FAIL: false CREATED"; exit 1; }
-rm -rf "$faild"
 
 # guard routes provision (destructive) through dry-run/approval
 export HOMELAB_BACKEND=""   # use real _backend → provisioning/phase1
