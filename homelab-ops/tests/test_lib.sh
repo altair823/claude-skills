@@ -57,6 +57,7 @@ assert_eq "ssh"  "$(bash bin/_libprobe.sh transport stop appliance)"     "stop a
 assert_eq "ssh"  "$(bash bin/_libprobe.sh transport pkg-install vm)"     "pkg-install → ssh"
 assert_eq "pve"  "$(bash bin/_libprobe.sh transport provision proxmox-host)" "provision → pve"
 assert_eq "none" "$(bash bin/_libprobe.sh transport frobnicate vm)"      "unknown action → none"
+assert_eq "pve"  "$(bash bin/_libprobe.sh transport delete vm)"          "delete (alias) → pve for vm"
 assert_eq "safe"        "$(bash bin/_libprobe.sh grade status)"   "action_grade status → safe"
 assert_eq "caution"     "$(bash bin/_libprobe.sh grade stop)"     "action_grade stop → caution"
 assert_eq "destructive" "$(bash bin/_libprobe.sh grade destroy)"  "action_grade destroy → destructive"

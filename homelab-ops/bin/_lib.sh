@@ -53,7 +53,7 @@ run_log_path() { # <op-id> -> path (creates session run dir)
 #   transport: none | pve | ssh | guest
 #     guest = 대상 kind 가 proxmox-host/vm/lxc 면 pve, 그 외(appliance 등)면 ssh
 # guard(등급)·_backend(라우팅)·op_transport(자격)·--plan 이 모두 이 테이블만
-# 본다. drift 는 tests/test_action_table.sh 패리티 테스트가 차단한다(과거의
+# 본다. drift 는 tests/test_action_table.sh 패리티 테스트가 차단할 예정(Task 3)이다(과거의
 # "3곳 수동 동기" 주석 계약을 대체). 새 verb 는 여기 + backend + (필요시)
 # bin/pve verb arm 을 함께 추가하고 패리티 테스트가 녹색인지 확인할 것.
 declare -gA ACTIONS=(
