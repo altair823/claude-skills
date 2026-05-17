@@ -39,6 +39,9 @@ refuses to start (exit 3, "locked vault").
 - `bw://<item>/<field>` → custom field `<field>`
 - `bw://<item>/notes` → the item's notes
 - `--ssh` (bw-get) → SSH private key stored in notes (stdout only, for ssh-agent)
+- SSH private keys live in an item's notes (`bw://ssh-<id>/notes`); register
+  with `bw-put ... --type note --from-file <keyfile>`, consume via `bw-get
+  --ssh` or a `/notes` ref.
 
 ## When to use
 - "Run X with a vault token" → `"$BW/bin/bw-exec" TOKEN=bw://item/api -- <cmd>`
@@ -46,6 +49,10 @@ refuses to start (exit 3, "locked vault").
 - "What's stored (no values)?" → `"$BW/bin/bw-ls" [search]`
 - "Register a credential I haven't stored" → tell the user to run
   `"$BW/bin/bw-put" bw://item/field` themselves; they paste the secret at the prompt
+- "Register a multi-line secret (SSH private key) from a file" → tell the user
+  to run `"$BW/bin/bw-put" bw://ssh-<id>/notes --type note --from-file ~/.ssh/<key>`
+  themselves. `--from-file PATH` reads the secret bytes from PATH instead of the
+  tty (still user-run; Claude never runs bw-put). Multi-line preserved verbatim.
 - "Vault/session status" → `"$BW/bin/bw-status"`
 - "Unlock so Claude can use the vault" → tell the user to run `"$BW/bin/bw-unlock"`
   in their own terminal (bw prompts their master password; Claude never sees it)
