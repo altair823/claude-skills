@@ -3,16 +3,17 @@ set -euo pipefail
 . "$(dirname "$0")/_common.sh"
 require_cmd bw jq
 
-ref=""; type=""; replace=0
+ref=""; type=""; replace=0; from_file=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --type)    type="${2:?--type 값 필요}"; shift 2 ;;
-    --replace) replace=1; shift ;;
-    bw://*)    ref="$1"; shift ;;
-    *) die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace]" ;;
+    --type)      type="${2:?--type 값 필요}"; shift 2 ;;
+    --replace)   replace=1; shift ;;
+    --from-file) from_file="${2:?--from-file 값 필요}"; shift 2 ;;
+    bw://*)      ref="$1"; shift ;;
+    *) die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace] [--from-file PATH]" ;;
   esac
 done
-[[ -n "$ref" ]] || die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace]"
+[[ -n "$ref" ]] || die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace] [--from-file PATH]"
 require_session
 parse_ref "$ref"
 
@@ -47,6 +48,12 @@ fi
 # model (same exposure class as gpg/openssl CLIs); it is NOT written to disk,
 # logs, or any persistent argv, and never reaches Claude's context.
 _read_secret() {
+  if [[ -n "$from_file" ]]; then
+    [[ -r "$from_file" ]] || die "--from-file 경로를 읽을 수 없음: $from_file"
+    # 파일 바이트 그대로(말미 개행 보존): $() 의 trailing-newline strip 회피.
+    local s; s="$(cat -- "$from_file"; printf x)"; printf '%s' "${s%x}"
+    return
+  fi
   if [[ -n "${BITWARDEN_OPS_TEST_SECRET_FILE:-}" ]]; then
     cat "$BITWARDEN_OPS_TEST_SECRET_FILE"; return
   fi
