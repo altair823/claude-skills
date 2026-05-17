@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$(dirname "$0")/_lib.sh"
-HERE="$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 declare -A GRADE=(
   [status]=safe [list]=safe [metrics]=safe [get]=safe [inventory]=safe
@@ -116,6 +116,7 @@ case "${1:-}" in
     # credential env 가 있어야 한다. transport none(예: critical 로 caution 이 된
     # status — _backend 는 inv resolve 만 함)은 시크릿이 필요 없으므로 통과.
     # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
+    # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
     if [[ "$grade" != "safe" ]]; then
       _gate_var=""

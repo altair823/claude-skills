@@ -27,6 +27,8 @@ assert_eq "0" "$(tail -1 logs/audit.jsonl | jq -r .exit)" "safe exit 0 audited"
 
 # non-safe op requires its transport credential (here: pve → PVE_TOKEN)
 assert_status 3 'env -u PVE_TOKEN bin/guard stop lab-vm-900' "stop without PVE_TOKEN exits 3"
+# ssh-transport op refused when its credential (HL_SSH_KEY) is absent
+assert_status 3 'env -u HL_SSH_KEY -u PVE_TOKEN bin/guard pkg-install lab-vm-900' "pkg-install without HL_SSH_KEY exits 3"
 # transport-none op (status on critical = caution) is NOT blocked by the
 # credential gate (no transport secret needed). pve-01 is prod+critical, so it
 # still hits the *unrelated* pre-existing prod-approval gate → exit 10, NOT the
