@@ -24,7 +24,7 @@ assert_contains "$out" "StrictHostKeyChecking=yes" "StrictHostKeyChecking=yes en
 assert_contains "$out" "BatchMode=yes" "BatchMode=yes enforced"
 rm -f err.txt
 
-# Key flows bw-resolve stdout → ssh-add stdin only; it must never be persisted.
+# Key flows HL_SSH_KEY env → ssh-add stdin only; it must never be persisted.
 # Scan the only places ssh-run could leak it: its private $TMPDIR (tempfiles /
 # agent socket) and the runtime logs/ dir. Scoped to $TMPDIR (not shared /tmp)
 # so unrelated global /tmp content can't false-positive on this test's own
