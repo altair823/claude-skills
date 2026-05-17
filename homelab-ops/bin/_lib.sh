@@ -61,6 +61,7 @@ declare -gA ACTIONS=(
   [get]="safe none"           [inventory]="safe none"
   [start]="caution guest"     [stop]="caution guest"  [restart]="caution guest"
   [snapshot]="caution guest"  [pkg-install]="caution ssh"
+  [backup]="caution pve"
   [provision]="destructive pve"  [destroy]="destructive guest"
 )
 declare -gA ACTION_ALIASES=( [delete]="destroy" )

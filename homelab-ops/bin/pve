@@ -60,6 +60,14 @@ case "$sub" in
   status)  call GET "/nodes/${host_id}/status" ;;
   vm-config)
     vmid="${3:?vmid}"; call GET "/nodes/${host_id}/qemu/${vmid}/config" ;;
+  backup)
+    tgt="${3:?target}"; storage="${4:?storage}"
+    mode="${5:-snapshot}"; compress="${6:-zstd}"
+    tinv="$("$HERE/inv" get "$tgt")" || die "pve: no such target: $tgt"
+    vmid="$(jq -r '.vmid // empty' <<<"$tinv")"
+    [[ -n "$vmid" ]] || die "pve backup: target '$tgt' has no vmid in inventory"
+    _run_task POST "/nodes/${host_id}/vzdump" \
+      "vmid=${vmid}&storage=${storage}&mode=${mode}&compress=${compress}" ;;
   action)
     verb="${3:?verb}"; tgt="${4:?target}"
     tinv="$("$HERE/inv" get "$tgt")" || die "pve: no such target: $tgt"

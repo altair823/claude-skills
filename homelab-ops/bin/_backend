@@ -28,6 +28,11 @@ case "$action:$kind" in
     else
       "$HERE/ssh-run" "$target" -- "$action" "$@"
     fi ;;
+  backup:*)
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: would vzdump $target (vmid=$(jq -r '.vmid // "?"' <<<"$inv")) storage=${1:-<none>} mode=${2:-snapshot} compress=${3:-zstd}"; exit 0
+    fi
+    "$HERE/pve" "$(owner_host "$target")" backup "$target" "$@" ;;
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0
