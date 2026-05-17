@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$(dirname "$0")/_lib.sh"
-HERE="$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 host_id="${1:-}"; sub="${2:-}"
 [[ -n "$host_id" && -n "$sub" ]] || die "usage: pve <host-id> {api <METHOD> <path> [data] | status | vm-config <vmid> | action <verb> <target> [extra]}"
