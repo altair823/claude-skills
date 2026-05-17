@@ -105,3 +105,32 @@ owner_host() {
   done
   echo "$target"
 }
+
+# pve_wait_task <host_id> <upid> -> 0: task exitstatus OK / 1: not OK /
+# 75: HOMELAB_TASK_TIMEOUT(기본 600s) 내 미완료. 마지막에 guard 감사 캡처용
+# 구조화 라인을 stdout 으로 emit: `HO-TASK upid=<upid> exitstatus=<status>`.
+# 상태는 bin/pve 의 api GET 로 폴링(토큰·CA 는 bin/pve 가 재사용; 여기서 시크릿
+# 미취급). 폴링 간격은 정수초 HOMELAB_TASK_POLL_INTERVAL(기본 2, 테스트
+# 가속용 override).
+pve_wait_task() {
+  local host="${1:?pve_wait_task: host required}"
+  local upid="${2:?pve_wait_task: upid required}"
+  local timeout="${HOMELAB_TASK_TIMEOUT:-600}"
+  local interval="${HOMELAB_TASK_POLL_INTERVAL:-2}"
+  local waited=0 resp st xs
+  while :; do
+    resp="$("$REPO_ROOT/bin/pve" "$host" api GET "/nodes/${host}/tasks/${upid}/status" 2>/dev/null || true)"
+    st="$(jq -r '.data.status // empty' <<<"$resp" 2>/dev/null || true)"
+    if [[ "$st" == "stopped" ]]; then
+      xs="$(jq -r '.data.exitstatus // "UNKNOWN"' <<<"$resp" 2>/dev/null || echo UNKNOWN)"
+      printf 'HO-TASK upid=%s exitstatus=%s\n' "$upid" "$xs"
+      [[ "$xs" == "OK" ]] && return 0 || return 1
+    fi
+    if (( waited >= timeout )); then
+      printf 'HO-TASK upid=%s exitstatus=%s\n' "$upid" "TIMEOUT"
+      return 75
+    fi
+    sleep "$interval"
+    waited=$(( waited + interval ))
+  done
+}
