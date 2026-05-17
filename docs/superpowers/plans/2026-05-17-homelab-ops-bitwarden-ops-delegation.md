@@ -398,9 +398,14 @@ assert_status 3 'env -u BW_SESSION bin/guard stop lab-vm-900' "stop without BW_S
 ```bash
 # non-safe op requires its transport credential (here: pve → PVE_TOKEN)
 assert_status 3 'env -u PVE_TOKEN bin/guard stop lab-vm-900' "stop without PVE_TOKEN exits 3"
-# transport-none op (status on critical = caution) needs NO credential
-assert_status 0 'env -u PVE_TOKEN -u HL_SSH_KEY bin/guard status pve-01' "caution+transport-none needs no credential"
+# transport-none op (status on critical = caution) is NOT blocked by the
+# credential gate (no transport secret needed). pve-01 is prod+critical, so it
+# still hits the *unrelated* pre-existing prod-approval gate → exit 10, NOT the
+# credential gate's exit 3. exit 10 ≠ 3 proves the credential gate passed it.
+assert_status 10 'env -u PVE_TOKEN -u HL_SSH_KEY bin/guard status pve-01' "caution+transport-none passes credential gate (no credential needed)"
 ```
+
+> 주: 픽스처에서 `critical` 태그 호스트(`pve-01`,`nas-01`)는 모두 `env: prod`라 caution+transport-none 이 exit 0 에 도달할 수 없다(항상 prod-승인 게이트 exit 10 선행). credential 게이트가 막지 않았음(≠3)을 exit 10 으로 검증한다.
 
 - [ ] **Step 3: 통과 확인**
 
