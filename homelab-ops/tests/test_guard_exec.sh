@@ -36,6 +36,12 @@ assert_status 3 'env -u HL_SSH_KEY -u PVE_TOKEN bin/guard pkg-install lab-vm-900
 # serve as the non-safe transport-none vehicle here.)
 assert_status 10 'env -u PVE_TOKEN -u HL_SSH_KEY bin/guard kill pve-01' "destructive+transport-none passes credential gate (no credential needed)"
 
+# password 호스트: HL_SSH_KEY 가 있어도 HL_SSH_PASS 없으면 ssh-gate 가 막는다.
+assert_status 3 'env -u HL_SSH_PASS HL_SSH_KEY=x PVE_TOKEN=x bin/guard stop pwhost' "password host without HL_SSH_PASS exits 3"
+# password 호스트: HL_SSH_PASS 있으면 자격 게이트 통과(→ caution+lab 진행)
+out="$(HL_SSH_PASS=x bin/guard stop pwhost)"
+assert_contains "$out" "BACKEND action=stop" "password host with HL_SSH_PASS passes gate"
+
 # caution on lab env: 1-line summary, proceeds without --approve
 out="$(bin/guard stop lab-vm-900)"
 assert_contains "$out" "SUMMARY" "caution prints summary"

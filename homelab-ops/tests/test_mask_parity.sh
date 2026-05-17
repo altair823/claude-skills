@@ -32,4 +32,10 @@ n="$(printf '%s\n' "$lib_rules" | grep -c 'MASKED' || true)"
 [[ "$n" -ge 5 ]] && echo "  ok: extracted $n masking rules (non-trivial)" \
   || { echo "  FAIL: expected >=5 masking rules, got $n"; exit 1; }
 
+# HL_SSH_PASS / SSHPASS 값이 마스킹되는지(누출 방지).
+src="$(printf 'x HL_SSH_PASS=p@ssw0rd y\nSSHPASS=topsecret z\n')"
+masked="$(printf '%s' "$src" | (source bin/_lib.sh; mask))"
+assert_not_contains "$masked" "p@ssw0rd" "HL_SSH_PASS value masked"
+assert_not_contains "$masked" "topsecret" "SSHPASS value masked"
+
 finish; echo "PASS test_mask_parity"

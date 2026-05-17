@@ -46,4 +46,12 @@ assert_contains "$err" "transport 매핑이 없어" "unmapped action → stderr 
 err="$(bin/guard --plan status pve-01 2>&1 1>/dev/null)"
 assert_eq "" "$err" "status on critical → no false diagnostic on stderr"
 
+# 키 ref 가 /notes 를 포함해도 guard --plan 은 변형 없이 verbatim 통과.
+out="$(bin/guard --plan stop keyhost-notes)"
+assert_eq "HL_SSH_KEY=bw://ssh-keyhost-notes/notes" "$out" "ssh key_ref with /notes passes verbatim"
+
+# auth=password 호스트는 HL_SSH_PASS 자격을 산출한다.
+out="$(bin/guard --plan stop pwhost)"
+assert_eq "HL_SSH_PASS=bw://ssh-pwhost-pass" "$out" "password host → HL_SSH_PASS ref"
+
 finish; echo "PASS test_guard_plan"

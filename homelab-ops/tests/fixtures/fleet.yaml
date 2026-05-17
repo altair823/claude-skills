@@ -47,3 +47,19 @@
   access:
     ssh: { user: ops, key_ref: "bw://ssh-lab-vm-900" }
   tags: []
+
+- id: keyhost-notes
+  kind: appliance
+  address: 10.0.0.60
+  env: lab
+  access:
+    ssh: { user: ops, key_ref: "bw://ssh-keyhost-notes/notes" }
+  tags: []
+
+- id: pwhost
+  kind: appliance
+  address: 10.0.0.61
+  env: lab
+  access:
+    ssh: { user: ops, auth: password, pass_ref: "bw://ssh-pwhost-pass" }
+  tags: []

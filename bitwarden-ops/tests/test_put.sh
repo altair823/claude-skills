@@ -41,6 +41,29 @@ assert_eq "forced-note" "$(BW_SESSION=x bash bin/bw-get 'bw://nt2/notes')" "--ty
 : > "$SECRET"
 assert_status 1 "BW_SESSION=x bash bin/bw-put 'bw://acct' --replace" "empty value rejected"
 
+# 7) --from-file: multi-line content stored byte-verbatim into notes.
+KEYF="$(mktemp)"; trap 'rm -f "$BW_STUB_DB" "$BW_STUB_DB.synced" "$SECRET" "$KEYF"' EXIT
+printf -- '-----BEGIN KEY-----\nline2\nline3\n-----END KEY-----\n' > "$KEYF"
+BW_SESSION=x bash bin/bw-put 'bw://ssh-h/notes' --type note --from-file "$KEYF" >/dev/null
+got="$(BW_SESSION=x bash bin/bw-get 'bw://ssh-h/notes')"
+want="$(cat "$KEYF")"
+assert_eq "$want" "$got" "--from-file stores multi-line notes verbatim"
+
+# 8) --from-file missing path fails.
+assert_status 1 "BW_SESSION=x bash bin/bw-put 'bw://ssh-h2/notes' --type note --from-file /no/such/file" "--from-file missing path → die"
+
+# 9) --from-file empty file rejected.
+EMPTYF="$(mktemp)"; : > "$EMPTYF"
+assert_status 1 "BW_SESSION=x bash bin/bw-put 'bw://ssh-h3/notes' --type note --from-file '$EMPTYF'" "--from-file empty → die"
+rm -f "$EMPTYF"
+
+# 10) --from-file overwrite needs --replace.
+printf 'v1' > "$KEYF"; BW_SESSION=x bash bin/bw-put 'bw://ssh-h4' --from-file "$KEYF" >/dev/null
+printf 'v2' > "$KEYF"
+assert_status 1 "BW_SESSION=x bash bin/bw-put 'bw://ssh-h4' --from-file '$KEYF'" "--from-file overwrite needs --replace"
+BW_SESSION=x bash bin/bw-put 'bw://ssh-h4' --from-file "$KEYF" --replace >/dev/null
+assert_eq "v2" "$(BW_SESSION=x bash bin/bw-get 'bw://ssh-h4')" "--from-file --replace overwrites"
+
 # 6) Locked vault.
 assert_status 3 "env -u BW_SESSION bash bin/bw-put 'bw://acct'" "locked vault → exit 3"
 

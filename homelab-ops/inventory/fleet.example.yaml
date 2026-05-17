@@ -18,7 +18,7 @@
   env: prod
   access:
     api: { token_ref: "bw://Proxmox pve-01/api-token", ca_path: "inventory/ca/pve-01-ca.pem" }
-    ssh: { user: root, key_ref: "bw://ssh-pve-01" }
+    ssh: { user: root, key_ref: "bw://ssh-pve-01/notes" }
   children: [vm-100, lxc-201]
   tags: [critical]
 
@@ -28,7 +28,7 @@
   env: prod
   vmid: 100
   access:
-    ssh: { user: ops, key_ref: "bw://ssh-vm-100" }
+    ssh: { user: ops, key_ref: "bw://ssh-vm-100/notes" }
   tags: []
 
 - id: lxc-201
@@ -37,7 +37,7 @@
   env: prod
   vmid: 201
   access:
-    ssh: { user: root, key_ref: "bw://ssh-lxc-201" }
+    ssh: { user: root, key_ref: "bw://ssh-lxc-201/notes" }
   tags: []
 
 - id: nas-01
@@ -45,5 +45,5 @@
   address: 10.0.0.50
   env: prod
   access:
-    ssh: { user: admin, key_ref: "bw://ssh-nas-01" }
+    ssh: { user: admin, auth: password, pass_ref: "bw://ssh-nas-01-pass" }
   tags: [critical]

@@ -26,7 +26,7 @@ mask() {
   sed -E \
     -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{ s/.*/***MASKED-PRIVATE-KEY***/ }' \
     -e 's/(BW_SESSION=)[^[:space:]]+/\1***MASKED***/g' \
-    -e 's/((PVE_TOKEN|HL_SSH_KEY)=)[^[:space:]]+/\1***MASKED***/g' \
+    -e 's/((PVE_TOKEN|HL_SSH_KEY|HL_SSH_PASS|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
     -e 's/(Authorization:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]]+/\1***MASKED***/gI' \
     -e 's/(("?)(token|password|secret|api[_-]?token)("?)[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1***MASKED***/gI' \
     -e 's/(PVEAPIToken[^=]*=)[^[:space:]]+/\1***MASKED***/g' \
