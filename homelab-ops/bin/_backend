@@ -14,15 +14,6 @@ dry=0
 inv="$("$HERE/inv" get "$target")" || die "cannot resolve target: $target"
 kind="$(jq -r .kind <<<"$inv")"
 
-# First Proxmox host whose children include $target, else $target itself.
-_owner_host() {
-  local x
-  for x in $("$HERE/inv" list); do
-    if "$HERE/inv" children "$x" | grep -qx "$target"; then echo "$x"; return; fi
-  done
-  echo "$target"
-}
-
 case "$action:$kind" in
   status:*|metrics:*|get:*)
     "$HERE/inv" resolve "$target" ;;
@@ -30,8 +21,8 @@ case "$action:$kind" in
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would $action $target (kind=$kind)"; exit 0
     fi
-    if [[ "$kind" == proxmox-host || "$kind" == vm || "$kind" == lxc ]]; then
-      "$HERE/pve" "$(_owner_host)" action "$action" "$target" "$@"
+    if [[ "$(op_transport "$action" "$kind")" == pve ]]; then
+      "$HERE/pve" "$(owner_host "$target")" action "$action" "$target" "$@"
     else
       "$HERE/ssh-run" "$target" -- "$action" "$@"
     fi ;;
