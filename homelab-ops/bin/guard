@@ -129,10 +129,17 @@ case "${1:-}" in
     # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
     # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
+    _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$inv_json")"
     if [[ "$grade" != "safe" ]]; then
       _gate_var=""
-      [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}"  ]] && _gate_var="PVE_TOKEN"
-      [[ "$_t" == "ssh" && -z "${HL_SSH_KEY:-}" ]] && _gate_var="HL_SSH_KEY"
+      [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}" ]] && _gate_var="PVE_TOKEN"
+      if [[ "$_t" == "ssh" ]]; then
+        if [[ "$_auth" == "password" ]]; then
+          [[ -z "${HL_SSH_PASS:-}" ]] && _gate_var="HL_SSH_PASS"
+        else
+          [[ -z "${HL_SSH_KEY:-}" ]] && _gate_var="HL_SSH_KEY"
+        fi
+      fi
       if [[ -n "$_gate_var" ]]; then
         _DONE=1; _audit 3 || echo "homelab-ops: AUDIT FAILED op=$op rc=3" >&2
         HL_EXIT=3 die "missing $_gate_var — bitwarden-ops bw-exec 로 감싸 실행하세요: bw-exec \"\$('$HERE/guard' --plan $action $target)\" -- '$HERE/guard' $action $target"
