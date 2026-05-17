@@ -2,20 +2,13 @@
 source "$(dirname "$0")/_lib.sh"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-declare -A GRADE=(
-  [status]=safe [list]=safe [metrics]=safe [get]=safe [inventory]=safe
-  [start]=caution [stop]=caution [restart]=caution [snapshot]=caution [pkg-install]=caution
-  [destroy]=destructive [delete]=destructive [storage-remove]=destructive
-  [kill]=destructive [net-change]=destructive [provision]=destructive
-)
-
 _bump() { case "$1" in safe) echo caution;; caution) echo destructive;; *) echo destructive;; esac; }
 
 # grade <action> <target-id> -> prints safe|caution|destructive
 guard_grade() {
   local action="${1:-}" target="${2:-}" g tj jrc=0
   [[ -n "$action" && -n "$target" ]] || die "usage: guard grade <action> <target-id>"
-  g="${GRADE[$action]:-destructive}"           # deny-by-default
+  g="$(action_grade "$action")"                # deny-by-default (단일 테이블)
   tj="$("$HERE/inv" get "$target")" || exit $?  # inv already prints a specific error
   jq -e '(.tags? // []) | index("critical")' >/dev/null 2>&1 <<<"$tj" || jrc=$?
   [[ $jrc -eq 5 ]] && die "cannot parse inventory JSON for target: $target"
@@ -72,6 +65,8 @@ case "${1:-}" in
     action="$1"; target="${2:-}"
     [[ -n "$target" ]] || die "usage: guard <action> <target-id> [--approve] [-- <extra>...]"
     shift 2
+    orig_action="$action"
+    action="$(canon_action "$action")"   # 별칭(delete→destroy) 정규화: 등급·경로·감사 일관
     approve=0; extra=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -169,7 +164,7 @@ case "${1:-}" in
 
     # Pre-op state snapshot → run log (best-effort, masked, never blocks).
     {
-      echo "=== pre-op snapshot $(date -u +%FT%TZ) op=$op ==="
+      echo "=== pre-op snapshot $(date -u +%FT%TZ) op=$op action=$orig_action(→$action) ==="
       "$HERE/inv" resolve "$target" 2>/dev/null || true
       "$backend" status "$target" -- 2>/dev/null || true
       echo "=== action output ==="
