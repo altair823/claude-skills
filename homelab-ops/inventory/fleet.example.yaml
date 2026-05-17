@@ -45,5 +45,5 @@
   address: 10.0.0.50
   env: prod
   access:
-    ssh: { user: admin, key_ref: "bw://ssh-nas-01/notes" }
+    ssh: { user: admin, auth: password, pass_ref: "bw://ssh-nas-01-pass" }
   tags: [critical]
