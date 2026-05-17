@@ -81,3 +81,7 @@ workspace-02(vmid 201) 를 pve-c64m96-01 → pve-c8m128-01 로 이전 + HDD 물�
 - `disk-attach`/`disk-detach`: 코드 경로(#25 SSH 전송)는 구비. **선행 블로커**:
   vault 에 노드 root SSH 키 `bw-put --type note --from-file` 등록 (데이터 작업).
 - `remote-migrate`: SKILL.md "Not for: …migration" 정책 변경 결정이 선행.
+- **후속(final-review)**: guard INT/TERM 경로에서 in-flight UPID 를 감사 레코드에
+  캡처(현재 run-log 의 raw `{"data":"UPID:..."}` 로만 복구 가능; `_finish_trap` 에서
+  `$rl` 파싱 고려) + 폴링 도입으로 인터럽트 노출창이 ~600s 로 확장됨 —
+  `pve_wait_task` 고아 reaping 은 별도 검토.
