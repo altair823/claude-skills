@@ -112,10 +112,19 @@ case "${1:-}" in
     rl="$(run_log_path "$op")"
     backend="${HOMELAB_BACKEND:-$HERE/_backend}"
 
-    # BW_SESSION gate for everything except safe.
-    if [[ "$grade" != "safe" && -z "${BW_SESSION:-}" ]]; then
-      _DONE=1; _audit 3 || echo "homelab-ops: AUDIT FAILED op=$op rc=3" >&2
-      HL_EXIT=3 die "locked vault: BW_SESSION not set"
+    # Credential gate: 비-safe op 는 그 op 의 transport(pve|ssh)가 요구하는
+    # credential env 가 있어야 한다. transport none(예: critical 로 caution 이 된
+    # status — _backend 는 inv resolve 만 함)은 시크릿이 필요 없으므로 통과.
+    # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
+    _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
+    if [[ "$grade" != "safe" ]]; then
+      _gate_var=""
+      [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}"  ]] && _gate_var="PVE_TOKEN"
+      [[ "$_t" == "ssh" && -z "${HL_SSH_KEY:-}" ]] && _gate_var="HL_SSH_KEY"
+      if [[ -n "$_gate_var" ]]; then
+        _DONE=1; _audit 3 || echo "homelab-ops: AUDIT FAILED op=$op rc=3" >&2
+        HL_EXIT=3 die "missing $_gate_var — bitwarden-ops bw-exec 로 감싸 실행하세요: bw-exec \"\$('$HERE/guard' --plan $action $target)\" -- '$HERE/guard' $action $target"
+      fi
     fi
 
     needs_approval=0
