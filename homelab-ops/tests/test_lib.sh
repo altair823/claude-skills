@@ -10,8 +10,11 @@ case "$1" in
   opid)  new_op_id ;;
   mask)  echo "BW_SESSION=topsecret token=abcDEF123" | mask ;;
   mask_hard) printf 'Authorization: Bearer SECRETBEARER123\n-----BEGIN OPENSSH PRIVATE KEY-----\nKEYBODYLINE0000\n-----END OPENSSH PRIVATE KEY-----\n{"password":"pw-secret-val"}\n' | mask ;;
+  mask_env) printf 'PVE_TOKEN=ptokVALUE123 HL_SSH_KEY=hkeyVALUE456\n' | mask ;;
   audit) audit_append --arg a "$2" '{ts:"T",session:env.HOMELAB_SESSION_ID,action:$a}' ;;
   runlog) run_log_path "op-1" ;;
+  transport) op_transport "$2" "$3" ;;
+  owner) owner_host "$2" ;;
 esac
 EOF
 cp /tmp/_libprobe.sh bin/_libprobe.sh
@@ -44,5 +47,22 @@ rp="$(HOMELAB_SESSION_ID=test-sess bash bin/_libprobe.sh runlog)"
 assert_contains "$rp" "logs/runs/test-sess/op-1.log" "run_log_path under session dir"
 [[ -d logs/runs/test-sess ]] && echo "  ok: run dir created" \
   || { echo "  FAIL: run dir missing"; exit 1; }
+
+assert_eq "none" "$(bash bin/_libprobe.sh transport status proxmox-host)" "status → none"
+assert_eq "pve"  "$(bash bin/_libprobe.sh transport stop vm)"            "stop vm → pve"
+assert_eq "pve"  "$(bash bin/_libprobe.sh transport destroy proxmox-host)" "destroy host → pve"
+assert_eq "ssh"  "$(bash bin/_libprobe.sh transport stop appliance)"     "stop appliance → ssh"
+assert_eq "ssh"  "$(bash bin/_libprobe.sh transport pkg-install vm)"     "pkg-install → ssh"
+assert_eq "pve"  "$(bash bin/_libprobe.sh transport provision proxmox-host)" "provision → pve"
+assert_eq "none" "$(bash bin/_libprobe.sh transport frobnicate vm)"      "unknown action → none"
+assert_eq "pve-01"     "$(bash bin/_libprobe.sh owner vm-100)"    "owner_host: child → parent host"
+assert_eq "lab-vm-900" "$(bash bin/_libprobe.sh owner lab-vm-900)" "owner_host: orphan → itself"
+
+menv="$(bash bin/_libprobe.sh mask_env)"
+[[ "$menv" != *ptokVALUE123* ]] && echo "  ok: PVE_TOKEN value masked" \
+  || { echo "  FAIL: PVE_TOKEN leaked"; exit 1; }
+[[ "$menv" != *hkeyVALUE456* ]] && echo "  ok: HL_SSH_KEY value masked" \
+  || { echo "  FAIL: HL_SSH_KEY leaked"; exit 1; }
+assert_contains "$menv" "MASKED" "env-token inputs produce mask markers"
 
 finish; echo "PASS test_lib"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$(dirname "$0")/_lib.sh"
-HERE="$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 target="${1:-}"
 [[ -n "$target" ]] || die "usage: ssh-run <target-id> -- <command...>"
@@ -8,22 +8,22 @@ shift
 [[ "${1:-}" == "--" ]] && shift || die "usage: ssh-run <target-id> -- <command...>"
 [[ $# -ge 1 ]] || die "no remote command given"
 
-# Locked-vault default: refuse before doing anything (fail fast, exit 3),
-# consistent with bw-resolve/pve. Also avoids spawning an agent when locked.
-[[ -n "${BW_SESSION:-}" ]] || { HL_EXIT=3 die "locked vault: BW_SESSION not set"; }
+# 키는 bitwarden-ops bw-exec 가 HL_SSH_KEY env 로 주입한다. 미주입 시
+# fail-closed(exit 3) — agent 도 띄우지 않는다.
+[[ -n "${HL_SSH_KEY:-}" ]] || { HL_EXIT=3 die "missing HL_SSH_KEY — bitwarden-ops bw-exec 로 감싸 실행 (참고: \"$HERE/guard\" --plan)"; }
 
 inv="$("$HERE/inv" get "$target")" || die "no such target: $target"
 addr="$(jq -r '.address // empty' <<<"$inv")"
 [[ -n "$addr" && "$addr" != "null" ]] || die "target $target has no address in inventory"
 user="$(jq -r '.access.ssh.user // "root"' <<<"$inv")"
-key_ref="$(jq -r '.access.ssh.key_ref // empty' <<<"$inv")"
-[[ -n "$key_ref" ]] || die "target $target has no access.ssh.key_ref"
 
-# Ephemeral ssh-agent; key piped from bw-resolve into ssh-add stdin. No disk.
+# Ephemeral ssh-agent; 키는 env → ssh-add stdin 으로만 흐르고 디스크에 안 닿는다.
+# printf '%s\n': ssh-add 는 PEM/OpenSSH 키 끝에 개행이 있어야 파싱한다(없으면
+# libcrypto 오류). 키가 이미 개행으로 끝나도 ssh-add 는 중복 개행을 무해 처리.
 eval "$(ssh-agent -s)" >/dev/null
 cleanup() { ssh-agent -k >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-"$HERE/bw-resolve" --ssh "$key_ref" | ssh-add - >/dev/null 2>&1 \
+printf '%s\n' "$HL_SSH_KEY" | ssh-add - >/dev/null 2>&1 \
   || die "ssh-add failed (could not load key for $target)"
 
 ssh -o StrictHostKeyChecking=yes -o BatchMode=yes \

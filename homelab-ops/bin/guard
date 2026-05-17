@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$(dirname "$0")/_lib.sh"
-HERE="$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 declare -A GRADE=(
   [status]=safe [list]=safe [metrics]=safe [get]=safe [inventory]=safe
@@ -29,6 +29,34 @@ case "${1:-}" in
     guard_grade "$2" "$3" ;;
   "")
     die "usage: guard <action> <target-id> [--approve] [-- <extra>...]" ;;
+  --plan)
+    # read-only: inventory 만 읽어 op 가 필요로 하는 NAME=bw://ref 를 출력.
+    # 어떤 시크릿에도 접근하지 않는다 (safe).
+    [[ $# -ge 3 ]] || die "usage: guard --plan <action> <target-id>"
+    pa="$2"; pt="$3"
+    pgrade="$(guard_grade "$pa" "$pt")"        # target 존재도 검증; 없으면 die
+    [[ "$pgrade" == "safe" ]] && exit 0        # safe op 는 credential 불필요
+    pinv="$("$HERE/inv" get "$pt")" || exit $?
+    pkind="$(jq -r '.kind // ""' <<<"$pinv")"
+    ptrans="$(op_transport "$pa" "$pkind")"
+    case "$ptrans" in
+      pve)
+        pref="$("$HERE/inv" get "$(owner_host "$pt")" \
+                | jq -r '.access.api.token_ref // empty')"
+        [[ -n "$pref" ]] && printf 'PVE_TOKEN=%s\n' "$pref" ;;
+      ssh)
+        pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pinv")"
+        [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref" ;;
+      none)
+        # status|metrics|get 은 정당한 무자격 read-only. 그 외(deny-default
+        # destructive 로 등급된 미매핑 액션)는 stdout 계약을 더럽히지 않도록
+        # stderr 로만 모호성을 알린다.
+        case "$pa" in
+          status|metrics|get) : ;;
+          *) echo "homelab-ops: --plan: '$pa' 는 transport 매핑이 없어 credential 을 산출하지 못함 (미지원 액션일 수 있음)" >&2 ;;
+        esac ;;
+    esac
+    exit 0 ;;
   *)
     action="$1"; target="${2:-}"
     [[ -n "$target" ]] || die "usage: guard <action> <target-id> [--approve] [-- <extra>...]"
@@ -84,10 +112,20 @@ case "${1:-}" in
     rl="$(run_log_path "$op")"
     backend="${HOMELAB_BACKEND:-$HERE/_backend}"
 
-    # BW_SESSION gate for everything except safe.
-    if [[ "$grade" != "safe" && -z "${BW_SESSION:-}" ]]; then
-      _DONE=1; _audit 3 || echo "homelab-ops: AUDIT FAILED op=$op rc=3" >&2
-      HL_EXIT=3 die "locked vault: BW_SESSION not set"
+    # Credential gate: 비-safe op 는 그 op 의 transport(pve|ssh)가 요구하는
+    # credential env 가 있어야 한다. transport none(예: critical 로 caution 이 된
+    # status — _backend 는 inv resolve 만 함)은 시크릿이 필요 없으므로 통과.
+    # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
+    # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
+    _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
+    if [[ "$grade" != "safe" ]]; then
+      _gate_var=""
+      [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}"  ]] && _gate_var="PVE_TOKEN"
+      [[ "$_t" == "ssh" && -z "${HL_SSH_KEY:-}" ]] && _gate_var="HL_SSH_KEY"
+      if [[ -n "$_gate_var" ]]; then
+        _DONE=1; _audit 3 || echo "homelab-ops: AUDIT FAILED op=$op rc=3" >&2
+        HL_EXIT=3 die "missing $_gate_var — bitwarden-ops bw-exec 로 감싸 실행하세요: bw-exec \"\$('$HERE/guard' --plan $action $target)\" -- '$HERE/guard' $action $target"
+      fi
     fi
 
     needs_approval=0
@@ -137,6 +175,7 @@ case "${1:-}" in
     } | sed -uE \
         -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{ s/.*/***MASKED-PRIVATE-KEY***/ }' \
         -e 's/(BW_SESSION=)[^[:space:]]+/\1***MASKED***/g' \
+        -e 's/((PVE_TOKEN|HL_SSH_KEY)=)[^[:space:]]+/\1***MASKED***/g' \
         -e 's/(Authorization:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]]+/\1***MASKED***/gI' \
         -e 's/(("?)(token|password|secret|api[_-]?token)("?)[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1***MASKED***/gI' \
         -e 's/(PVEAPIToken[^=]*=)[^[:space:]]+/\1***MASKED***/g' \

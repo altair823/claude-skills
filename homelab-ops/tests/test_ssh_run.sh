@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/ssh-run 2>/dev/null || true
-export BW_SESSION="stub-session"
+export HL_SSH_KEY="$(printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nSTUBKEY-ssh-nas-01\n-----END OPENSSH PRIVATE KEY-----')"
 
 # Private tmpdir so any tempfile/agent socket ssh-run creates lands here
 # (ssh-agent/ssh-add/mktemp honor $TMPDIR). The disk-leak scan then targets
@@ -13,8 +13,8 @@ export BW_SESSION="stub-session"
 export TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# locked vault refusal (key resolved via bw-resolve --ssh)
-assert_status 3 'env -u BW_SESSION bin/ssh-run nas-01 -- uname -a' "ssh-run without BW_SESSION exits 3"
+# no key injected: ssh-run must refuse before spawning an agent (exit 3)
+assert_status 3 'env -u HL_SSH_KEY bin/ssh-run nas-01 -- uname -a' "ssh-run without HL_SSH_KEY exits 3"
 
 out="$(bin/ssh-run nas-01 -- uname -a 2>err.txt; cat err.txt)"
 assert_contains "$out" "stub-ssh-output" "ssh-run runs remote command"
@@ -23,7 +23,7 @@ assert_contains "$out" "StrictHostKeyChecking=yes" "StrictHostKeyChecking=yes en
 assert_contains "$out" "BatchMode=yes" "BatchMode=yes enforced"
 rm -f err.txt
 
-# Key flows bw-resolve stdout → ssh-add stdin only; it must never be persisted.
+# Key flows HL_SSH_KEY env → ssh-add stdin only; it must never be persisted.
 # Scan the only places ssh-run could leak it: its private $TMPDIR (tempfiles /
 # agent socket) and the runtime logs/ dir. Scoped to $TMPDIR (not shared /tmp)
 # so unrelated global /tmp content can't false-positive on this test's own

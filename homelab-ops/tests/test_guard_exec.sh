@@ -14,7 +14,7 @@ echo "BACKEND action=$1 target=$2 extra=$*"
 EOF
 chmod +x /tmp/fake-backend
 export HOMELAB_BACKEND=/tmp/fake-backend
-export BW_SESSION="stub-session"
+export PVE_TOKEN="stub-token-value"
 : > logs/audit.jsonl
 rm -rf "logs/runs/$HOMELAB_SESSION_ID"
 
@@ -24,8 +24,15 @@ assert_contains "$out" "BACKEND action=status" "safe action executes"
 assert_eq "safe" "$(tail -1 logs/audit.jsonl | jq -r .grade)" "safe audited"
 assert_eq "0" "$(tail -1 logs/audit.jsonl | jq -r .exit)" "safe exit 0 audited"
 
-# non-safe requires BW_SESSION
-assert_status 3 'env -u BW_SESSION bin/guard stop lab-vm-900' "stop without BW_SESSION exits 3"
+# non-safe op requires its transport credential (here: pve → PVE_TOKEN)
+assert_status 3 'env -u PVE_TOKEN bin/guard stop lab-vm-900' "stop without PVE_TOKEN exits 3"
+# ssh-transport op refused when its credential (HL_SSH_KEY) is absent
+assert_status 3 'env -u HL_SSH_KEY -u PVE_TOKEN bin/guard pkg-install lab-vm-900' "pkg-install without HL_SSH_KEY exits 3"
+# transport-none op (status on critical = caution) is NOT blocked by the
+# credential gate (no transport secret needed). pve-01 is prod+critical, so it
+# still hits the *unrelated* pre-existing prod-approval gate → exit 10, NOT the
+# credential gate's exit 3. exit 10 ≠ 3 proves the credential gate passed it.
+assert_status 10 'env -u PVE_TOKEN -u HL_SSH_KEY bin/guard status pve-01' "caution+transport-none passes credential gate (no credential needed)"
 
 # caution on lab env: 1-line summary, proceeds without --approve
 out="$(bin/guard stop lab-vm-900)"

@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/pve 2>/dev/null || true
-export BW_SESSION="stub-session"
+export PVE_TOKEN="stub-token-value"
 
 # curl is stubbed → deterministic Proxmox-shaped JSON
 out="$(bin/pve pve-01 api GET /nodes)"
@@ -12,8 +12,8 @@ assert_contains "$out" '"status"' "pve api returns json"
 st="$(bin/pve pve-01 status)"
 assert_contains "$st" "running" "pve status convenience works"
 
-# locked vault: pve must refuse (it resolves a token via bw-resolve)
-assert_status 3 'env -u BW_SESSION bin/pve pve-01 status' "pve without BW_SESSION exits 3"
+# no token injected: pve must refuse (exit 3)
+assert_status 3 'env -u PVE_TOKEN bin/pve pve-01 status' "pve without PVE_TOKEN exits 3"
 
 # TLS verification must be ON: pve must NOT pass -k/--insecure to curl.
 cat > /tmp/curl-spy <<'EOF'
