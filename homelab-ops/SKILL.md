@@ -17,6 +17,19 @@ HL="<absolute path of the directory containing this SKILL.md>"   # this skill's 
 ```
 Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
 
+## Inventory & TLS
+- Inventory lives in `inventory/{fleet.yaml,groups.yaml}` (the operator's REAL
+  fleet). `HOMELAB_INVENTORY_DIR` overrides that directory — the test suite
+  points it at `tests/fixtures/` so tests never couple to the live inventory.
+  A `proxmox-host` entry's `id` MUST equal the real PVE node name (API paths are
+  `/nodes/<id>/...`).
+- **Per-host CA.** A homelab Proxmox uses a self-signed cluster CA, so system
+  trust alone fails verification. Set `access.api.ca_path` (path; absolute, `~`,
+  or repo-root-relative) to that node's `/etc/pve/pve-root-ca.pem`; `bin/pve`
+  passes it as curl `--cacert` so TLS verification stays **ON** (never `-k`).
+  Independent nodes each have a DISTINCT CA — one `ca_path` per host. A declared
+  but unreadable `ca_path` fails closed.
+
 ## Credentials — delegated to bitwarden-ops (homelab-ops never touches `bw`)
 homelab-ops holds only `bw://` references (in inventory). Resolution is delegated
 to the **bitwarden-ops** skill:
@@ -58,7 +71,7 @@ Not for: non-Proxmox virt, Proxmox cluster/HA/migration (targets are independent
 1. **No guard bypass.** Every state change runs as `"$HL/bin/guard" <action> <target> [--approve]`. `bin/pve` and `bin/ssh-run` are read/transport layers — never invoke them to mutate state.
 2. **Credential injected via bitwarden-ops for any change.** A non-safe op whose transport credential (`PVE_TOKEN`/`HL_SSH_KEY`) is absent refuses (exit 3). Resolve refs with `guard --plan` and wrap the run in bitwarden-ops `bw-exec`; never see, store, or handle the master password, and never reimplement `bw` here.
 3. **deny-by-default.** Any action not in guard's grade table is treated as destructive. Don't add ad-hoc actions to dodge this — extend the grade table deliberately if genuinely needed.
-4. **Destructive needs eyes.** destructive (and prod-caution) ops print a DRY-RUN + impact and exit 10. Show that to the user, get explicit approval, THEN re-run with `--approve`. A `critical`-tagged target escalates one grade.
+4. **Destructive needs eyes.** destructive (and prod-caution) ops print a DRY-RUN + impact and exit 10. Show that to the user, get explicit approval, THEN re-run with `--approve`. A `critical`-tagged target escalates one grade — **but read-only safe ops (`status`/`metrics`/`get`/`list`/`inventory`) are NEVER escalated**: observability of critical hosts must not require `--approve` (the rule makes destructive mistakes hard, not looking impossible).
 5. **No log gaps.** `logs/audit.jsonl` is append-only; full per-op output is in `logs/runs/<session>/<op>.log` (secrets masked). Never edit, truncate, or skip them. Operational state is local to the operator and gitignored — back it up out-of-band if you need tamper-evidence.
 6. **Credentials are references, resolved by bitwarden-ops.** Inventory holds `bw://` refs only. Resolution is delegated to the bitwarden-ops skill via `bw-exec` (env injection, in-memory); homelab-ops defines no `bw` behavior. Never write a secret to disk or echo it unmasked.
 7. **Provisioning is Phase 1.** Use `"$HL/bin/guard" provision` only. No Terraform/Ansible until Phase 2; the `guard provision` interface stays stable when the backend is swapped.

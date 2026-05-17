@@ -1,4 +1,10 @@
 *.swp
 .DS_Store
 .worktrees/
+
+# homelab-ops: operator-local, environment-specific — never committed.
+# The skill ships inventory/*.example.yaml; the test suite uses tests/fixtures/.
 homelab-ops/logs/
+homelab-ops/inventory/fleet.yaml
+homelab-ops/inventory/groups.yaml
+homelab-ops/inventory/ca/
