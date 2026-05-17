@@ -1,6 +1,6 @@
 ---
 name: homelab-ops
-description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy/storage/network changes, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the Bitwarden session, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
+description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy/storage/network changes, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
 ---
 
 # homelab-ops
@@ -21,8 +21,9 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
 homelab-ops holds only `bw://` references (in inventory). Resolution is delegated
 to the **bitwarden-ops** skill:
 
-1. Ensure the vault is unlocked: invoke the bitwarden-ops skill (its `bw-unlock`
-   / session persistence). The user types the master password — never Claude.
+1. Ensure the vault is unlocked: invoke the bitwarden-ops skill and run its
+   `bw-unlock` (the session then persists for subsequent calls). The user types
+   the master password — never Claude.
 2. For any mutating op, ask guard which refs it needs, then wrap the real run
    with bitwarden-ops `bw-exec` so the secret is injected into the env and never
    enters Claude's context, argv, disk, or logs:
@@ -35,7 +36,7 @@ bw-exec "$plan" -- "$HL/bin/guard" <action> <target> [--approve]
 
 `guard --plan` is read-only (inventory only, no secret access); empty output ⇒
 a safe op that needs no credential. A non-safe op whose transport credential is
-absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
+absent refuses to start (exit 3) and prints the exact `bw-exec` line to use. Under the current transport model `--plan` emits a single `NAME=bw://ref` line, so the quoted `bw-exec "$plan"` form above is correct; keep it quoted.
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`
