@@ -49,6 +49,7 @@ grep -q -- '/nodes/pve-01/lxc/201/status/stop' /tmp/curl-args \
   || { echo "  FAIL: lxc action path wrong: $(cat /tmp/curl-args)"; exit 1; }
 
 # mutating verb 가 UPID 를 받으면 task status 를 폴링한다(HO-TASK emit).
+: > /tmp/curl-args
 out="$(HOMELAB_TASK_POLL_INTERVAL=0 PATH="/tmp/spybin:$PWD/tests/stubs:$PATH" bin/pve pve-01 action stop vm-100)"
 assert_contains "$out" "HO-TASK upid=UPID:stub" "pve mutating verb polls task to completion"
 grep -q -- '/nodes/pve-01/tasks/UPID' /tmp/curl-args \
