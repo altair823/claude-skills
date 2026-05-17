@@ -42,7 +42,7 @@ grep -q -- '/nodes/pve-01/lxc/201/status/stop' /tmp/curl-args \
   || { echo "  FAIL: lxc action path wrong: $(cat /tmp/curl-args)"; exit 1; }
 
 # Per-host CA: inventory access.api.ca_path → curl --cacert <path> so TLS
-# verification stays ON against a self-signed Proxmox cluster CA.
+# verification stays ON against Proxmox's self-signed built-in CA.
 _caenv="$(mktemp -d)"
 printf 'dummy-ca-pem\n' > "$_caenv/pve-ca.pem"
 mkdir -p "$_caenv/inv"

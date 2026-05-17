@@ -14,7 +14,8 @@ addr="$(jq -r '.address // empty' <<<"$inv")"
 token="$PVE_TOKEN"
 base="https://${addr}:8006/api2/json"
 
-# Per-host CA trust. A homelab Proxmox uses a self-signed cluster CA, so
+# Per-host CA trust. A homelab Proxmox serves a self-signed cert from its
+# built-in CA (named "PVE Cluster Manager CA" even on a standalone node), so
 # system trust alone fails verification. inventory access.api.ca_path pins
 # that CA via curl --cacert — verification stays ON (never -k/--insecure).
 # Absent ca_path ⇒ fall back to system trust (unchanged default). A declared
