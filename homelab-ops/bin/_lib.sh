@@ -118,13 +118,15 @@ pve_wait_task() {
   local timeout="${HOMELAB_TASK_TIMEOUT:-600}"
   local interval="${HOMELAB_TASK_POLL_INTERVAL:-2}"
   local waited=0 resp st xs
+  [[ "$timeout"  =~ ^[0-9]+$ ]] || die "pve_wait_task: HOMELAB_TASK_TIMEOUT must be a non-negative integer (got: $timeout)"
+  [[ "$interval" =~ ^[0-9]+$ ]] || die "pve_wait_task: HOMELAB_TASK_POLL_INTERVAL must be a non-negative integer (got: $interval)"
   while :; do
     resp="$("$REPO_ROOT/bin/pve" "$host" api GET "/nodes/${host}/tasks/${upid}/status" 2>/dev/null || true)"
     st="$(jq -r '.data.status // empty' <<<"$resp" 2>/dev/null || true)"
     if [[ "$st" == "stopped" ]]; then
       xs="$(jq -r '.data.exitstatus // "UNKNOWN"' <<<"$resp" 2>/dev/null || echo UNKNOWN)"
       printf 'HO-TASK upid=%s exitstatus=%s\n' "$upid" "$xs"
-      [[ "$xs" == "OK" ]] && return 0 || return 1
+      if [[ "$xs" == "OK" ]]; then return 0; else return 1; fi
     fi
     if (( waited >= timeout )); then
       printf 'HO-TASK upid=%s exitstatus=%s\n' "$upid" "TIMEOUT"

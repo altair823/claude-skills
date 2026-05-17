@@ -4,12 +4,11 @@ cd "$(dirname "$0")/.."
 source tests/lib.sh
 export PVE_TOKEN="stub-token-value"
 
-cat > /tmp/_waitprobe.sh <<'EOF'
+cat > bin/_waitprobe.sh <<'EOF'
 #!/usr/bin/env bash
 source "$(dirname "$0")/_lib.sh"
 pve_wait_task "$1" "$2"
 EOF
-cp /tmp/_waitprobe.sh bin/_waitprobe.sh
 trap 'rm -f bin/_waitprobe.sh' EXIT
 U="UPID:stub:1:1:1:t:0:root@pam:"
 
@@ -56,11 +55,11 @@ if (( n >= 2 )); then echo '{"data":{"status":"stopped","exitstatus":"OK"}}'
 else echo '{"data":{"status":"running"}}'; fi
 EOF
 chmod +x "$trd/curl"
-: > /tmp/_tr_count
+_tr_count="$(mktemp)"
 set +e
-out="$(HOMELAB_TASK_POLL_INTERVAL=1 TMP_TR=/tmp/_tr_count PATH="$trd:$PATH" bash bin/_waitprobe.sh pve-01 "$U")"; rc=$?
+out="$(HOMELAB_TASK_POLL_INTERVAL=1 TMP_TR="$_tr_count" PATH="$trd:$PATH" bash bin/_waitprobe.sh pve-01 "$U")"; rc=$?
 set -e
 assert_eq "0" "$rc" "running→stopped → eventual exit 0"
-rm -rf "$trd" /tmp/_tr_count
+rm -rf "$trd" "$_tr_count"
 
 finish; echo "PASS test_pve_wait"
