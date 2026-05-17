@@ -36,7 +36,7 @@ bw-exec "$plan" -- "$HL/bin/guard" <action> <target> [--approve]
 
 `guard --plan` is read-only (inventory only, no secret access); empty output ⇒
 a safe op that needs no credential. A non-safe op whose transport credential is
-absent refuses to start (exit 3) and prints the exact `bw-exec` line to use. Under the current transport model `--plan` emits a single `NAME=bw://ref` line, so the quoted `bw-exec "$plan"` form above is correct; keep it quoted.
+absent refuses to start (exit 3) and prints the exact `bw-exec` line to use. Under the current transport model `--plan` emits a single `NAME=bw://ref` line, so the quoted `bw-exec "$plan"` form above is correct; keep it quoted. If `--plan` is empty for a non-safe op and guard still exits 3, the target is an orphan guest with no owning Proxmox host / `token_ref` in inventory — place it under a host (an inventory data fix, not a tool issue).
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`
