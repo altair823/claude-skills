@@ -534,13 +534,21 @@ addr="$(jq -r '.address // empty' <<<"$inv")"
 user="$(jq -r '.access.ssh.user // "root"' <<<"$inv")"
 
 # Ephemeral ssh-agent; 키는 env → ssh-add stdin 으로만 흐르고 디스크에 안 닿는다.
-# printf '%s' 로 후행 개행 없이 전달 (PEM byte-consistent).
+# printf '%s\n': ssh-add 는 PEM/OpenSSH 키 끝에 개행이 있어야 파싱한다(없으면
+# libcrypto 오류). 키가 이미 개행으로 끝나도 ssh-add 는 중복 개행을 무해 처리.
 eval "$(ssh-agent -s)" >/dev/null
 cleanup() { ssh-agent -k >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-printf '%s' "$HL_SSH_KEY" | ssh-add - >/dev/null 2>&1 \
+printf '%s\n' "$HL_SSH_KEY" | ssh-add - >/dev/null 2>&1 \
   || die "ssh-add failed (could not load key for $target)"
 ```
+
+> **회차1 리뷰 정정 (C1):** 초안은 `printf '%s'`(개행 제거)였으나, 이는
+> bitwarden-ops 의 password/notes *필드* byte-consistency 수정 논리를 키에
+> 잘못 적용한 것. 실제 `ssh-add` 는 PEM/OpenSSH 키 말미 개행을 요구하므로
+> `printf '%s\n'` 가 옳다. 아래 Step 의 `ssh-add` 스텁도 "스트림이 개행으로
+> 끝나고 BEGIN/END PRIVATE KEY 블록을 포함" 을 검증하도록 강화해 이 회귀를
+> 실제로 커버한다(기존 스텁은 입력을 무시해 false negative 였음).
 
 - [ ] **Step 2: test_ssh_run 의 locked-vault assert 갱신**
 
