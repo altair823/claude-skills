@@ -24,7 +24,7 @@ assert_eq "destructive" "$(bin/guard grade delete pve-01)" "delete on critical s
 # 유령 verb 는 테이블에 없음 → deny-default destructive (광고 제거돼도 안전 거부)
 assert_eq "destructive" "$(bin/guard grade kill vm-100)"          "kill = destructive (deny-default)"
 assert_eq "destructive" "$(bin/guard grade net-change vm-100)"    "net-change = destructive (deny-default)"
-assert_eq "destructive" "$(bin/guard grade storage-remove nas-01)" "storage-remove = destructive (deny-default)"
+assert_eq "destructive" "$(bin/guard grade storage-remove vm-100)"  "storage-remove = destructive (deny-default)"
 # destructive + critical stays destructive (the _bump *) branch)
 assert_eq "destructive" "$(bin/guard grade destroy pve-01)" "destroy on critical stays destructive"
 # empty action is rejected cleanly (not a raw bash array-subscript error)
