@@ -35,8 +35,11 @@ if [[ "$mode" == "dry-run" ]]; then
   exit 0
 fi
 if [[ "$mode" == "apply" ]]; then
-  "$BIN/pve" "$host" api POST "/nodes/${host}/qemu/${tmpl}/clone" "newid=${newid}&name=${name}" \
-    >/dev/null || die "clone failed"
+  resp="$("$BIN/pve" "$host" api POST "/nodes/${host}/qemu/${tmpl}/clone" "newid=${newid}&name=${name}")" \
+    || die "clone API call failed"
+  upid="$(jq -r 'if (.data|type)=="string" then .data else empty end' <<<"$resp" 2>/dev/null || true)"
+  [[ "$upid" == UPID:* ]] || die "clone did not return a task UPID: $resp"
+  pve_wait_task "$host" "$upid" || die "clone task did not complete OK (vmid ${newid}); see HO-TASK line"
   echo "CREATED: vmid ${newid} (name=${name}) cloned from ${tmpl} on ${host}"
   exit 0
 fi
