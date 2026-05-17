@@ -19,16 +19,20 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
 
 ## Inventory & TLS
 - Inventory lives in `inventory/{fleet.yaml,groups.yaml}` (the operator's REAL
-  fleet). `HOMELAB_INVENTORY_DIR` overrides that directory — the test suite
-  points it at `tests/fixtures/` so tests never couple to the live inventory.
-  A `proxmox-host` entry's `id` MUST equal the real PVE node name (API paths are
-  `/nodes/<id>/...`).
-- **Per-host CA.** A homelab Proxmox uses a self-signed cluster CA, so system
-  trust alone fails verification. Set `access.api.ca_path` (path; absolute, `~`,
-  or repo-root-relative) to that node's `/etc/pve/pve-root-ca.pem`; `bin/pve`
-  passes it as curl `--cacert` so TLS verification stays **ON** (never `-k`).
-  Independent nodes each have a DISTINCT CA — one `ca_path` per host. A declared
-  but unreadable `ca_path` fails closed.
+  fleet). **First-time setup:** copy `inventory/{fleet,groups}.example.yaml` to
+  `inventory/{fleet,groups}.yaml` (the live files + `inventory/ca/` are
+  gitignored — operator-local) and edit. `HOMELAB_INVENTORY_DIR` overrides that
+  directory — the test suite points it at `tests/fixtures/` so tests never
+  couple to the live inventory. A `proxmox-host` entry's `id` MUST equal the
+  real PVE node name (API paths are `/nodes/<id>/...`).
+- **Per-host CA.** A homelab Proxmox serves a self-signed cert from its built-in
+  CA (Proxmox names it "PVE Cluster Manager CA" even on a standalone, non-
+  clustered node), so system trust alone fails verification. Set
+  `access.api.ca_path` (path; absolute, `~`, or repo-root-relative) to that
+  node's `/etc/pve/pve-root-ca.pem`; `bin/pve` passes it as curl `--cacert` so
+  TLS verification stays **ON** (never `-k`). Independent nodes each have a
+  DISTINCT CA — one `ca_path` per host. A declared but unreadable `ca_path`
+  fails closed.
 
 ## Credentials — delegated to bitwarden-ops (homelab-ops never touches `bw`)
 homelab-ops holds only `bw://` references (in inventory). Resolution is delegated

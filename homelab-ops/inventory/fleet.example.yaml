@@ -9,6 +9,9 @@
 #    /nodes/<id>/...).
 #  - access.api.ca_path → that node's /etc/pve/pve-root-ca.pem so curl keeps
 #    TLS verification ON (independent nodes each have a DISTINCT CA).
+#  - Place each node's CA yourself: copy /etc/pve/pve-root-ca.pem from the node
+#    to inventory/ca/<host-id>-ca.pem (inventory/ca/ is gitignored, so it is
+#    empty on a fresh clone — ca_path will fail closed until you populate it).
 - id: pve-01
   kind: proxmox-host
   address: 10.0.0.11
