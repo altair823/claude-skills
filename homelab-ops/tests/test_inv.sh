@@ -48,6 +48,7 @@ rm -rf "$_tmpinv"
 
 # env 미설정: XDG(~/.config/homelab-ops) 자동 발견
 _xdg="$(mktemp -d)"
+trap 'rm -rf "${_xdg:-}" "${_emptyxdg:-}"' EXIT
 mkdir -p "$_xdg/homelab-ops"
 cat > "$_xdg/homelab-ops/fleet.yaml" <<'EOF'
 - id: xdg-host
@@ -59,11 +60,14 @@ echo '{}' > "$_xdg/homelab-ops/groups.yaml"
 got="$(env -u HOMELAB_INVENTORY_DIR XDG_CONFIG_HOME="$_xdg" bin/inv list)"
 assert_eq "xdg-host" "$got" "env unset → XDG ~/.config/homelab-ops auto-discovered"
 
-# XDG 부재 + repo inventory/ 존재 → repo 로 폴백
+# repo inventory/ fallback + all-absent error — fully isolated, never touches
+# the operator's real (gitignored) inventory/. We build a throwaway REPO_ROOT-like
+# tree so the test owns every file it creates or deletes.
 _emptyxdg="$(mktemp -d)"
-mkdir -p homelab-ops-inv-probe
-# repo inventory/ 는 운영자-로컬·gitignored 라 없을 수 있으니 임시 생성/정리
-_made_repo_inv=0
+
+# Tier-3 (repo inventory/) fallback: only assert this when the test itself owns
+# the repo inventory file. If a real operator inventory/fleet.yaml exists we must
+# NOT create/delete it — assert the override path instead and skip the rm path.
 if [[ ! -f inventory/fleet.yaml ]]; then
   mkdir -p inventory
   cat > inventory/fleet.yaml <<'EOF'
@@ -73,18 +77,15 @@ if [[ ! -f inventory/fleet.yaml ]]; then
   env: lab
 EOF
   echo '{}' > inventory/groups.yaml
-  _made_repo_inv=1
+  got="$(env -u HOMELAB_INVENTORY_DIR XDG_CONFIG_HOME="$_emptyxdg" bin/inv list)"
+  assert_eq "repo-host" "$got" "XDG absent → repo inventory/ fallback (test-owned)"
+  # test owns these files → safe to remove, then exercise the all-absent die
+  rm -f inventory/fleet.yaml inventory/groups.yaml
+  errout="$(env -u HOMELAB_INVENTORY_DIR XDG_CONFIG_HOME="$_emptyxdg" HOME="$_emptyxdg" \
+    bash -c 'cd "$1"; bin/inv list' _ "$PWD" 2>&1 || true)"
+  assert_contains "$errout" "homelab-ops" "no inventory anywhere → error names config path"
+else
+  echo "  ok: repo inventory/ present (operator-local) → tier-3/all-absent paths not destructively tested"
 fi
-got="$(env -u HOMELAB_INVENTORY_DIR XDG_CONFIG_HOME="$_emptyxdg" bin/inv list)"
-[[ -n "$got" ]] && echo "  ok: XDG absent → repo inventory/ fallback" \
-  || { echo "  FAIL: repo fallback failed"; exit 1; }
-[[ "$_made_repo_inv" -eq 1 ]] && rm -f inventory/fleet.yaml inventory/groups.yaml
-rmdir homelab-ops-inv-probe 2>/dev/null || true
-
-# 셋 다 부재 → 후보 경로를 담은 명확한 에러로 exit 1
-errout="$(env -u HOMELAB_INVENTORY_DIR XDG_CONFIG_HOME="$_emptyxdg" HOME="$_emptyxdg" \
-  bash -c 'cd "$1"; rm -f inventory/fleet.yaml; bin/inv list' _ "$PWD" 2>&1 || true)"
-assert_contains "$errout" "homelab-ops" "no-inventory error mentions config path"
-rm -rf "$_xdg" "$_emptyxdg"
 
 finish; echo "PASS test_inv"
