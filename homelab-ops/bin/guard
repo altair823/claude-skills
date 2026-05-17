@@ -29,6 +29,25 @@ case "${1:-}" in
     guard_grade "$2" "$3" ;;
   "")
     die "usage: guard <action> <target-id> [--approve] [-- <extra>...]" ;;
+  --plan)
+    # read-only: inventory 만 읽어 op 가 필요로 하는 NAME=bw://ref 를 출력.
+    # 어떤 시크릿에도 접근하지 않는다 (safe).
+    [[ $# -ge 3 ]] || die "usage: guard --plan <action> <target-id>"
+    pa="$2"; pt="$3"
+    pgrade="$(guard_grade "$pa" "$pt")"        # target 존재도 검증; 없으면 die
+    [[ "$pgrade" == "safe" ]] && exit 0        # safe op 는 credential 불필요
+    pinv="$("$HERE/inv" get "$pt")" || exit $?
+    pkind="$(jq -r '.kind // ""' <<<"$pinv")"
+    case "$(op_transport "$pa" "$pkind")" in
+      pve)
+        pref="$("$HERE/inv" get "$(owner_host "$pt")" \
+                | jq -r '.access.api.token_ref // empty')"
+        [[ -n "$pref" ]] && printf 'PVE_TOKEN=%s\n' "$pref" ;;
+      ssh)
+        pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pinv")"
+        [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref" ;;
+    esac
+    exit 0 ;;
   *)
     action="$1"; target="${2:-}"
     [[ -n "$target" ]] || die "usage: guard <action> <target-id> [--approve] [-- <extra>...]"
