@@ -54,6 +54,7 @@ op_transport() {
   local action="${1:?op_transport: action required}" kind="${2:-}"
   case "$action" in
     status|metrics|get) echo none ;;
+    # 이 목록은 bin/_backend 의 동명 case 라벨과 동기화 유지 (단일 출처).
     start|stop|restart|destroy|snapshot)
       case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
     pkg-install) echo ssh ;;

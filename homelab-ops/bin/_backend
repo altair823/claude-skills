@@ -17,6 +17,8 @@ kind="$(jq -r .kind <<<"$inv")"
 case "$action:$kind" in
   status:*|metrics:*|get:*)
     "$HERE/inv" resolve "$target" ;;
+  # NOTE: 이 mutating action 목록은 _lib.sh op_transport 의 동명 arm 과 반드시
+  # 함께 갱신해야 한다 (transport 결정의 단일 출처 — 둘이 어긋나면 오라우팅).
   start:*|stop:*|restart:*|destroy:*|snapshot:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would $action $target (kind=$kind)"; exit 0
