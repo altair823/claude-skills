@@ -7,8 +7,12 @@ chmod +x bin/guard 2>/dev/null || true
 assert_eq "safe"        "$(bin/guard grade status vm-100)"       "status on non-critical = safe"
 assert_eq "caution"     "$(bin/guard grade stop vm-100)"         "stop on plain vm = caution"
 assert_eq "destructive" "$(bin/guard grade destroy vm-100)"      "destroy = destructive"
-# critical tag escalates one level
-assert_eq "caution"     "$(bin/guard grade status pve-01)"       "status on critical = caution (bumped)"
+# critical tag escalates one level — but ONLY for ops that can mutate.
+# Read-only safe ops (status/metrics/get/list/inventory) are NEVER escalated:
+# observability of your most important hosts must not require --approve.
+assert_eq "safe"        "$(bin/guard grade status pve-01)"       "status on critical stays safe (read-only exempt)"
+assert_eq "safe"        "$(bin/guard grade metrics pve-01)"      "metrics on critical stays safe"
+assert_eq "safe"        "$(bin/guard grade get pve-01)"          "get on critical stays safe"
 assert_eq "destructive" "$(bin/guard grade stop nas-01)"         "stop on critical = destructive (bumped)"
 # deny-by-default: unknown action
 assert_eq "destructive" "$(bin/guard grade frobnicate vm-100)"   "unknown action = destructive"

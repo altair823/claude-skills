@@ -28,11 +28,13 @@ assert_eq "0" "$(tail -1 logs/audit.jsonl | jq -r .exit)" "safe exit 0 audited"
 assert_status 3 'env -u PVE_TOKEN bin/guard stop lab-vm-900' "stop without PVE_TOKEN exits 3"
 # ssh-transport op refused when its credential (HL_SSH_KEY) is absent
 assert_status 3 'env -u HL_SSH_KEY -u PVE_TOKEN bin/guard pkg-install lab-vm-900' "pkg-install without HL_SSH_KEY exits 3"
-# transport-none op (status on critical = caution) is NOT blocked by the
-# credential gate (no transport secret needed). pve-01 is prod+critical, so it
-# still hits the *unrelated* pre-existing prod-approval gate → exit 10, NOT the
-# credential gate's exit 3. exit 10 ≠ 3 proves the credential gate passed it.
-assert_status 10 'env -u PVE_TOKEN -u HL_SSH_KEY bin/guard status pve-01' "caution+transport-none passes credential gate (no credential needed)"
+# A non-safe transport-none op (kill → destructive, op_transport=none) is NOT
+# blocked by the credential gate (no transport secret needed). It still hits
+# the *unrelated* destructive-approval gate → exit 10, NOT the credential
+# gate's exit 3. exit 10 ≠ 3 proves the credential gate passed it.
+# (status on critical is now safe → exempt from the bump, so it can no longer
+# serve as the non-safe transport-none vehicle here.)
+assert_status 10 'env -u PVE_TOKEN -u HL_SSH_KEY bin/guard kill pve-01' "destructive+transport-none passes credential gate (no credential needed)"
 
 # caution on lab env: 1-line summary, proceeds without --approve
 out="$(bin/guard stop lab-vm-900)"
