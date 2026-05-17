@@ -38,7 +38,8 @@ case "${1:-}" in
     [[ "$pgrade" == "safe" ]] && exit 0        # safe op 는 credential 불필요
     pinv="$("$HERE/inv" get "$pt")" || exit $?
     pkind="$(jq -r '.kind // ""' <<<"$pinv")"
-    case "$(op_transport "$pa" "$pkind")" in
+    ptrans="$(op_transport "$pa" "$pkind")"
+    case "$ptrans" in
       pve)
         pref="$("$HERE/inv" get "$(owner_host "$pt")" \
                 | jq -r '.access.api.token_ref // empty')"
@@ -46,6 +47,14 @@ case "${1:-}" in
       ssh)
         pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pinv")"
         [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref" ;;
+      none)
+        # status|metrics|get 은 정당한 무자격 read-only. 그 외(deny-default
+        # destructive 로 등급된 미매핑 액션)는 stdout 계약을 더럽히지 않도록
+        # stderr 로만 모호성을 알린다.
+        case "$pa" in
+          status|metrics|get) : ;;
+          *) echo "homelab-ops: --plan: '$pa' 는 transport 매핑이 없어 credential 을 산출하지 못함 (미지원 액션일 수 있음)" >&2 ;;
+        esac ;;
     esac
     exit 0 ;;
   *)

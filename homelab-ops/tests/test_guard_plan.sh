@@ -35,4 +35,14 @@ assert_eq "PVE_TOKEN=bw://Proxmox pve-01/api-token" "$out" "--plan resolves with
 # 잘못된 사용
 assert_status 1 'bin/guard --plan' "no args → usage error"
 
+# 미매핑 액션: stdout 은 비어 있고 rc 0, 진단은 stderr 로만
+out="$(bin/guard --plan frobnicate vm-100 2>/dev/null)"
+assert_eq "" "$out" "unmapped action → empty stdout"
+assert_status 0 'bin/guard --plan frobnicate vm-100 2>/dev/null' "unmapped action → rc 0"
+err="$(bin/guard --plan frobnicate vm-100 2>&1 1>/dev/null)"
+assert_contains "$err" "transport 매핑이 없어" "unmapped action → stderr diagnostic"
+# 정당한 read-only(critical bump 으로 caution 인 status)는 stderr 진단 없음
+err="$(bin/guard --plan status pve-01 2>&1 1>/dev/null)"
+assert_eq "" "$err" "status on critical → no false diagnostic on stderr"
+
 finish; echo "PASS test_guard_plan"
