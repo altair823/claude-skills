@@ -61,6 +61,9 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 > - Empty `--plan` for a non-safe op that still exits 3 ⇒ the target is an orphan
 >   guest with no owning Proxmox host / `token_ref` in inventory. Place it under a
 >   host (an inventory data fix, not a tool issue).
+> - SSH **키** 호스트의 `access.ssh.key_ref` 는 `bw://ssh-<id>/notes` 규약
+>   (키는 vault item notes 에 저장; `bw-put ... --type note --from-file` 로
+>   등록). `guard --plan` 은 key_ref 를 verbatim 으로 `HL_SSH_KEY` 에 싣는다.
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`
