@@ -203,6 +203,9 @@ case "${1:-}" in
     rm -f "$_rc_file"
     set -e
 
+    # Parse HO-TASK from the run-log rather than capturing backend stdout directly:
+    # the action runs inside the background mask pipeline (… | sed -u | tee "$rl" &),
+    # so $rl is the only place the structured HO-TASK line is available post-hoc.
     task_upid="$(sed -n 's/^HO-TASK upid=\([^ ]*\).*/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
     task_xs="$(sed -n 's/^HO-TASK .*exitstatus=\(.*\)$/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
 

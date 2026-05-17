@@ -37,5 +37,6 @@ rec="$(tail -1 logs/audit.jsonl)"
 jq -e . >/dev/null <<<"$rec" && echo "  ok: audit record is valid JSON without HO-TASK" \
   || { echo "  FAIL: invalid audit JSON"; exit 1; }
 assert_eq "null" "$(jq -r '.task_upid // "null"' <<<"$rec")" "no HO-TASK → task_upid null"
+assert_eq "null" "$(jq -r '.task_exitstatus // "null"' <<<"$rec")" "no HO-TASK → task_exitstatus null"
 
 finish; echo "PASS test_guard_task_audit"
