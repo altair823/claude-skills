@@ -8,10 +8,10 @@ host_id="${1:-}"; sub="${2:-}"
 inv="$("$HERE/inv" get "$host_id")" || die "no such host: $host_id"
 addr="$(jq -r '.address // empty' <<<"$inv")"
 [[ -n "$addr" && "$addr" != "null" ]] || die "host $host_id has no address in inventory"
-token_ref="$(jq -r '.access.api.token_ref // empty' <<<"$inv")"
-[[ -n "$token_ref" ]] || die "host $host_id has no access.api.token_ref"
-
-token="$("$HERE/bw-resolve" "$token_ref")" || exit $?   # propagates exit 3 if vault locked
+# 토큰은 bitwarden-ops bw-exec 가 PVE_TOKEN env 로 주입한다. homelab-ops 는
+# bw 를 직접 다루지 않는다. 미주입 시 fail-closed(exit 3).
+[[ -n "${PVE_TOKEN:-}" ]] || { HL_EXIT=3 die "missing PVE_TOKEN — bitwarden-ops bw-exec 로 감싸 실행 (참고: \"$HERE/guard\" --plan)"; }
+token="$PVE_TOKEN"
 base="https://${addr}:8006/api2/json"
 
 call() { # METHOD path [data]
