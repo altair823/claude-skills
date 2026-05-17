@@ -15,6 +15,8 @@ case "$1" in
   runlog) run_log_path "op-1" ;;
   transport) op_transport "$2" "$3" ;;
   owner) owner_host "$2" ;;
+  grade) action_grade "$2" ;;
+  canon) canon_action "$2" ;;
 esac
 EOF
 cp /tmp/_libprobe.sh bin/_libprobe.sh
@@ -55,6 +57,13 @@ assert_eq "ssh"  "$(bash bin/_libprobe.sh transport stop appliance)"     "stop a
 assert_eq "ssh"  "$(bash bin/_libprobe.sh transport pkg-install vm)"     "pkg-install → ssh"
 assert_eq "pve"  "$(bash bin/_libprobe.sh transport provision proxmox-host)" "provision → pve"
 assert_eq "none" "$(bash bin/_libprobe.sh transport frobnicate vm)"      "unknown action → none"
+assert_eq "safe"        "$(bash bin/_libprobe.sh grade status)"   "action_grade status → safe"
+assert_eq "caution"     "$(bash bin/_libprobe.sh grade stop)"     "action_grade stop → caution"
+assert_eq "destructive" "$(bash bin/_libprobe.sh grade destroy)"  "action_grade destroy → destructive"
+assert_eq "destructive" "$(bash bin/_libprobe.sh grade delete)"   "action_grade delete (alias) → destructive"
+assert_eq "destructive" "$(bash bin/_libprobe.sh grade frobnicate)" "unknown action → destructive (deny-default)"
+assert_eq "destroy"     "$(bash bin/_libprobe.sh canon delete)"   "canon_action delete → destroy"
+assert_eq "frob"        "$(bash bin/_libprobe.sh canon frob)"     "canon_action unknown → passthrough"
 assert_eq "pve-01"     "$(bash bin/_libprobe.sh owner vm-100)"    "owner_host: child → parent host"
 assert_eq "lab-vm-900" "$(bash bin/_libprobe.sh owner lab-vm-900)" "owner_host: orphan → itself"
 

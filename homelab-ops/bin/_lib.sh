@@ -48,19 +48,49 @@ run_log_path() { # <op-id> -> path (creates session run dir)
   echo "$RUNS_DIR/$HOMELAB_SESSION_ID/$1.log"
 }
 
-# op_transport <action> <kind> -> pve | ssh | none
-# bin/_backend 의 디스패치 결정을 그대로 미러링하는 단일 출처. _backend·guard
-# 게이트·guard --plan 이 모두 이 함수를 거쳐 같은 판단을 쓴다 (drift 방지).
+# ── Single source of truth: action → "<grade> <transport>" ───────────────
+#   grade:     safe | caution | destructive
+#   transport: none | pve | ssh | guest
+#     guest = 대상 kind 가 proxmox-host/vm/lxc 면 pve, 그 외(appliance 등)면 ssh
+# guard(등급)·_backend(라우팅)·op_transport(자격)·--plan 이 모두 이 테이블만
+# 본다. drift 는 tests/test_action_table.sh 패리티 테스트가 차단한다(과거의
+# "3곳 수동 동기" 주석 계약을 대체). 새 verb 는 여기 + backend + (필요시)
+# bin/pve verb arm 을 함께 추가하고 패리티 테스트가 녹색인지 확인할 것.
+declare -gA ACTIONS=(
+  [status]="safe none"        [list]="safe none"      [metrics]="safe none"
+  [get]="safe none"           [inventory]="safe none"
+  [start]="caution guest"     [stop]="caution guest"  [restart]="caution guest"
+  [snapshot]="caution guest"  [pkg-install]="caution ssh"
+  [provision]="destructive pve"  [destroy]="destructive guest"
+)
+declare -gA ACTION_ALIASES=( [delete]="destroy" )
+
+# canon_action <action> -> 별칭 해소(없으면 입력 그대로). 미지의 액션은
+# 그대로 통과시켜 deny-by-default 가 등급/거부를 책임진다.
+canon_action() {
+  local a="${1:?canon_action: action required}"
+  echo "${ACTION_ALIASES[$a]:-$a}"
+}
+
+# action_grade <action> -> safe|caution|destructive (deny-by-default).
+# critical 승급은 적용하지 않는다 — 그건 target 이 필요하므로 guard 소관.
+action_grade() {
+  local a; a="$(canon_action "${1:?action_grade: action required}")"
+  local spec="${ACTIONS[$a]:-}"
+  if [[ -n "$spec" ]]; then echo "${spec%% *}"; else echo destructive; fi
+}
+
+# op_transport <action> <kind> -> pve | ssh | none  (테이블 둘째 토큰 해석)
 op_transport() {
-  local action="${1:?op_transport: action required}" kind="${2:-}"
-  case "$action" in
-    status|metrics|get) echo none ;;
-    # 이 목록은 bin/_backend 의 동명 case 라벨과 동기화 유지 (단일 출처).
-    start|stop|restart|destroy|snapshot)
-      case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
-    pkg-install) echo ssh ;;
-    provision)   echo pve ;;
-    *)           echo none ;;
+  local a; a="$(canon_action "${1:?op_transport: action required}")"
+  local kind="${2:-}" spec t
+  spec="${ACTIONS[$a]:-}"
+  if [[ -z "$spec" ]]; then echo none; return; fi
+  t="${spec##* }"
+  case "$t" in
+    none|pve|ssh) echo "$t" ;;
+    guest) case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
+    *) echo none ;;
   esac
 }
 
