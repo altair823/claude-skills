@@ -3,7 +3,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x provisioning/phase1 2>/dev/null || true
-export BW_SESSION="stub-session"
 export PVE_TOKEN="stub-token-value"
 
 # dry-run prints what WILL be created/destroyed and calls no mutating API

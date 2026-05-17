@@ -3,7 +3,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/ssh-run 2>/dev/null || true
-export BW_SESSION="stub-session"
 export HL_SSH_KEY="$(printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nSTUBKEY-ssh-nas-01\n-----END OPENSSH PRIVATE KEY-----')"
 
 # Private tmpdir so any tempfile/agent socket ssh-run creates lands here

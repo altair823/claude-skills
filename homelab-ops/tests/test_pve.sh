@@ -3,7 +3,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/pve 2>/dev/null || true
-export BW_SESSION="stub-session"
 export PVE_TOKEN="stub-token-value"
 
 # curl is stubbed → deterministic Proxmox-shaped JSON

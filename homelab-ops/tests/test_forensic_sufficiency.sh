@@ -2,7 +2,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
-export BW_SESSION="stub-session"
 export PVE_TOKEN="stub-token-value"
 export HOMELAB_SESSION_ID="forensic-sess"
 : > logs/audit.jsonl

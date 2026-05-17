@@ -14,7 +14,6 @@ echo "BACKEND action=$1 target=$2 extra=$*"
 EOF
 chmod +x /tmp/fake-backend
 export HOMELAB_BACKEND=/tmp/fake-backend
-export BW_SESSION="stub-session"
 export PVE_TOKEN="stub-token-value"
 : > logs/audit.jsonl
 rm -rf "logs/runs/$HOMELAB_SESSION_ID"
