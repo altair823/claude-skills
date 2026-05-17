@@ -67,10 +67,11 @@ workspace-02(vmid 201) 를 pve-c64m96-01 → pve-c8m128-01 로 이전 + HDD 물�
   접속정보 보강 또는 guest-agent 의존 명문화 필요.
 
 ## 공통 요구
-- 각 verb 추가 시: `bin/pve` case arm + `_backend` mutating arm +
-  `_lib.sh op_transport` 동명 arm **3곳 동기 갱신**(주석에 명시된 단일 출처 계약).
-- `GRADE[]` 테이블(`bin/guard`)에 등급 등록(deny-by-default 회피용 임의 추가 금지
-  — 의도적 확장).
+- 각 verb 추가 시 등급·transport 는 `_lib.sh` 의 단일 `ACTIONS` 테이블 한 곳에
+  등록(deny-by-default 회피용 임의 추가 금지 — 의도적 확장). `bin/_backend`
+  mutating arm + (필요시) `bin/pve` verb arm 을 함께 추가하고
+  `tests/test_action_table.sh` 패리티 테스트가 녹색인지 확인
+  (과거의 `GRADE[]` + `op_transport` 3곳 수동 동기 계약은 이 테이블+테스트로 대체됨).
 - dry-run 안전 계약 준수(SAFETY CONTRACT: 미실행·exit 0).
 - audit/runlog 자동 적용됨(guard 경유 시) — 별도 작업 불필요.
 - 테스트: `tests/fixtures` 기반으로 dry-run/grade/credential-gate 케이스 추가.
