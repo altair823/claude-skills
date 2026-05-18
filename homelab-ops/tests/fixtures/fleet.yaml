@@ -46,6 +46,8 @@
   vmid: 900
   access:
     ssh: { user: ops, key_ref: "bw://ssh-lab-vm-900" }
+  disks:
+    - serial: "WD-LABDISK-001"
   tags: []
 
 - id: keyhost-notes

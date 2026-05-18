@@ -64,6 +64,7 @@ declare -gA ACTIONS=(
   [start]="caution guest"     [stop]="caution guest"  [restart]="caution guest"
   [snapshot]="caution guest"  [pkg-install]="caution ssh"
   [backup]="caution pve"
+  [disk-attach]="destructive host-ssh"  [disk-detach]="destructive host-ssh"
   [provision]="destructive pve"  [destroy]="destructive guest"
 )
 declare -gA ACTION_ALIASES=( [delete]="destroy" )
