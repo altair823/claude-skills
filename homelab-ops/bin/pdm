@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+source "$(dirname "$0")/_lib.sh"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+sub="${1:-}"
+[[ -n "$sub" ]] || die "usage: pdm {api <METHOD> <path> [data]}"
+
+# PDM 엔드포인트는 유일한 kind:pdm 인벤토리 엔트리에서 해석 (단일 출처).
+pe="$("$HERE/inv" get "$(pdm_entry)")" || exit $?
+addr="$(jq -r '.address // empty' <<<"$pe")"
+[[ -n "$addr" && "$addr" != "null" ]] || die "pdm entry has no address in inventory"
+[[ -n "${PDM_TOKEN:-}" ]] || { HL_EXIT=3 die "missing PDM_TOKEN — bitwarden-ops bw-exec 로 감싸 실행 (참고: \"$HERE/guard\" --plan)"; }
+token="$PDM_TOKEN"
+# base URL: address 에 :port 포함 가능. base_path 는 인벤토리 override 가능,
+# 기본은 PDM API 의 /api2/json. (운영자 PDM 버전에 맞춰 base_path 조정.)
+bp="$(jq -r '.access.api.base_path // "/api2/json"' <<<"$pe")"
+base="https://${addr}${bp}"
+
+# Per-entry CA (bin/pve 와 동일 규칙): 선언+미독출 시 fail-closed.
+ca_path="$(jq -r '.access.api.ca_path // empty' <<<"$pe")"
+ca_opt=()
+if [[ -n "$ca_path" && "$ca_path" != "null" ]]; then
+  [[ "$ca_path" == "~"* ]] && ca_path="${ca_path/#\~/$HOME}"
+  [[ "$ca_path" != /* ]] && ca_path="$REPO_ROOT/$ca_path"
+  [[ -r "$ca_path" ]] || die "ca_path not readable: $ca_path (pdm entry)"
+  ca_opt=(--cacert "$ca_path")
+fi
+
+call() { # METHOD path [data]
+  local m="$1" p="$2" d="${3:-}"
+  if [[ -n "$d" ]]; then
+    curl -sS --fail-with-body ${ca_opt[@]+"${ca_opt[@]}"} -X "$m" \
+      -H "Authorization: PVEAPIToken=${token}" --data "$d" "${base}${p}"
+  else
+    curl -sS --fail-with-body ${ca_opt[@]+"${ca_opt[@]}"} -X "$m" \
+      -H "Authorization: PVEAPIToken=${token}" "${base}${p}"
+  fi
+}
+
+case "$sub" in
+  api) call "${2:?METHOD}" "${3:?path}" "${4:-}" ;;
+  *)   die "pdm: unknown subcommand $sub" ;;
+esac

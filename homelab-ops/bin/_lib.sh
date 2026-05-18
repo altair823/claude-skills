@@ -171,3 +171,33 @@ pve_wait_task() {
     waited=$(( waited + interval ))
   done
 }
+
+# pdm_wait_task <task-id> -> 0: OK / 1: not OK / 75: 타임아웃.
+# pve_wait_task 와 동일 계약(HO-TASK emit, HOMELAB_TASK_TIMEOUT/INTERVAL).
+# 상태는 bin/pdm api GET 로 폴링. PDM task 상태 경로는 base_path 와 함께
+# 인벤토리 access.api.task_status_path (기본 /tasks) 로 override 가능 —
+# 운영자 PDM 버전에 맞춰 조정(known-unknown, spec §5).
+pdm_wait_task() {
+  local tid="${1:?pdm_wait_task: task-id required}"
+  local timeout="${HOMELAB_TASK_TIMEOUT:-600}"
+  local interval="${HOMELAB_TASK_POLL_INTERVAL:-2}"
+  local waited=0 resp st xs tsp
+  [[ "$timeout"  =~ ^[0-9]+$ ]] || die "pdm_wait_task: HOMELAB_TASK_TIMEOUT must be a non-negative integer (got: $timeout)"
+  [[ "$interval" =~ ^[0-9]+$ ]] || die "pdm_wait_task: HOMELAB_TASK_POLL_INTERVAL must be a non-negative integer (got: $interval)"
+  tsp="$("$REPO_ROOT/bin/inv" get "$(pdm_entry)" | jq -r '.access.api.task_status_path // "/tasks"')"
+  while :; do
+    resp="$("$REPO_ROOT/bin/pdm" api GET "${tsp}/${tid}/status" 2>/dev/null || true)"
+    st="$(jq -r '.data.status // empty' <<<"$resp" 2>/dev/null || true)"
+    if [[ "$st" == "stopped" ]]; then
+      xs="$(jq -r '.data.exitstatus // "UNKNOWN"' <<<"$resp" 2>/dev/null || echo UNKNOWN)"
+      printf 'HO-TASK upid=%s exitstatus=%s\n' "$tid" "$xs"
+      if [[ "$xs" == "OK" ]]; then return 0; else return 1; fi
+    fi
+    if (( waited >= timeout )); then
+      printf 'HO-TASK upid=%s exitstatus=%s\n' "$tid" "TIMEOUT"
+      return 75
+    fi
+    sleep "$interval"
+    waited=$(( waited + interval ))
+  done
+}
