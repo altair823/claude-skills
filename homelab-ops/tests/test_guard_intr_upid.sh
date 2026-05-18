@@ -40,4 +40,38 @@ assert_eq "UPID:stub:DEADBEEF:0:0:t:0:root@pam:" "$(jq -r .task_upid <<<"$rec")"
 assert_eq "null" "$(jq -r '.task_exitstatus // "null"' <<<"$rec")" \
   "결과 미상 → task_exitstatus null (정직한 표현)"
 
+# ── 시나리오 2: PDM 형식 raw 응답 복구 ─────────────────────────────────────
+# 느린 백엔드: PVE UPID 없이 PDM-shaped {"data":"PDM-task:stub:777"} 응답 후 sleep.
+# _finish_trap 우선순위-3 fallback 이 "data" 키에서 task id 를 복구해야 한다.
+: > logs/audit.jsonl
+rm -rf "logs/runs/$HOMELAB_SESSION_ID"
+
+cat > /tmp/slow-pdm-backend <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *--dry-run* ]] && { echo "DRYRUN"; exit 0; }
+[[ "$1" == status ]] && { echo '{"state":"pre"}'; exit 0; }
+echo '{"data":"PDM-task:stub:777"}'
+sleep 30
+EOF
+chmod +x /tmp/slow-pdm-backend
+export HOMELAB_BACKEND=/tmp/slow-pdm-backend
+
+bin/guard stop lab-vm-900 >/dev/null 2>&1 &
+gpid2=$!
+sleep 2                       # 백엔드가 PDM 응답 라인을 run-log 에 쓸 시간
+kill -TERM "$gpid2" 2>/dev/null || true
+set +e
+wait "$gpid2" 2>/dev/null
+rc2=$?
+set -e
+
+rec2="$(tail -1 logs/audit.jsonl)"
+assert_eq "143" "$(jq -r .exit <<<"$rec2")" "PDM 시나리오: TERM 경로 exit 143 감사 1건"
+n2="$(wc -l < logs/audit.jsonl)"
+assert_eq "1" "$n2" "PDM 시나리오: 감사 레코드 정확히 1건(갭/중복 없음)"
+assert_eq "PDM-task:stub:777" "$(jq -r .task_upid <<<"$rec2")" \
+  "PDM 시나리오: raw {\"data\":...} 에서 PDM task id 복구됨"
+assert_eq "null" "$(jq -r '.task_exitstatus // "null"' <<<"$rec2")" \
+  "PDM 시나리오: task_exitstatus null (결과 미상)"
+
 finish; echo "PASS test_guard_intr_upid"

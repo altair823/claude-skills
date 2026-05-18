@@ -119,4 +119,29 @@ grep -q 'qm set 900 -scsi1 /dev/disk/by-id/wwn-0xLAB,backup=0,iothread=1' "$t6lo
   && echo "  ok: serial 일치 → qm set 진행" || { echo "  FAIL: 일치인데 qm set 미실행: $(cat "$t6log")"; exit 1; }
 rm -rf "$T6" "$t6log"
 
+# 비-숫자 vmid 거부: vmid:"9; reboot" 인벤토리 → disk-attach 가 비-0 + "vmid 비정상"
+_inv_tmp_dir="$(mktemp -d)"
+mkdir -p "$_inv_tmp_dir"
+cat > "$_inv_tmp_dir/fleet.yaml" <<'INVEOF'
+- id: inject-vm
+  kind: qemu
+  env: lab
+  tags: []
+  vmid: "9; reboot"
+  owner: stub-host
+  disks:
+    - serial: STUB-SERIAL-001
+  access:
+    ssh:
+      host: 127.0.0.1
+      user: root
+INVEOF
+set +e
+_vmid_out="$(HOMELAB_INVENTORY_DIR="$_inv_tmp_dir" bin/_backend disk-attach inject-vm --dry-run -- --by-id /dev/disk/by-id/wwn-0xLAB 2>&1)"; _vmid_rc=$?
+set -e
+[[ "$_vmid_rc" -ne 0 ]] && echo "  ok: 비-숫자 vmid → 비-0 종료" || { echo "  FAIL: 비-숫자 vmid 가 통과됨"; exit 1; }
+assert_contains "$_vmid_out" "vmid 비정상" "비-숫자 vmid 거부 메시지"
+assert_not_contains "$_vmid_out" "qm set" "비-숫자 vmid 거부 시 qm set 미형성"
+rm -rf "$_inv_tmp_dir"
+
 finish; echo "PASS test_disk_attach"

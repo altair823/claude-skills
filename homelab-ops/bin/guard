@@ -130,6 +130,11 @@ case "${1:-}" in
           if [[ -z "$task_upid" ]]; then
             task_upid="$(grep -o 'UPID:[^"]*' "$rl" 2>/dev/null | tail -n1 || true)"
           fi
+          if [[ -z "$task_upid" ]]; then
+            # PVE 외 transport(PDM 등): bin/pdm/bin/pve 가 출력한 raw
+            # {"data":"<task-id>"} 응답에서 task id 복구(PVE UPID 비포함 형식).
+            task_upid="$(grep -oE '"data"[[:space:]]*:[[:space:]]*"[^"]+"' "$rl" 2>/dev/null | tail -n1 | sed -E 's/.*"data"[[:space:]]*:[[:space:]]*"([^"]+)"/\1/' || true)"
+          fi
         fi
         _DONE=1
         _audit "$_frc" || echo "homelab-ops: AUDIT FAILED op=$op rc=$_frc" >&2

@@ -49,6 +49,7 @@ case "$action:$kind" in
     done
     vmid="$(jq -r '.vmid // empty' <<<"$inv")"
     [[ -n "$vmid" ]] || die "disk-*: target '$target' has no vmid"
+    [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-*: vmid 비정상 (숫자만; 받음: '$vmid')"
     if [[ "$action" == "disk-attach" ]]; then
       [[ "$byid" == /dev/disk/by-id/* ]] \
         || die "disk-attach: --by-id 는 /dev/disk/by-id/... 안정 경로만 허용 (받음: '${byid:-<none>}'). /dev/sdX 등 비안정 경로 거부."
