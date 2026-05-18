@@ -32,4 +32,38 @@ assert_contains "$o" "qm set 900 -delete scsi1" "detach 명령 형성(echo만)"
 assert_eq "destructive host-ssh" "$(bash -c 'source bin/_lib.sh; echo "${ACTIONS[disk-attach]}"')" "ACTIONS[disk-attach]=destructive host-ssh"
 assert_status 3 'env -u HL_SSH_KEY -u HL_SSH_PASS PVE_TOKEN=x bin/guard disk-attach lab-vm-900 -- --by-id /dev/disk/by-id/wwn-0xLAB' "host-ssh 게이트: owner_host ssh 자격 없으면 exit 3"
 
+# non-dry: ssh stub 가 owner_host 로 qm set argv 를 받는지 + 인젝션 거부
+nd="$(mktemp -d)"
+cat > "$nd/ssh" <<'EOF'
+#!/usr/bin/env bash
+echo "ssh-args: $*" >> "${ND_LOG:?}"
+echo stub-applied
+EOF
+chmod +x "$nd/ssh"
+# ssh-add: nd-local 허용 stub (tests/stubs/ssh-add 는 PEM 검증; non-dry 에서는 관대하게)
+cat > "$nd/ssh-add" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$nd/ssh-add"
+# ssh-agent: nd-local 허용 stub
+cat > "$nd/ssh-agent" <<'EOF'
+#!/usr/bin/env bash
+echo 'SSH_AUTH_SOCK=/tmp/nd-stub.sock; export SSH_AUTH_SOCK;'
+echo 'SSH_AGENT_PID=99998; export SSH_AGENT_PID;'
+EOF
+chmod +x "$nd/ssh-agent"
+ndlog="$(mktemp)"
+out="$(ND_LOG="$ndlog" PATH="$nd:$PWD/tests/stubs:$PATH" HL_SSH_KEY=x bin/_backend disk-attach lab-vm-900 -- --by-id /dev/disk/by-id/wwn-0xLAB --index 2 2>&1)"
+assert_contains "$(cat "$ndlog")" "qm set 900 -scsi2 /dev/disk/by-id/wwn-0xLAB,backup=0,iothread=1" "non-dry: qm argv reaches ssh (owner_host=lab-vm-900)"
+# 인젝션 거부: ; 가 든 by-id 는 charset 에서 die, ssh 미호출
+: > "$ndlog"
+set +e
+o="$(ND_LOG="$ndlog" PATH="$nd:$PWD/tests/stubs:$PATH" HL_SSH_KEY=x bin/_backend disk-attach lab-vm-900 -- --by-id '/dev/disk/by-id/x;reboot' 2>&1)"; rc=$?
+set -e
+[[ "$rc" -ne 0 ]] && echo "  ok: 인젝션 by-id 거부(비-0)" || { echo "  FAIL: 인젝션 by-id 통과"; exit 1; }
+assert_eq "" "$(cat "$ndlog")" "인젝션 거부 시 ssh 미호출(빈 로그)"
+[[ "$o" == *"허용되지 않는 문자"* ]] && echo "  ok: charset die 메시지" || { echo "  FAIL: charset die 메시지 없음: $o"; exit 1; }
+rm -rf "$nd" "$ndlog"
+
 finish; echo "PASS test_disk_attach"

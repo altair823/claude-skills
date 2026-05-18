@@ -41,9 +41,9 @@ case "$action:$kind" in
     byid=""; idx=""; bus="scsi"
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --by-id) byid="${2:-}"; shift 2 ;;
-        --index) idx="${2:-}"; shift 2 ;;
-        --bus)   bus="${2:-}"; shift 2 ;;
+        --by-id) byid="${2:?"disk-*: --by-id 에 값 필요"}"; shift 2 ;;
+        --index) idx="${2:?"disk-*: --index 에 값 필요"}"; shift 2 ;;
+        --bus)   bus="${2:?"disk-*: --bus 에 값 필요"}"; shift 2 ;;
         *) shift ;;
       esac
     done
@@ -52,22 +52,32 @@ case "$action:$kind" in
     if [[ "$action" == "disk-attach" ]]; then
       [[ "$byid" == /dev/disk/by-id/* ]] \
         || die "disk-attach: --by-id 는 /dev/disk/by-id/... 안정 경로만 허용 (받음: '${byid:-<none>}'). /dev/sdX 등 비안정 경로 거부."
+      [[ "$byid" =~ ^/dev/disk/by-id/[A-Za-z0-9_.:-]+$ ]] \
+        || die "disk-attach: --by-id 값에 허용되지 않는 문자 (안정 식별자 [A-Za-z0-9_.:-] 만; 경로탐색·셸 메타문자 거부)"
       # serial opt-in 강제: 인벤토리에 disks[].serial 선언이 없으면 거부.
-      sercount="$(jq -r '[.disks[]?.serial] | length' <<<"$inv")"
+      sercount="$(jq -r '[.disks[]?.serial | select(. != null)] | length' <<<"$inv")"
       [[ "$sercount" -ge 1 ]] \
         || die "disk-attach: 게스트 '$target' 인벤토리에 disks[].serial 미선언 — 명시적 opt-in 필요(아무 디스크나 패스스루 차단)"
       idx="${idx:-1}"
+      [[ "$idx" =~ ^[0-9]+$ ]] || die "disk-*: --index 는 숫자여야 함 (받음: '${idx:-<none>}')"
+      [[ "$bus" =~ ^[a-z]+$ ]] || die "disk-*: --bus 는 소문자 알파벳만 (예: scsi, virtio, ide)"
       cmd="qm set $vmid -${bus}${idx} ${byid},backup=0,iothread=1"
     else
       [[ -n "$idx" ]] || die "disk-detach: --index <N> 필요"
+      [[ "$idx" =~ ^[0-9]+$ ]] || die "disk-*: --index 는 숫자여야 함 (받음: '${idx:-<none>}')"
+      [[ "$bus" =~ ^[a-z]+$ ]] || die "disk-*: --bus 는 소문자 알파벳만 (예: scsi, virtio, ide)"
       cmd="qm set $vmid -delete ${bus}${idx}"
     fi
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would (on $(owner_host "$target")) $cmd"
-      [[ "$action" == "disk-attach" ]] && echo "  serial 대조: 인벤토리 declared serial 과 노드 by-id 실제 serial 을 적용 시 대조(불일치 거부)"
+      [[ "$action" == "disk-attach" ]] && echo "  [Task6 예정] serial 대조: 인벤토리 declared serial 과 노드 by-id 실제 serial 을 적용 시 대조(불일치 거부)"
       exit 0
     fi
-    "$HERE/ssh-run" "$(owner_host "$target")" -- "$cmd" ;;
+    if [[ "$action" == "disk-attach" ]]; then
+      "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" "-${bus}${idx}" "${byid},backup=0,iothread=1"
+    else
+      "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
+    fi ;;
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0
