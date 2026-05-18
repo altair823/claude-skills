@@ -145,6 +145,8 @@ case "${1:-}" in
     _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$inv_json")"
     # host-ssh: 자격 대상이 owner_host(target). pdm: kind:pdm 엔트리.
     if [[ "$_t" == "host-ssh" ]]; then
+      # owner 부재 시 {} → _auth=key 로 보수적 진행(게이트가 HL_SSH_KEY 요구);
+      # --plan 의 hard-exit 보다 의도적으로 무름(게이트는 실행 전 방어선).
       _hoinv="$("$HERE/inv" get "$(owner_host "$target")" 2>/dev/null || echo '{}')"
       _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$_hoinv")"
     fi

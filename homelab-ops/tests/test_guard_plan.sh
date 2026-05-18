@@ -7,6 +7,7 @@ chmod +x bin/guard 2>/dev/null || true
 # 테스트 전용 래퍼: probe 액션을 _HL_EXTRA_ACTIONS 로 주입한 뒤 guard 실행.
 cat > bin/_planprobe <<'EOF'
 #!/usr/bin/env bash
+export _HL_TEST_HARNESS=1
 export _HL_EXTRA_ACTIONS="__probe_hostssh=destructive host-ssh;__probe_pdm=destructive pdm"
 exec "$(dirname "$0")/guard" "$@"
 EOF

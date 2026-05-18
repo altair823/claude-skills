@@ -68,11 +68,20 @@ declare -gA ACTIONS=(
 )
 declare -gA ACTION_ALIASES=( [delete]="destroy" )
 
-# 테스트 전용 확장점: _HL_EXTRA_ACTIONS="k=grade transport;k2=..." 이면 ACTIONS 에
-# 병합. 운영 경로에서는 unset 이라 무영향(패리티/단일출처 계약은 unset 기준).
-if [[ -n "${_HL_EXTRA_ACTIONS:-}" ]]; then
+# 테스트 전용 확장점: ACTIONS 에 probe 액션을 병합. 안전장치 2겹 —
+#  (1) 테스트 하니스 sentinel _HL_TEST_HARNESS 와 _HL_EXTRA_ACTIONS 가 동시
+#      존재할 때만 동작(운영자 env 우발/악의 주입 차단).
+#  (2) key 는 반드시 __probe_ prefix — 실 액션(stop/destroy/...) 의 grade·
+#      transport 를 절대 덮어쓸 수 없음(Rule 4 우회 불가, safe-by-construction).
+# 운영 경로에서는 sentinel unset → 완전 무영향(패리티/단일출처 계약 불변).
+if [[ -n "${_HL_TEST_HARNESS:-}" && -n "${_HL_EXTRA_ACTIONS:-}" ]]; then
   _IFS_SAVE="$IFS"; IFS=';'
-  for _kv in $_HL_EXTRA_ACTIONS; do ACTIONS["${_kv%%=*}"]="${_kv#*=}"; done
+  for _kv in $_HL_EXTRA_ACTIONS; do
+    case "${_kv%%=*}" in
+      __probe_*) ACTIONS["${_kv%%=*}"]="${_kv#*=}" ;;
+      *) echo "homelab-ops: _HL_EXTRA_ACTIONS 는 __probe_ prefix 키만 허용 (무시: ${_kv%%=*})" >&2 ;;
+    esac
+  done
   IFS="$_IFS_SAVE"; unset _kv _IFS_SAVE
 fi
 
