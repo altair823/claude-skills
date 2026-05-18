@@ -94,6 +94,60 @@ case "$action:$kind" in
     else
       "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
     fi ;;
+  disk-grow:*)
+    lv=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in --lv) lv="${2:-}"; shift 2 ;; *) shift ;; esac
+    done
+    vmid="$(jq -r '.vmid // empty' <<<"$inv")"
+    [[ -n "$vmid" ]] || die "disk-grow: target '$target' has no vmid"
+    [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-grow: vmid 비정상"
+    oh="$(owner_host "$target")"
+    _ga() { # <remote shell cmd> -> guest-exec out-data, die if exitcode!=0/agent down
+      local raw od ec
+      raw="$("$HERE/ssh-run" "$oh" -- "qm guest exec $vmid -- $*" 2>&1)" \
+        || die "disk-grow: qm guest exec 실패(게스트 guest-agent 미동작?): $raw"
+      ec="$(jq -r '.exitcode // 1' <<<"$raw" 2>/dev/null || echo 1)"
+      [[ "$ec" == "0" ]] || die "disk-grow: 게스트 명령 비-0 (exitcode=$ec): $*"
+      od="$(jq -r '."out-data" // ""' <<<"$raw" 2>/dev/null || echo "")"
+      printf '%s' "$od"
+    }
+    # 탐지 (read-only, dry/apply 공통)
+    fm="$(_ga findmnt -J)"
+    fstype="$(jq -r '.filesystems[]? | select(.target=="/") | .fstype' <<<"$fm" 2>/dev/null | head -n1)"
+    mnt="/"
+    rpt="$(_ga pvs --reportformat json; true)"
+    lvline="$(_ga lvs --reportformat json)"
+    if [[ -z "$lv" ]]; then
+      lv="$(jq -r '[.report[]?.lv[]?] | if length==1 then (.[0]|.vg_name+"/"+.lv_name) else "" end' <<<"$lvline" 2>/dev/null)"
+      [[ -n "$lv" ]] || die "disk-grow: 단일 LV 자동탐지 실패(다중/비표준) — --lv <vg/lv> 명시 필요"
+    fi
+    # charset guard: lv (operator-supplied 및 자동탐지 모두 적용) — dry+apply 공통
+    [[ "$lv" =~ ^[A-Za-z0-9_+./-]+$ ]] || die "disk-grow: --lv/탐지된 LV 에 허용되지 않는 문자 (vg/lv 형식만)"
+    case "$fstype" in
+      ext4) fscmd="resize2fs /dev/${lv}" ;;
+      xfs)  fscmd="xfs_growfs ${mnt}" ;;
+      *)    die "disk-grow: 미지원 FS '$fstype' (ext4/xfs 만 지원)" ;;
+    esac
+    pvname="$(jq -r '[.report[]?.pv[]?.pv_name]|.[0]//""' <<<"$rpt" 2>/dev/null)"
+    pvname="${pvname:-/dev/sda3}"
+    disk="$(echo "$pvname" | sed -E 's#([0-9]+)$##')"
+    partnum="$(echo "$pvname" | sed -E 's#.*[^0-9]([0-9]+)$#\1#')"
+    seq1="growpart ${disk} ${partnum}"
+    seq2="pvresize ${pvname}"
+    seq3="lvextend -l +100%FREE ${lv}"
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: disk-grow $target (vmid=$vmid via $oh, guest-agent)"
+      echo "  주의: PVE 레벨 가상디스크 확장은 본 verb 범위 밖(게스트 내부 전용) — PVE 디스크는 사전 확장 전제"
+      echo "  탐지: PV=$pvname LV=$lv FS=$fstype mnt=$mnt"
+      echo "  시퀀스: $seq1 && $seq2 && $seq3 && $fscmd"
+      exit 0
+    fi
+    _ga $seq1 >/dev/null
+    _ga $seq2 >/dev/null
+    _ga $seq3 >/dev/null
+    _ga $fscmd >/dev/null
+    echo "GROWN: $target $lv ($fstype) extended on $oh" ;;
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0
