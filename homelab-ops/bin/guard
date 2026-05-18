@@ -51,6 +51,20 @@ case "${1:-}" in
           pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pinv")"
           [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref"
         fi ;;
+      host-ssh)
+        pho="$("$HERE/inv" get "$(owner_host "$pt")")" || exit $?
+        phauth="$(jq -r '.access.ssh.auth // "key"' <<<"$pho")"
+        if [[ "$phauth" == "password" ]]; then
+          pref="$(jq -r '.access.ssh.pass_ref // empty' <<<"$pho")"
+          [[ -n "$pref" ]] && printf 'HL_SSH_PASS=%s\n' "$pref"
+        else
+          pref="$(jq -r '.access.ssh.key_ref // empty' <<<"$pho")"
+          [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref"
+        fi ;;
+      pdm)
+        pref="$("$HERE/inv" get "$(pdm_entry)" \
+                | jq -r '.access.api.token_ref // empty')"
+        [[ -n "$pref" ]] && printf 'PDM_TOKEN=%s\n' "$pref" ;;
       none)
         # status|metrics|get 은 정당한 무자격 read-only. 그 외(deny-default
         # destructive 로 등급된 미매핑 액션)는 stdout 계약을 더럽히지 않도록
@@ -129,10 +143,16 @@ case "${1:-}" in
     # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
     _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$inv_json")"
+    # host-ssh: 자격 대상이 owner_host(target). pdm: kind:pdm 엔트리.
+    if [[ "$_t" == "host-ssh" ]]; then
+      _hoinv="$("$HERE/inv" get "$(owner_host "$target")" 2>/dev/null || echo '{}')"
+      _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$_hoinv")"
+    fi
     if [[ "$grade" != "safe" ]]; then
       _gate_var=""
       [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}" ]] && _gate_var="PVE_TOKEN"
-      if [[ "$_t" == "ssh" ]]; then
+      [[ "$_t" == "pdm" && -z "${PDM_TOKEN:-}" ]] && _gate_var="PDM_TOKEN"
+      if [[ "$_t" == "ssh" || "$_t" == "host-ssh" ]]; then
         if [[ "$_auth" == "password" ]]; then
           [[ -z "${HL_SSH_PASS:-}" ]] && _gate_var="HL_SSH_PASS"
         else

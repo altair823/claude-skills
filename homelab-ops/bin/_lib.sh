@@ -68,6 +68,14 @@ declare -gA ACTIONS=(
 )
 declare -gA ACTION_ALIASES=( [delete]="destroy" )
 
+# 테스트 전용 확장점: _HL_EXTRA_ACTIONS="k=grade transport;k2=..." 이면 ACTIONS 에
+# 병합. 운영 경로에서는 unset 이라 무영향(패리티/단일출처 계약은 unset 기준).
+if [[ -n "${_HL_EXTRA_ACTIONS:-}" ]]; then
+  _IFS_SAVE="$IFS"; IFS=';'
+  for _kv in $_HL_EXTRA_ACTIONS; do ACTIONS["${_kv%%=*}"]="${_kv#*=}"; done
+  IFS="$_IFS_SAVE"; unset _kv _IFS_SAVE
+fi
+
 # canon_action <action> -> 별칭 해소(없으면 입력 그대로). 미지의 액션은
 # 그대로 통과시켜 deny-by-default 가 등급/거부를 책임진다.
 canon_action() {

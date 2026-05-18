@@ -4,6 +4,15 @@ cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/guard 2>/dev/null || true
 
+# 테스트 전용 래퍼: probe 액션을 _HL_EXTRA_ACTIONS 로 주입한 뒤 guard 실행.
+cat > bin/_planprobe <<'EOF'
+#!/usr/bin/env bash
+export _HL_EXTRA_ACTIONS="__probe_hostssh=destructive host-ssh;__probe_pdm=destructive pdm"
+exec "$(dirname "$0")/guard" "$@"
+EOF
+chmod +x bin/_planprobe
+trap 'rm -f bin/_planprobe' EXIT
+
 # 안전 등급 op 는 credential 불필요 → 빈 출력
 out="$(bin/guard --plan status vm-100)"
 assert_eq "" "$out" "safe op → empty plan"
@@ -53,5 +62,12 @@ assert_eq "HL_SSH_KEY=bw://ssh-keyhost-notes/notes" "$out" "ssh key_ref with /no
 # auth=password 호스트는 HL_SSH_PASS 자격을 산출한다.
 out="$(bin/guard --plan stop pwhost)"
 assert_eq "HL_SSH_PASS=bw://ssh-pwhost-pass" "$out" "password host → HL_SSH_PASS ref"
+
+# host-ssh transport: owner_host(vm-100)=pve-01 의 ssh key_ref 산출(target 의 게 아님)
+out="$(bin/_planprobe --plan __probe_hostssh vm-100 2>/dev/null || true)"
+assert_eq "HL_SSH_KEY=bw://ssh-pve-01" "$out" "--plan host-ssh → owner_host ssh key_ref"
+# pdm transport: kind:pdm 엔트리의 api token_ref 산출
+out="$(bin/_planprobe --plan __probe_pdm vm-100 2>/dev/null || true)"
+assert_eq "PDM_TOKEN=bw://Proxmox-Datacenter-Manager pdm-01/api-token" "$out" "--plan pdm → pdm entry api token_ref"
 
 finish; echo "PASS test_guard_plan"
