@@ -161,6 +161,33 @@ case "$action:$kind" in
       _ga xfs_growfs "$mnt" >/dev/null
     fi
     echo "GROWN: $target $lv ($fstype) extended on $oh" ;;
+  remote-migrate:*)
+    to=""; tstor=""; online=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --to) to="${2:?"remote-migrate: --to 에 값 필요"}"; shift 2 ;;
+        --target-storage) tstor="${2:?"remote-migrate: --target-storage 에 값 필요"}"; shift 2 ;;
+        --online) online=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    vmid="$(jq -r '.vmid // empty' <<<"$inv")"
+    [[ -n "$vmid" ]] || die "remote-migrate: target '$target' has no vmid"
+    [[ "$vmid" =~ ^[0-9]+$ ]] || die "remote-migrate: vmid 비정상"
+    [[ -n "$to" ]] || die "remote-migrate: --to <target-node> 필요"
+    # SANCTIONED charset 가드(Task5/7 정합): to/tstor 가 PDM API body 로 흘러
+    # & = $ 공백 파라미터 인젝션을 차단. to=노드명, tstor=src:dst,src2:dst2.
+    [[ "$to" =~ ^[A-Za-z0-9_.-]+$ ]] \
+      || die "remote-migrate: --to '$to' 에 허용되지 않는 문자 (노드명 [A-Za-z0-9_.-] 만)"
+    [[ -z "$tstor" || "$tstor" =~ ^[A-Za-z0-9_.:,/-]+$ ]] \
+      || die "remote-migrate: --target-storage '$tstor' 에 허용되지 않는 문자 (src:dst[,src2:dst2] 형식만)"
+    src="$(owner_host "$target")"
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: remote-migrate $target vmid=$vmid src=$src to=$to storage=${tstor:-<same>} online=$([[ $online -eq 1 ]] && echo true || echo false)"
+      echo "  (PDM 경유; 실 PDM API path 는 인벤토리 access.api.migrate_path 로 확정 — spec §5)"
+      exit 0
+    fi
+    "$HERE/pdm" remote-migrate "$vmid" "$to" "$tstor" "$online" "$src" ;;
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0

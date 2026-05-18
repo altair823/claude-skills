@@ -66,6 +66,7 @@ declare -gA ACTIONS=(
   [backup]="caution pve"
   [disk-attach]="destructive host-ssh"  [disk-detach]="destructive host-ssh"
   [disk-grow]="destructive host-ssh"
+  [remote-migrate]="destructive pdm"
   [provision]="destructive pve"  [destroy]="destructive guest"
 )
 declare -gA ACTION_ALIASES=( [delete]="destroy" )
