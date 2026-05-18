@@ -120,6 +120,17 @@ case "${1:-}" in
     _finish_trap() { # <exit-code>
       local _frc="$1"
       if [[ -z "${_DONE:-}" ]]; then
+        # best-effort: 인터럽트 등으로 정상 경로의 HO-TASK 파싱이 실행되지
+        # 않았어도, run-log 에서 task_upid 를 복구해 감사 정확성을 높인다.
+        # 우선순위 1: HO-TASK 라인 / 2: backend 응답의 raw {"data":"UPID:..."}.
+        # 실패해도 감사 1건 보장(Rule 5)을 절대 훼손하지 않는다(|| true).
+        if [[ -z "$task_upid" && -n "${rl:-}" && -f "${rl:-/nonexistent}" ]]; then
+          task_upid="$(sed -n 's/^HO-TASK upid=\([^ ]*\).*/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
+          task_xs="$(sed -n 's/^HO-TASK .*exitstatus=\(.*\)$/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
+          if [[ -z "$task_upid" ]]; then
+            task_upid="$(grep -o 'UPID:[^"]*' "$rl" 2>/dev/null | tail -n1 || true)"
+          fi
+        fi
         _DONE=1
         _audit "$_frc" || echo "homelab-ops: AUDIT FAILED op=$op rc=$_frc" >&2
       fi
