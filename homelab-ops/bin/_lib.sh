@@ -26,7 +26,7 @@ mask() {
   sed -E \
     -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{ s/.*/***MASKED-PRIVATE-KEY***/ }' \
     -e 's/(BW_SESSION=)[^[:space:]]+/\1***MASKED***/g' \
-    -e 's/((PVE_TOKEN|HL_SSH_KEY|HL_SSH_PASS|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
+    -e 's/((PVE_TOKEN|PDM_TOKEN|HL_SSH_KEY|HL_SSH_PASS|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
     -e 's/(Authorization:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]]+/\1***MASKED***/gI' \
     -e 's/(("?)(token|password|secret|api[_-]?token)("?)[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1***MASKED***/gI' \
     -e 's/(PVEAPIToken[^=]*=)[^[:space:]]+/\1***MASKED***/g' \
@@ -184,7 +184,8 @@ pdm_wait_task() {
   local waited=0 resp st xs tsp
   [[ "$timeout"  =~ ^[0-9]+$ ]] || die "pdm_wait_task: HOMELAB_TASK_TIMEOUT must be a non-negative integer (got: $timeout)"
   [[ "$interval" =~ ^[0-9]+$ ]] || die "pdm_wait_task: HOMELAB_TASK_POLL_INTERVAL must be a non-negative integer (got: $interval)"
-  tsp="$("$REPO_ROOT/bin/inv" get "$(pdm_entry)" | jq -r '.access.api.task_status_path // "/tasks"')"
+  tsp="$("$REPO_ROOT/bin/inv" get "$(pdm_entry)" 2>/dev/null | jq -r '.access.api.task_status_path // "/tasks"' 2>/dev/null || true)"
+  tsp="${tsp:-/tasks}"
   while :; do
     resp="$("$REPO_ROOT/bin/pdm" api GET "${tsp}/${tid}/status" 2>/dev/null || true)"
     st="$(jq -r '.data.status // empty' <<<"$resp" 2>/dev/null || true)"

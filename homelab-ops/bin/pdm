@@ -26,6 +26,7 @@ if [[ -n "$ca_path" && "$ca_path" != "null" ]]; then
   ca_opt=(--cacert "$ca_path")
 fi
 
+# PDM 은 PVE 와 동일 Proxmox 토큰 인증 스택 → Authorization: PVEAPIToken= 동일 형식(헤더 전용, argv/디스크 미노출).
 call() { # METHOD path [data]
   local m="$1" p="$2" d="${3:-}"
   if [[ -n "$d" ]]; then
