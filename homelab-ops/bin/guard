@@ -122,7 +122,8 @@ case "${1:-}" in
       if [[ -z "${_DONE:-}" ]]; then
         # best-effort: 인터럽트 등으로 정상 경로의 HO-TASK 파싱이 실행되지
         # 않았어도, run-log 에서 task_upid 를 복구해 감사 정확성을 높인다.
-        # 우선순위 1: HO-TASK 라인 / 2: backend 응답의 raw {"data":"UPID:..."}.
+        # 우선순위 1: HO-TASK 라인 / 2: raw {"data":"UPID:..."}(PVE) /
+        # 3: raw {"data":"<task-id>"}(PVE 외 transport, 예: PDM).
         # 실패해도 감사 1건 보장(Rule 5)을 절대 훼손하지 않는다(|| true).
         if [[ -z "$task_upid" && -n "${rl:-}" && -f "${rl:-/nonexistent}" ]]; then
           task_upid="$(sed -n 's/^HO-TASK upid=\([^ ]*\).*/\1/p' "$rl" 2>/dev/null | tail -n1 || true)"
@@ -227,8 +228,9 @@ case "${1:-}" in
     # 추가 caveat (태스크 폴링 도입 이후): mutating verb 는 pve_wait_task 가
     # HOMELAB_TASK_TIMEOUT (기본 600s) 동안 PVE 태스크를 폴링하므로, 인터럽트
     # 시 고아 백엔드 프로세스가 최대 ~600s 계속 실행될 수 있음. _finish_trap 이
-    # 감사 전 run-log 에서 UPID 복구를 시도한다(우선순위 1: HO-TASK 라인,
-    # 2: raw {"data":"UPID:..."} 라인) — 인터럽트 시점에 UPID 가 아직 run-log
+    # 감사 전 run-log 에서 task id 복구를 시도한다(우선순위 1: HO-TASK 라인,
+    # 2: raw {"data":"UPID:..."}(PVE), 3: raw {"data":"<id>"}(PDM 등)) —
+    # 인터럽트 시점에 task id 가 아직 run-log
     # 에 안 쓰였으면 task_upid 는 null 로 감사됨(발행 UPID 는 그 경우에도 이후
     # run-log 에서 사후 확인 가능; 포렌식 무결성 유지).
     {
