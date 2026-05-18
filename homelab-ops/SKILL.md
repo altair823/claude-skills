@@ -94,7 +94,10 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 - PVE 변경(start/stop/restart/snapshot/destroy/backup/provision)은 task UPID
   완료까지 폴링되어 감사 `exit`/`task_exitstatus` 가 **실제 결과**를 반영한다
   (타임아웃 시 exit 75 + `task_upid` 보존). 기본 한도 `HOMELAB_TASK_TIMEOUT`
-  600s.
+  600s. `remote-migrate`(PDM)도 `pdm_wait_task` 로 PDM task 를 동일하게
+  폴링·감사하며, 인터럽트 시 `_finish_trap` 이 PVE/PDM task id 를 복구한다.
+  `disk-attach`/`disk-detach`/`disk-grow`(host-ssh)는 노드에서 동기 실행
+  (`qm set`/`qm guest exec`)이라 task 폴링이 아니라 명령 exit 를 감사한다.
 
 Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터 migration, or IaC (Phase 2, not yet). (PDM 경유 노드 간 `remote-migrate` 는 지원 — 독립 노드 대상.)
 
