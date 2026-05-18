@@ -50,8 +50,10 @@ run_log_path() { # <op-id> -> path (creates session run dir)
 
 # ── Single source of truth: action → "<grade> <transport>" ───────────────
 #   grade:     safe | caution | destructive
-#   transport: none | pve | ssh | guest
-#     guest = 대상 kind 가 proxmox-host/vm/lxc 면 pve, 그 외(appliance 등)면 ssh
+#   transport: none | pve | ssh | guest | host-ssh | pdm
+#     guest    = 대상 kind 가 proxmox-host/vm/lxc 면 pve, 그 외(appliance 등)면 ssh
+#     host-ssh = owner_host(target) 에 root SSH (자격·실행 대상이 owner 노드)
+#     pdm      = kind:pdm 인벤토리 엔트리 경유 (bin/pdm, PDM_TOKEN)
 # guard(등급)·_backend(라우팅)·op_transport(자격)·--plan 이 모두 이 테이블만
 # 본다. drift 는 tests/test_action_table.sh 패리티 테스트가 차단한다(과거의
 # "3곳 수동 동기" 주석 계약을 대체). 새 verb 는 여기 + backend + (필요시)
@@ -89,7 +91,7 @@ op_transport() {
   if [[ -z "$spec" ]]; then echo none; return; fi
   t="${spec##* }"
   case "$t" in
-    none|pve|ssh) echo "$t" ;;
+    none|pve|ssh|host-ssh|pdm) echo "$t" ;;
     guest) case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
     *) echo none ;;
   esac
@@ -105,6 +107,21 @@ owner_host() {
     fi
   done
   echo "$target"
+}
+
+# pdm_entry -> 인벤토리의 유일한 kind:pdm 엔트리 id. 0개/2개 이상이면 die.
+# remote-migrate transport(pdm) 의 자격·base URL 해석 단일 출처.
+pdm_entry() {
+  local ids x k hits=()
+  for x in $("$REPO_ROOT/bin/inv" list); do
+    k="$("$REPO_ROOT/bin/inv" get "$x" | jq -r '.kind // ""')"
+    [[ "$k" == "pdm" ]] && hits+=("$x")
+  done
+  case "${#hits[@]}" in
+    1) echo "${hits[0]}" ;;
+    0) die "no kind:pdm inventory entry (remote-migrate 는 PDM 엔트리 필요)" ;;
+    *) die "multiple kind:pdm inventory entries (${hits[*]}) — 정확히 1개여야 함" ;;
+  esac
 }
 
 # pve_wait_task <host_id> <upid> -> 0: task exitstatus OK / 1: not OK /

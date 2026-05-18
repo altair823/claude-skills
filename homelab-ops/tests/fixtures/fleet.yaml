@@ -63,3 +63,11 @@
   access:
     ssh: { user: ops, auth: password, pass_ref: "bw://ssh-pwhost-pass" }
   tags: []
+
+- id: pdm-01
+  kind: pdm
+  address: 10.0.0.9
+  env: prod
+  access:
+    api: { token_ref: "bw://Proxmox-Datacenter-Manager pdm-01/api-token", ca_path: "" }
+  tags: []
