@@ -36,6 +36,159 @@ case "$action:$kind" in
       echo "DRY-RUN: would vzdump $target (vmid=$bvmid) storage=${1:-<none>} mode=${2:-snapshot} compress=${3:-zstd}"; exit 0
     fi
     "$HERE/pve" "$(owner_host "$target")" backup "$target" "$@" ;; # $@ = storage [mode] [compress] (→ pve backup sub $4/$5/$6)
+  disk-attach:*|disk-detach:*)
+    # 인자 파싱: --by-id <id> --index <N> --bus <bus(기본 scsi)>
+    byid=""; idx=""; bus="scsi"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --by-id) byid="${2:?"disk-*: --by-id 에 값 필요"}"; shift 2 ;;
+        --index) idx="${2:?"disk-*: --index 에 값 필요"}"; shift 2 ;;
+        --bus)   bus="${2:?"disk-*: --bus 에 값 필요"}"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    vmid="$(jq -r '.vmid // empty' <<<"$inv")"
+    [[ -n "$vmid" ]] || die "disk-*: target '$target' has no vmid"
+    [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-*: vmid 비정상 (숫자만; 받음: '$vmid')"
+    if [[ "$action" == "disk-attach" ]]; then
+      [[ "$byid" == /dev/disk/by-id/* ]] \
+        || die "disk-attach: --by-id 는 /dev/disk/by-id/... 안정 경로만 허용 (받음: '${byid:-<none>}'). /dev/sdX 등 비안정 경로 거부."
+      [[ "$byid" =~ ^/dev/disk/by-id/[A-Za-z0-9_.:-]+$ ]] \
+        || die "disk-attach: --by-id 값에 허용되지 않는 문자 (안정 식별자 [A-Za-z0-9_.:-] 만; 경로탐색·셸 메타문자 거부)"
+      # serial opt-in 강제: 인벤토리에 disks[].serial 선언이 없으면 거부.
+      sercount="$(jq -r '[.disks[]?.serial | select(. != null)] | length' <<<"$inv")"
+      [[ "$sercount" -ge 1 ]] \
+        || die "disk-attach: 게스트 '$target' 인벤토리에 disks[].serial 미선언 — 명시적 opt-in 필요(아무 디스크나 패스스루 차단)"
+      idx="${idx:-1}"
+      [[ "$idx" =~ ^[0-9]+$ ]] || die "disk-*: --index 는 숫자여야 함 (받음: '${idx:-<none>}')"
+      [[ "$bus" =~ ^[a-z]+$ ]] || die "disk-*: --bus 는 소문자 알파벳만 (예: scsi, virtio, ide)"
+      cmd="qm set $vmid -${bus}${idx} ${byid},backup=0,iothread=1"
+    else
+      [[ -n "$idx" ]] || die "disk-detach: --index <N> 필요"
+      [[ "$idx" =~ ^[0-9]+$ ]] || die "disk-*: --index 는 숫자여야 함 (받음: '${idx:-<none>}')"
+      [[ "$bus" =~ ^[a-z]+$ ]] || die "disk-*: --bus 는 소문자 알파벳만 (예: scsi, virtio, ide)"
+      cmd="qm set $vmid -delete ${bus}${idx}"
+    fi
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: would (on $(owner_host "$target")) $cmd"
+      [[ "$action" == "disk-attach" ]] && echo "  serial 대조: 적용 시 노드 by-id 실측 serial 을 인벤토리 declared 와 대조(불일치 거부)"
+      exit 0
+    fi
+    if [[ "$action" == "disk-attach" ]]; then
+      # 적용 전 serial 실대조: owner 노드에서 by-id 장치의 실제 serial 을
+      # 조회(byid 는 charset 검증 완료 → argv 안전) 후 인벤토리 declared
+      # serial 집합과 비교. 불일치 시 qm set 전에 거부.
+      _oh="$(owner_host "$target")"
+      _declared="$(jq -r '[.disks[]?.serial | select(. != null)] | join(" ")' <<<"$inv")"
+      # 노드 by-id 장치의 serial 을 JSON 으로 조회(-ndo 컬럼 절단 회피).
+      # ssh-run||true 를 그룹화해 파이프라인 전체가 set-e 안전함을 명시.
+      _lsj="$( { "$HERE/ssh-run" "$_oh" -- lsblk -J -o SERIAL "$byid" 2>/dev/null || true; } )"
+      _actual="$(jq -r 'first(.blockdevices[]?.serial // empty)' <<<"$_lsj" 2>/dev/null | tr -d '[:space:]' || true)"
+      [[ -n "$_actual" ]] || die "disk-attach: 노드 '$_oh' 에서 by-id '$byid' 의 serial 조회 실패(장치 부재/lsblk 무응답) — 패스스루 거부"
+      # _actual 는 노드 응답(neutral trust). case 패턴 측만 glob; "$_actual" 는 리터럴 치환이라 rogue '*' 도 fail-closed(매칭 실패→die). 공백경계 " $x " 로 부분일치 차단.
+      case " $_declared " in
+        *" $_actual "*) : ;;  # 인벤토리 declared 와 일치
+        *) die "disk-attach: serial 불일치 — 노드 실측 '$_actual' 가 인벤토리 declared [$_declared] 에 없음. 패스스루 거부." ;;
+      esac
+      # TOCTOU 주의: serial 조회와 qm set 은 별 ssh 세션 — 그 사이 장치 교체는 미탐(원격 작업 본질적 한계, best-effort).
+      "$HERE/ssh-run" "$_oh" -- qm set "$vmid" "-${bus}${idx}" "${byid},backup=0,iothread=1"
+    else
+      "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
+    fi ;;
+  disk-grow:*)
+    lv=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in --lv) lv="${2:-}"; shift 2 ;; *) shift ;; esac
+    done
+    vmid="$(jq -r '.vmid // empty' <<<"$inv")"
+    [[ -n "$vmid" ]] || die "disk-grow: target '$target' has no vmid"
+    [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-grow: vmid 비정상"
+    oh="$(owner_host "$target")"
+    _ga() { # <argv...> -> guest-exec out-data, die if exitcode!=0/agent down
+      local raw od ec
+      raw="$("$HERE/ssh-run" "$oh" -- qm guest exec "$vmid" -- "$@" 2>&1)" \
+        || die "disk-grow: qm guest exec 실패(게스트 guest-agent 미동작?): $raw"
+      ec="$(jq -r '.exitcode // 1' <<<"$raw" 2>/dev/null || echo 1)"
+      [[ "$ec" == "0" ]] || die "disk-grow: 게스트 명령 비-0 (exitcode=$ec): $*"
+      od="$(jq -r '."out-data" // ""' <<<"$raw" 2>/dev/null || echo "")"
+      printf '%s' "$od"
+    }
+    # 탐지 (read-only, dry/apply 공통)
+    fm="$(_ga findmnt -J)"
+    fstype="$(jq -r '.filesystems[]? | select(.target=="/") | .fstype' <<<"$fm" 2>/dev/null | head -n1)"
+    mnt="/"
+    rpt="$(_ga pvs --reportformat json)"
+    lvline="$(_ga lvs --reportformat json)"
+    if [[ -z "$lv" ]]; then
+      lv="$(jq -r '[.report[]?.lv[]?] | if length==1 then (.[0]|.vg_name+"/"+.lv_name) else "" end' <<<"$lvline" 2>/dev/null)"
+      [[ -n "$lv" ]] || die "disk-grow: 단일 LV 자동탐지 실패(다중/비표준) — --lv <vg/lv> 명시 필요"
+    fi
+    # charset guard: lv (operator-supplied 및 자동탐지 모두 적용) — dry+apply 공통
+    [[ "$lv" =~ ^[A-Za-z0-9_+./-]+$ ]] || die "disk-grow: --lv/탐지된 LV 에 허용되지 않는 문자 (vg/lv 형식만)"
+    pvname="$(jq -r '[.report[]?.pv[]?.pv_name]|.[0]//""' <<<"$rpt" 2>/dev/null)"
+    [[ -n "$pvname" ]] || die "disk-grow: pvs 가 PV 를 반환하지 않음(LVM 부재/탐지 실패) — 패스스루 거부"
+    # pvname charset guard (defense-in-depth): /dev/... 장치 경로만 허용
+    [[ "$pvname" =~ ^/dev/[A-Za-z0-9/_-]+$ ]] \
+      || die "disk-grow: pvs 응답 pvname '${pvname}' 에 허용되지 않는 문자 (/dev/... 장치 경로만)"
+    # nvme/mmcblk(pN suffix) vs sda/vdb(trailing digits) 구분 파티션 추출
+    if [[ "$pvname" =~ p([0-9]+)$ ]]; then            # nvme0n1p2 / mmcblk0p3
+      partnum="${BASH_REMATCH[1]}"; disk="${pvname%p${partnum}}"
+    elif [[ "$pvname" =~ ([0-9]+)$ ]]; then            # sda3 / vdb1
+      partnum="${BASH_REMATCH[1]}"; disk="${pvname%${partnum}}"
+    else
+      die "disk-grow: pvname '${pvname}' 에서 파티션 번호 추출 실패"
+    fi
+    case "$fstype" in
+      ext4) fscmd="resize2fs /dev/${lv}" ;;
+      xfs)  fscmd="xfs_growfs ${mnt}" ;;
+      *)    die "disk-grow: 미지원 FS '$fstype' (ext4/xfs 만 지원)" ;;
+    esac
+    seq1="growpart ${disk} ${partnum}"
+    seq2="pvresize ${pvname}"
+    seq3="lvextend -l +100%FREE ${lv}"
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: disk-grow $target (vmid=$vmid via $oh, guest-agent)"
+      echo "  주의: PVE 레벨 가상디스크 확장은 본 verb 범위 밖(게스트 내부 전용) — PVE 디스크는 사전 확장 전제"
+      echo "  탐지: PV=$pvname LV=$lv FS=$fstype mnt=$mnt"
+      echo "  시퀀스: $seq1 && $seq2 && $seq3 && $fscmd"
+      exit 0
+    fi
+    _ga growpart "$disk" "$partnum" >/dev/null
+    _ga pvresize "$pvname" >/dev/null
+    _ga lvextend -l +100%FREE "$lv" >/dev/null
+    if [[ "$fstype" == "ext4" ]]; then
+      _ga resize2fs "/dev/${lv}" >/dev/null
+    else
+      _ga xfs_growfs "$mnt" >/dev/null
+    fi
+    echo "GROWN: $target $lv ($fstype) extended on $oh" ;;
+  remote-migrate:*)
+    to=""; tstor=""; online=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --to) to="${2:?"remote-migrate: --to 에 값 필요"}"; shift 2 ;;
+        --target-storage) tstor="${2:?"remote-migrate: --target-storage 에 값 필요"}"; shift 2 ;;
+        --online) online=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    vmid="$(jq -r '.vmid // empty' <<<"$inv")"
+    [[ -n "$vmid" ]] || die "remote-migrate: target '$target' has no vmid"
+    [[ "$vmid" =~ ^[0-9]+$ ]] || die "remote-migrate: vmid 비정상"
+    [[ -n "$to" ]] || die "remote-migrate: --to <target-node> 필요"
+    # SANCTIONED charset 가드(Task5/7 정합): to/tstor 가 PDM API body 로 흘러
+    # & = $ 공백 파라미터 인젝션을 차단. to=노드명, tstor=src:dst,src2:dst2.
+    [[ "$to" =~ ^[A-Za-z0-9_.-]+$ ]] \
+      || die "remote-migrate: --to '$to' 에 허용되지 않는 문자 (노드명 [A-Za-z0-9_.-] 만)"
+    [[ -z "$tstor" || "$tstor" =~ ^[A-Za-z0-9_.:,/-]+$ ]] \
+      || die "remote-migrate: --target-storage '$tstor' 에 허용되지 않는 문자 (src:dst[,src2:dst2] 형식만)"
+    src="$(owner_host "$target")"
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: remote-migrate $target vmid=$vmid src=$src to=$to storage=${tstor:-<same>} online=$([[ $online -eq 1 ]] && echo true || echo false)"
+      echo "  (PDM 경유; 실 PDM API path 는 인벤토리 access.api.migrate_path 로 확정 — spec §5)"
+      exit 0
+    fi
+    "$HERE/pdm" remote-migrate "$vmid" "$to" "$tstor" "$online" "$src" ;;
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0

@@ -15,6 +15,8 @@ case "$1" in
   runlog) run_log_path "op-1" ;;
   transport) op_transport "$2" "$3" ;;
   owner) owner_host "$2" ;;
+  oti)     ACTIONS[__zz]="$2"; op_transport __zz "${3:-}" ;;
+  pdment)  pdm_entry ;;
   grade) action_grade "$2" ;;
   canon) canon_action "$2" ;;
 esac
@@ -57,6 +59,12 @@ assert_eq "ssh"  "$(bash bin/_libprobe.sh transport stop appliance)"     "stop a
 assert_eq "ssh"  "$(bash bin/_libprobe.sh transport pkg-install vm)"     "pkg-install → ssh"
 assert_eq "pve"  "$(bash bin/_libprobe.sh transport provision proxmox-host)" "provision → pve"
 assert_eq "none" "$(bash bin/_libprobe.sh transport frobnicate vm)"      "unknown action → none"
+assert_eq "host-ssh" "$(bash bin/_libprobe.sh oti 'destructive host-ssh' vm)"   "op_transport: host-ssh token → host-ssh"
+assert_eq "pdm"      "$(bash bin/_libprobe.sh oti 'destructive pdm' vm)"          "op_transport: pdm token → pdm"
+assert_eq "pve"      "$(bash bin/_libprobe.sh oti 'caution guest' vm)"            "op_transport: guest+vm still → pve (regression)"
+assert_eq "ssh"      "$(bash bin/_libprobe.sh oti 'caution guest' appliance)"     "op_transport: guest+appliance still → ssh (regression)"
+assert_eq "none"     "$(bash bin/_libprobe.sh oti 'safe none' vm)"                "op_transport: none token still → none (regression)"
+assert_eq "pdm-01"   "$(bash bin/_libprobe.sh pdment)"                            "pdm_entry → the single kind:pdm id"
 assert_eq "pve"  "$(bash bin/_libprobe.sh transport delete vm)"          "delete (alias) → pve for vm"
 assert_eq "safe"        "$(bash bin/_libprobe.sh grade status)"   "action_grade status → safe"
 assert_eq "caution"     "$(bash bin/_libprobe.sh grade stop)"     "action_grade stop → caution"
