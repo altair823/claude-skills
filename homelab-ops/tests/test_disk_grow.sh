@@ -119,4 +119,74 @@ echo "  ok: hostile pvname → charset guard die, growpart/pvresize 미도달"
 
 rm -rf "$gd" "$fd" "$hd"
 
+# --- 엣지: 다중 LV → --lv 미지정 거부 / 명시 시 그 LV 사용 ---
+md="$(mktemp -d)"
+cat > "$md/ssh" <<'EOF'
+#!/usr/bin/env bash
+all="$*"
+if [[ "$all" == *findmnt* ]]; then
+  echo '{"out-data":"{\"filesystems\":[{\"target\":\"/\",\"source\":\"/dev/mapper/vg0-root\",\"fstype\":\"ext4\"}]}","exitcode":0}'
+elif [[ "$all" == *"pvs"* ]]; then
+  echo '{"out-data":"{\"report\":[{\"pv\":[{\"pv_name\":\"/dev/sda3\"}]}]}","exitcode":0}'
+elif [[ "$all" == *"lvs"* || "$all" == *"vgs"* ]]; then
+  echo '{"out-data":"{\"report\":[{\"lv\":[{\"lv_name\":\"root\",\"vg_name\":\"vg0\"},{\"lv_name\":\"data\",\"vg_name\":\"vg0\"}]}]}","exitcode":0}'
+else echo '{"out-data":"","exitcode":0}'; fi
+EOF
+chmod +x "$md/ssh"
+cat > "$md/ssh-add" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$md/ssh-add"
+cat > "$md/ssh-agent" <<'EOF'
+#!/usr/bin/env bash
+echo 'SSH_AUTH_SOCK=/tmp/md-stub.sock; export SSH_AUTH_SOCK;'
+echo 'SSH_AGENT_PID=99994; export SSH_AGENT_PID;'
+EOF
+chmod +x "$md/ssh-agent"
+MPV="PATH=$md:$PWD/tests/stubs:\$PATH HL_SSH_KEY=x"
+
+set +e
+o="$(eval "$MPV bin/_backend disk-grow lab-vm-900 --dry-run -- 2>&1")"; rc=$?
+set -e
+assert_contains "$o" "--lv" "다중 LV → --lv 명시 요구 메시지"
+[[ "$rc" -ne 0 ]] && echo "  ok: 다중 LV 모호 → 거부" || { echo "  FAIL: 다중 LV인데 진행"; exit 1; }
+# --lv 명시하면 그 LV 사용 (dry-run 시퀀스에 vg0/data)
+o="$(eval "$MPV bin/_backend disk-grow lab-vm-900 --dry-run -- --lv vg0/data 2>&1")"
+assert_contains "$o" "lvextend -l +100%FREE vg0/data" "--lv 명시 시 그 LV 사용"
+rm -rf "$md"
+
+# --- 엣지: 미지원 FS (btrfs) → 거부 ---
+bd="$(mktemp -d)"
+cat > "$bd/ssh" <<'EOF'
+#!/usr/bin/env bash
+all="$*"
+if [[ "$all" == *findmnt* ]]; then
+  echo '{"out-data":"{\"filesystems\":[{\"target\":\"/\",\"source\":\"/dev/mapper/vg0-root\",\"fstype\":\"btrfs\"}]}","exitcode":0}'
+elif [[ "$all" == *"pvs"* ]]; then
+  echo '{"out-data":"{\"report\":[{\"pv\":[{\"pv_name\":\"/dev/sda3\"}]}]}","exitcode":0}'
+elif [[ "$all" == *"lvs"* || "$all" == *"vgs"* ]]; then
+  echo '{"out-data":"{\"report\":[{\"lv\":[{\"lv_name\":\"root\",\"vg_name\":\"vg0\"}]}]}","exitcode":0}'
+else echo '{"out-data":"","exitcode":0}'; fi
+EOF
+chmod +x "$bd/ssh"
+cat > "$bd/ssh-add" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$bd/ssh-add"
+cat > "$bd/ssh-agent" <<'EOF'
+#!/usr/bin/env bash
+echo 'SSH_AUTH_SOCK=/tmp/bd-stub.sock; export SSH_AUTH_SOCK;'
+echo 'SSH_AGENT_PID=99993; export SSH_AGENT_PID;'
+EOF
+chmod +x "$bd/ssh-agent"
+BPV="PATH=$bd:$PWD/tests/stubs:\$PATH HL_SSH_KEY=x"
+set +e
+o="$(eval "$BPV bin/_backend disk-grow lab-vm-900 --dry-run -- 2>&1")"; rc=$?
+set -e
+assert_contains "$o" "미지원 FS" "btrfs → 미지원 FS 거부 메시지"
+[[ "$rc" -ne 0 ]] && echo "  ok: btrfs → 거부" || { echo "  FAIL: btrfs인데 진행"; exit 1; }
+rm -rf "$bd"
+
 finish; echo "PASS test_disk_grow"
