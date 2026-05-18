@@ -103,9 +103,9 @@ case "$action:$kind" in
     [[ -n "$vmid" ]] || die "disk-grow: target '$target' has no vmid"
     [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-grow: vmid 비정상"
     oh="$(owner_host "$target")"
-    _ga() { # <remote shell cmd> -> guest-exec out-data, die if exitcode!=0/agent down
+    _ga() { # <argv...> -> guest-exec out-data, die if exitcode!=0/agent down
       local raw od ec
-      raw="$("$HERE/ssh-run" "$oh" -- "qm guest exec $vmid -- $*" 2>&1)" \
+      raw="$("$HERE/ssh-run" "$oh" -- qm guest exec "$vmid" -- "$@" 2>&1)" \
         || die "disk-grow: qm guest exec 실패(게스트 guest-agent 미동작?): $raw"
       ec="$(jq -r '.exitcode // 1' <<<"$raw" 2>/dev/null || echo 1)"
       [[ "$ec" == "0" ]] || die "disk-grow: 게스트 명령 비-0 (exitcode=$ec): $*"
@@ -116,7 +116,7 @@ case "$action:$kind" in
     fm="$(_ga findmnt -J)"
     fstype="$(jq -r '.filesystems[]? | select(.target=="/") | .fstype' <<<"$fm" 2>/dev/null | head -n1)"
     mnt="/"
-    rpt="$(_ga pvs --reportformat json; true)"
+    rpt="$(_ga pvs --reportformat json)"
     lvline="$(_ga lvs --reportformat json)"
     if [[ -z "$lv" ]]; then
       lv="$(jq -r '[.report[]?.lv[]?] | if length==1 then (.[0]|.vg_name+"/"+.lv_name) else "" end' <<<"$lvline" 2>/dev/null)"
@@ -124,15 +124,24 @@ case "$action:$kind" in
     fi
     # charset guard: lv (operator-supplied 및 자동탐지 모두 적용) — dry+apply 공통
     [[ "$lv" =~ ^[A-Za-z0-9_+./-]+$ ]] || die "disk-grow: --lv/탐지된 LV 에 허용되지 않는 문자 (vg/lv 형식만)"
+    pvname="$(jq -r '[.report[]?.pv[]?.pv_name]|.[0]//""' <<<"$rpt" 2>/dev/null)"
+    [[ -n "$pvname" ]] || die "disk-grow: pvs 가 PV 를 반환하지 않음(LVM 부재/탐지 실패) — 패스스루 거부"
+    # pvname charset guard (defense-in-depth): /dev/... 장치 경로만 허용
+    [[ "$pvname" =~ ^/dev/[A-Za-z0-9/_-]+$ ]] \
+      || die "disk-grow: pvs 응답 pvname '${pvname}' 에 허용되지 않는 문자 (/dev/... 장치 경로만)"
+    # nvme/mmcblk(pN suffix) vs sda/vdb(trailing digits) 구분 파티션 추출
+    if [[ "$pvname" =~ p([0-9]+)$ ]]; then            # nvme0n1p2 / mmcblk0p3
+      partnum="${BASH_REMATCH[1]}"; disk="${pvname%p${partnum}}"
+    elif [[ "$pvname" =~ ([0-9]+)$ ]]; then            # sda3 / vdb1
+      partnum="${BASH_REMATCH[1]}"; disk="${pvname%${partnum}}"
+    else
+      die "disk-grow: pvname '${pvname}' 에서 파티션 번호 추출 실패"
+    fi
     case "$fstype" in
       ext4) fscmd="resize2fs /dev/${lv}" ;;
       xfs)  fscmd="xfs_growfs ${mnt}" ;;
       *)    die "disk-grow: 미지원 FS '$fstype' (ext4/xfs 만 지원)" ;;
     esac
-    pvname="$(jq -r '[.report[]?.pv[]?.pv_name]|.[0]//""' <<<"$rpt" 2>/dev/null)"
-    pvname="${pvname:-/dev/sda3}"
-    disk="$(echo "$pvname" | sed -E 's#([0-9]+)$##')"
-    partnum="$(echo "$pvname" | sed -E 's#.*[^0-9]([0-9]+)$#\1#')"
     seq1="growpart ${disk} ${partnum}"
     seq2="pvresize ${pvname}"
     seq3="lvextend -l +100%FREE ${lv}"
@@ -143,10 +152,14 @@ case "$action:$kind" in
       echo "  시퀀스: $seq1 && $seq2 && $seq3 && $fscmd"
       exit 0
     fi
-    _ga $seq1 >/dev/null
-    _ga $seq2 >/dev/null
-    _ga $seq3 >/dev/null
-    _ga $fscmd >/dev/null
+    _ga growpart "$disk" "$partnum" >/dev/null
+    _ga pvresize "$pvname" >/dev/null
+    _ga lvextend -l +100%FREE "$lv" >/dev/null
+    if [[ "$fstype" == "ext4" ]]; then
+      _ga resize2fs "/dev/${lv}" >/dev/null
+    else
+      _ga xfs_growfs "$mnt" >/dev/null
+    fi
     echo "GROWN: $target $lv ($fstype) extended on $oh" ;;
   pkg-install:*)
     if [[ $dry -eq 1 ]]; then
