@@ -221,10 +221,11 @@ case "${1:-}" in
     # forensic record is intentionally accurate that an interrupt was received.)
     # 추가 caveat (태스크 폴링 도입 이후): mutating verb 는 pve_wait_task 가
     # HOMELAB_TASK_TIMEOUT (기본 600s) 동안 PVE 태스크를 폴링하므로, 인터럽트
-    # 시 고아 백엔드 프로세스가 최대 ~600s 계속 실행될 수 있음. 또한 INT/TERM
-    # 경로에서는 _finish_trap 의 HO-TASK 파싱이 실행되지 않으므로 감사 레코드의
-    # task_upid 는 null 로 기록됨 — 단, 발행된 UPID 자체는 run-log 의 raw
-    # {"data":"UPID:..."} 라인에서 사후 복구 가능(포렌식 무결성 유지).
+    # 시 고아 백엔드 프로세스가 최대 ~600s 계속 실행될 수 있음. _finish_trap 이
+    # 감사 전 run-log 에서 UPID 복구를 시도한다(우선순위 1: HO-TASK 라인,
+    # 2: raw {"data":"UPID:..."} 라인) — 인터럽트 시점에 UPID 가 아직 run-log
+    # 에 안 쓰였으면 task_upid 는 null 로 감사됨(발행 UPID 는 그 경우에도 이후
+    # run-log 에서 사후 확인 가능; 포렌식 무결성 유지).
     {
       "$backend" "$action" "$target" -- ${extra[@]+"${extra[@]}"} 2>&1
       printf '%s\n' "$?" > "$_rc_file"
