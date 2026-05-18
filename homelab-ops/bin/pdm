@@ -42,7 +42,7 @@ case "$sub" in
   api) call "${2:?METHOD}" "${3:?path}" "${4:-}" ;;
   remote-migrate)
     # 인자: <vmid> <to-node> [target-storage] [online(0/1)] [source-node]
-    vmid="${2:?vmid}"; to="${3:?to-node}"; tstor="${4:-}"; online="${5:-0}"; src="${6:-}"
+    vmid="${2:?vmid}"; to="${3:?to-node}"; tstor="${4:-}"; online="${5:-0}"; src="${6:?source node required}"
     # PDM 원격 마이그레이션 API path 는 인벤토리 구성형(운영자 PDM 버전 의존,
     # spec §5 known-unknown). 기본값은 PVE 노드 remote_migrate 형태.
     mp="$(jq -r --arg s "$src" '.access.api.migrate_path
@@ -50,7 +50,7 @@ case "$sub" in
     mp="${mp//\{vmid\}/$vmid}"
     d="target=${to}&online=${online}"
     [[ -n "$tstor" ]] && d="${d}&target-storage=${tstor}"
-    resp="$(call POST "$mp" "$d")" || return $?
+    resp="$(call POST "$mp" "$d")" || exit $?
     printf '%s\n' "$resp"
     tid="$(jq -r 'if (.data|type)=="string" then .data else empty end' <<<"$resp" 2>/dev/null || true)"
     [[ -n "$tid" ]] || die "remote-migrate: PDM 가 task id 를 반환하지 않음: $resp"

@@ -13,7 +13,9 @@ o="$(bin/_backend remote-migrate lab-vm-900 --dry-run -- --to pve-01 --target-st
 assert_contains "$o" "DRY-RUN" "remote-migrate dry-run 헤더"
 assert_contains "$o" "vmid=900" "vmid echo"
 assert_contains "$o" "to=pve-01" "target node echo"
-assert_contains "$o" "online" "online echo"
+assert_contains "$o" "online=true" "online=true when --online passed"
+o2="$(bin/_backend remote-migrate lab-vm-900 --dry-run -- --to pve-01 2>&1)"
+assert_contains "$o2" "online=false" "online=false when --online absent"
 assert_status 0 'bin/_backend remote-migrate lab-vm-900 --dry-run -- --to pve-01' "dry-run exit 0"
 
 # 적용: bin/pdm 가 POST 발행하고 task id 반환 → pdm_wait_task 폴링 → HO-TASK
@@ -51,5 +53,20 @@ set -e
 [[ "$rc" -ne 0 ]] && echo "  ok: --to 메타문자 거부(비-0)" || { echo "  FAIL: --to 인젝션 통과"; exit 1; }
 assert_eq "" "$(cat "$rmc2")" "인젝션 거부 시 curl 미호출"
 rm -rf "$sp2" "$rmc2"
+
+# --target-storage 인젝션도 거부(charset 가드) — POST 미발행
+sp3="$(mktemp -d)"; rmc3="$(mktemp)"
+cat > "$sp3/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >> "${RM_CARGS:?}"
+echo '{"data":"PDM-task:stub:42"}'
+EOF
+chmod +x "$sp3/curl"
+set +e
+o="$(RM_CARGS="$rmc3" PATH="$sp3:$PWD/tests/stubs:$PATH" bin/_backend remote-migrate lab-vm-900 -- --to pve-01 --target-storage 'local-zfs&evil=1' 2>&1)"; rc=$?
+set -e
+[[ "$rc" -ne 0 ]] && echo "  ok: --target-storage 메타문자 거부(비-0)" || { echo "  FAIL: --target-storage 인젝션 통과"; exit 1; }
+assert_eq "" "$(cat "$rmc3")" "tstor 인젝션 거부 시 curl 미호출"
+rm -rf "$sp3" "$rmc3"
 
 finish; echo "PASS test_remote_migrate"
