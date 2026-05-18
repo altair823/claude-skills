@@ -1,6 +1,6 @@
 ---
 name: homelab-ops
-description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy, backup, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
+description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy, backup, disk-attach/detach, disk-grow, PDM remote-migrate, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
 ---
 
 # homelab-ops
@@ -27,6 +27,14 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
   백업 용이; repo `inventory/` 도 여전히 동작). 셋 다 없으면 `bin/inv` 가
   세 후보 경로를 출력하고 종료한다. A `proxmox-host` entry's `id` MUST
   equal the real PVE node name (API paths are `/nodes/<id>/...`).
+- **PDM 엔트리.** `remote-migrate` 는 인벤토리에 `kind: pdm` 엔트리(정확히 1개:
+  `address`[:port], `access.api.token_ref`→`PDM_TOKEN`, `ca_path`, 선택
+  `base_path`/`task_status_path`/`migrate_path`)가 필요하다. `bin/pdm` 가 단일
+  출처로 해석.
+- **host-ssh transport.** `disk-attach`/`disk-detach`/`disk-grow` 는 게스트가
+  target 이지만 **owner Proxmox 노드에 root SSH** 로 실행(`qm set`/`qm guest
+  exec`). 자격은 owner_host 엔트리의 `access.ssh`. disk-attach 는 게스트
+  엔트리 `disks[].serial` opt-in 선언 필요.
 - **Per-host CA.** A homelab Proxmox serves a self-signed cert from its built-in
   CA (Proxmox names it "PVE Cluster Manager CA" even on a standalone, non-
   clustered node), so system trust alone fails verification. Set
@@ -78,6 +86,9 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 - "Back up X (vzdump)" → `"$HL/bin/guard" backup <id> -- <storage> [mode] [compress]` (caution; prod ⇒ `--approve`)
 - "Destroy/delete X" → `"$HL/bin/guard" destroy <id>` (`delete` = `destroy` 별칭) → show the DRY-RUN/impact → re-run with `--approve`
 - storage/network 변경은 **미지원**(Phase 2 후보). 임의 verb 를 던지면 deny-by-default 가 destructive 로 거부한다.
+- "물리 디스크 attach/detach (by-id)" → `"$HL/bin/guard" disk-attach <guest> -- --by-id /dev/disk/by-id/<id> [--index N]` (destructive; by-id 강제·serial opt-in)
+- "게스트 디스크 확장" → `"$HL/bin/guard" disk-grow <guest> [-- --lv <vg/lv>]` (destructive; qm guest exec, 게스트 내부 LVM/FS 만 — PVE 가상디스크 사전 확장 전제)
+- "노드 간 이전 (PDM)" → `"$HL/bin/guard" remote-migrate <guest> -- --to <node> [--target-storage <map>] [--online]` (destructive; PDM 경유)
 - "Provision a VM" → `"$HL/bin/guard" provision <pve-host-id> -- --from-template <vmid> --new-vmid <vmid>`
 - "What happened / why did X fail?" → `"$HL/bin/forensics" {session|target|timeline} <id>`, `"$HL/bin/forensics" runlog <session>/<op>.log`
 - PVE 변경(start/stop/restart/snapshot/destroy/backup/provision)은 task UPID
@@ -85,7 +96,7 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
   (타임아웃 시 exit 75 + `task_upid` 보존). 기본 한도 `HOMELAB_TASK_TIMEOUT`
   600s.
 
-Not for: non-Proxmox virt, Proxmox cluster/HA/migration (targets are independent hosts), or IaC (Phase 2, not yet).
+Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터 migration, or IaC (Phase 2, not yet). (PDM 경유 노드 간 `remote-migrate` 는 지원 — 독립 노드 대상.)
 
 ## Hard rules (non-negotiable — destructive mistakes must be hard, every action reconstructable)
 1. **No guard bypass.** Every state change runs as `"$HL/bin/guard" <action> <target> [--approve]`. `bin/pve` and `bin/ssh-run` are read/transport layers — never invoke them to mutate state.

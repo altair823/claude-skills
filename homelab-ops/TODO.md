@@ -86,3 +86,19 @@ workspace-02(vmid 201) 를 pve-c64m96-01 → pve-c8m128-01 로 이전 + HDD 물�
   캡처(현재 run-log 의 raw `{"data":"UPID:..."}` 로만 복구 가능; `_finish_trap` 에서
   `$rl` 파싱 고려) + 폴링 도입으로 인터럽트 노출창이 ~600s 로 확장됨 —
   `pve_wait_task` 고아 reaping 은 별도 검토.
+
+## 진행 상태 (2026-05-18 guard verb 확장 spec)
+- `disk-attach`/`disk-detach`(host-ssh, by-id 강제+serial opt-in+적용 전 serial 실대조)·
+  `disk-grow`(host-ssh→qm guest exec, 레이아웃 자동탐지)·`remote-migrate`(pdm)·
+  인터럽트-UPID 캡처는
+  `docs/superpowers/specs/2026-05-18-homelab-ops-guard-verbs-design.md` 로 처리.
+  → TODO #2(disk-attach), #4(disk-grow) 코드/stub 완결.
+- **런타임 블로커(코드 아님, 운영자 데이터 작업)**: owner 노드 root SSH 자격
+  vault 등록(disk-*); 대상 게스트 guest-agent 동작(disk-grow); 인벤토리
+  `kind: pdm` 엔트리 작성(remote-migrate; PDM 토큰은 보유).
+- **PDM-disk-attach future-probe**: PDM 노드 연결 자격이 root@pam 이면 임의
+  fs 경로 패스스루가 PDM 경유로 풀릴 가능성 — host-ssh 가 known-correct
+  기본, PDM 경로는 실측 후 검토.
+- **PDM API path known-unknown**: `bin/pdm` 의 base_path/task_status_path/
+  migrate_path 는 인벤토리 구성형. 운영자 PDM 버전으로 실값 확정 필요
+  (`access.api.*` override; 미지정 시 문서화된 기본값).
