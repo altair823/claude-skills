@@ -70,11 +70,22 @@ case "$action:$kind" in
     fi
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: would (on $(owner_host "$target")) $cmd"
-      [[ "$action" == "disk-attach" ]] && echo "  [Task6 예정] serial 대조: 인벤토리 declared serial 과 노드 by-id 실제 serial 을 적용 시 대조(불일치 거부)"
+      [[ "$action" == "disk-attach" ]] && echo "  serial 대조: 적용 시 노드 by-id 실측 serial 을 인벤토리 declared 와 대조(불일치 거부)"
       exit 0
     fi
     if [[ "$action" == "disk-attach" ]]; then
-      "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" "-${bus}${idx}" "${byid},backup=0,iothread=1"
+      # 적용 전 serial 실대조: owner 노드에서 by-id 장치의 실제 serial 을
+      # 조회(byid 는 charset 검증 완료 → argv 안전) 후 인벤토리 declared
+      # serial 집합과 비교. 불일치 시 qm set 전에 거부.
+      _oh="$(owner_host "$target")"
+      _declared="$(jq -r '[.disks[]?.serial | select(. != null)] | join(" ")' <<<"$inv")"
+      _actual="$("$HERE/ssh-run" "$_oh" -- lsblk -ndo SERIAL "$byid" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+      [[ -n "$_actual" ]] || die "disk-attach: 노드 '$_oh' 에서 by-id '$byid' 의 serial 조회 실패(장치 부재/lsblk 무응답) — 패스스루 거부"
+      case " $_declared " in
+        *" $_actual "*) : ;;  # 인벤토리 declared 와 일치
+        *) die "disk-attach: serial 불일치 — 노드 실측 '$_actual' 가 인벤토리 declared [$_declared] 에 없음. 패스스루 거부." ;;
+      esac
+      "$HERE/ssh-run" "$_oh" -- qm set "$vmid" "-${bus}${idx}" "${byid},backup=0,iothread=1"
     else
       "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
     fi ;;
