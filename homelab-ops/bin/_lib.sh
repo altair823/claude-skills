@@ -83,7 +83,7 @@ action_grade() {
   if [[ -n "$spec" ]]; then echo "${spec%% *}"; else echo destructive; fi
 }
 
-# op_transport <action> <kind> -> pve | ssh | none  (테이블 둘째 토큰 해석)
+# op_transport <action> <kind> -> pve | ssh | host-ssh | pdm | none  (테이블 둘째 토큰 해석)
 op_transport() {
   local a; a="$(canon_action "${1:?op_transport: action required}")"
   local kind="${2:-}" spec t
@@ -112,7 +112,7 @@ owner_host() {
 # pdm_entry -> 인벤토리의 유일한 kind:pdm 엔트리 id. 0개/2개 이상이면 die.
 # remote-migrate transport(pdm) 의 자격·base URL 해석 단일 출처.
 pdm_entry() {
-  local ids x k hits=()
+  local x k hits=()
   for x in $("$REPO_ROOT/bin/inv" list); do
     k="$("$REPO_ROOT/bin/inv" get "$x" | jq -r '.kind // ""')"
     [[ "$k" == "pdm" ]] && hits+=("$x")

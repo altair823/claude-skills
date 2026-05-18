@@ -69,5 +69,5 @@
   address: 10.0.0.9
   env: prod
   access:
-    api: { token_ref: "bw://Proxmox-Datacenter-Manager pdm-01/api-token", ca_path: "" }
+    api: { token_ref: "bw://Proxmox-Datacenter-Manager pdm-01/api-token" }
   tags: []
