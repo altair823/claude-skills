@@ -38,7 +38,7 @@ cat > "$nd/ssh" <<'EOF'
 #!/usr/bin/env bash
 echo "ssh-args: $*" >> "${ND_LOG:?}"
 case "$*" in
-  *lsblk*SERIAL*|*SERIAL*lsblk*) echo "WD-LABDISK-001" ;;  # serial 일치(Task6)
+  *lsblk*SERIAL*|*SERIAL*lsblk*) echo '{"blockdevices":[{"serial":"WD-LABDISK-001"}]}' ;;  # serial 일치(Task6)
   *) echo stub-applied ;;
 esac
 EOF
@@ -76,7 +76,7 @@ cat > "$T6/ssh" <<'EOF'
 #!/usr/bin/env bash
 echo "ssh: $*" >> "${T6_LOG:?}"
 case "$*" in
-  *lsblk*SERIAL*|*SERIAL*lsblk*) echo "WRONG-SERIAL-999" ;;   # 노드 실측(불일치)
+  *lsblk*SERIAL*|*SERIAL*lsblk*) echo '{"blockdevices":[{"serial":"WRONG-SERIAL-999"}]}' ;;   # 노드 실측(불일치)
   *) echo stub-ok ;;
 esac
 EOF
@@ -100,7 +100,7 @@ set +e
 o="$(T6_LOG="$t6log" PATH="$T6:$PWD/tests/stubs:$PATH" HL_SSH_KEY=x bin/_backend disk-attach lab-vm-900 -- --by-id /dev/disk/by-id/wwn-0xLAB --index 1 2>&1)"; rc=$?
 set -e
 [[ "$rc" -ne 0 ]] && echo "  ok: serial 불일치 → 비-0" || { echo "  FAIL: serial 불일치인데 진행"; exit 1; }
-[[ "$o" == *serial* ]] && echo "  ok: serial 불일치 die 메시지" || { echo "  FAIL: serial die 메시지 없음: $o"; exit 1; }
+assert_contains "$o" "serial" "serial 불일치 die 메시지"
 grep -q 'qm set' "$t6log" && { echo "  FAIL: 불일치인데 qm set 실행됨"; exit 1; } || echo "  ok: 불일치 시 qm set 미실행"
 
 # 일치 → qm set 진행
@@ -108,7 +108,7 @@ cat > "$T6/ssh" <<'EOF'
 #!/usr/bin/env bash
 echo "ssh: $*" >> "${T6_LOG:?}"
 case "$*" in
-  *lsblk*SERIAL*|*SERIAL*lsblk*) echo "WD-LABDISK-001" ;;     # 인벤토리 declared 와 일치
+  *lsblk*SERIAL*|*SERIAL*lsblk*) echo '{"blockdevices":[{"serial":"WD-LABDISK-001"}]}' ;;     # 인벤토리 declared 와 일치
   *) echo stub-ok ;;
 esac
 EOF

@@ -79,12 +79,17 @@ case "$action:$kind" in
       # serial 집합과 비교. 불일치 시 qm set 전에 거부.
       _oh="$(owner_host "$target")"
       _declared="$(jq -r '[.disks[]?.serial | select(. != null)] | join(" ")' <<<"$inv")"
-      _actual="$("$HERE/ssh-run" "$_oh" -- lsblk -ndo SERIAL "$byid" 2>/dev/null | head -n1 | tr -d '[:space:]' || true)"
+      # 노드 by-id 장치의 serial 을 JSON 으로 조회(-ndo 컬럼 절단 회피).
+      # ssh-run||true 를 그룹화해 파이프라인 전체가 set-e 안전함을 명시.
+      _lsj="$( { "$HERE/ssh-run" "$_oh" -- lsblk -J -o SERIAL "$byid" 2>/dev/null || true; } )"
+      _actual="$(jq -r 'first(.blockdevices[]?.serial // empty)' <<<"$_lsj" 2>/dev/null | tr -d '[:space:]' || true)"
       [[ -n "$_actual" ]] || die "disk-attach: 노드 '$_oh' 에서 by-id '$byid' 의 serial 조회 실패(장치 부재/lsblk 무응답) — 패스스루 거부"
+      # _actual 는 노드 응답(neutral trust). case 패턴 측만 glob; "$_actual" 는 리터럴 치환이라 rogue '*' 도 fail-closed(매칭 실패→die). 공백경계 " $x " 로 부분일치 차단.
       case " $_declared " in
         *" $_actual "*) : ;;  # 인벤토리 declared 와 일치
         *) die "disk-attach: serial 불일치 — 노드 실측 '$_actual' 가 인벤토리 declared [$_declared] 에 없음. 패스스루 거부." ;;
       esac
+      # TOCTOU 주의: serial 조회와 qm set 은 별 ssh 세션 — 그 사이 장치 교체는 미탐(원격 작업 본질적 한계, best-effort).
       "$HERE/ssh-run" "$_oh" -- qm set "$vmid" "-${bus}${idx}" "${byid},backup=0,iothread=1"
     else
       "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
