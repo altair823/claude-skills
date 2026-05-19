@@ -50,4 +50,35 @@ assert_eq "guest" "$(jq -r .via <<<"$rec")" "via 감사"
 assert_eq "caution" "$(jq -r .classify_grade <<<"$rec")" "classify_grade 감사"
 assert_eq "ro-allowlist:ls" "$(jq -r .classify_rule <<<"$rec")" "classify_rule 감사"
 
+# ── Regression: Critical 1 — cred-gate parity (exec --via guest must NOT require PVE_TOKEN) ──
+# vm-100 is prod env, so caution+prod → needs_approval=1 → guard issues DRY-RUN and exits 10
+# (without --approve). Pre-fix: guest→kind-dispatch makes _t=pve for vm kind, gate checks
+# PVE_TOKEN, which is unset → exits 3. Post-fix: guest→ssh unconditionally, gate checks
+# HL_SSH_KEY=x (set below), gate passes, caution+prod → exit 10.
+cred_gate_o="$(env -u PVE_TOKEN HL_SSH_KEY=x HOMELAB_BACKEND=/tmp/fake-backend \
+  bin/guard exec vm-100 -- --via guest ls 2>&1 || true)"
+assert_not_contains "$cred_gate_o" "missing PVE_TOKEN" "cred-gate: --via guest は PVE_TOKEN を要求しない"
+assert_status 10 \
+  "env -u PVE_TOKEN HL_SSH_KEY=x HOMELAB_BACKEND=/tmp/fake-backend bin/guard exec vm-100 -- --via guest ls" \
+  "cred-gate: --via guest (vm, prod) → exit 10 (DRY-RUN), not exit 3"
+
+# ── Regression: Critical 1 — plan cred parity (--plan exec --via guest must emit HL_SSH_KEY, not PVE_TOKEN) ──
+plan_o="$(env -u HL_SSH_KEY -u PVE_TOKEN bin/guard --plan exec vm-100 -- --via guest 2>&1)"
+assert_contains "$plan_o" "HL_SSH_KEY=" "--plan --via guest: HL_SSH_KEY= が出力される"
+assert_not_contains "$plan_o" "PVE_TOKEN=" "--plan --via guest: PVE_TOKEN= は出力されない"
+
+# ── Regression: Critical 2 — audit record written even when target does not exist ──
+: > logs/audit.jsonl
+env HL_SSH_KEY=x PVE_TOKEN=x HOMELAB_BACKEND=/tmp/fake-backend \
+  bin/guard exec NON-EXISTENT-TARGET-XYZ -- --via guest ls 2>&1 || true
+assert_eq "exec" \
+  "$(tail -1 logs/audit.jsonl | jq -r '.action // empty')" \
+  "missing-target: audit record present with action=exec"
+
+# ── Regression: Important 1 — exec --via node on orphan target must die (exit 1) ──
+# lab-vm-900 has no parent in the fixture (no proxmox-host lists it in children[]) → orphan.
+assert_status 1 \
+  "bin/guard exec lab-vm-900 -- --via node ls" \
+  "orphan node-via: lab-vm-900 has no owning host → die exit 1"
+
 finish; echo "PASS test_exec"

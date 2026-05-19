@@ -49,7 +49,11 @@ case "${1:-}" in
         esac
       done
       case "$pvia" in
-        guest) case "$pkind" in proxmox-host|vm|lxc) ptrans=pve ;; *) ptrans=ssh ;; esac ;;
+        # Critical 1 fix: guest always means direct SSH to the guest (ssh-run).
+        # The old kind-dispatch (vm/lxc→pve, else→ssh) diverged from _backend's
+        # exec:guest arm which unconditionally calls ssh-run. Both plan and
+        # runtime now agree: guest → ssh transport (HL_SSH_KEY).
+        guest) ptrans=ssh ;;
         node)  ptrans=host-ssh ;;
         pve)   ptrans=pve ;;
         *) die "--plan exec: --via guest|node|pve 필요" ;;
@@ -70,7 +74,15 @@ case "${1:-}" in
           [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref"
         fi ;;
       host-ssh)
-        pho="$("$HERE/inv" get "$(owner_host "$pt")")" || exit $?
+        # Important 1 fix: orphan guard — if owner_host falls back to the target
+        # itself (no Proxmox host claims it as a child), --via node is nonsensical
+        # and would silently emit the guest's own key. Die explicitly.
+        _powner="$(owner_host "$pt")"
+        # 이 --plan host-ssh 가지는 exec --via node 외에 비-exec host-ssh verb
+        # (disk-attach/detach/grow)도 도달 가능. orphan 거부는 양쪽 모두에서 안전한
+        # 정책(고아 게스트에 host-ssh 시도는 호출자 의도와 무관하게 잘못된 키 사용).
+        [[ "$_powner" == "$pt" ]] && die "host-ssh op '$pa': target '$pt' has no owning Proxmox host in inventory (orphan)"
+        pho="$("$HERE/inv" get "$_powner")" || exit $?
         phauth="$(jq -r '.access.ssh.auth // "key"' <<<"$pho")"
         if [[ "$phauth" == "password" ]]; then
           pref="$(jq -r '.access.ssh.pass_ref // empty' <<<"$pho")"
@@ -114,6 +126,9 @@ case "${1:-}" in
     grade="unknown"; env_t="unknown"; tags_t="[]"
     inv_json="null"; approver="null"; approved_at="null"; dryrun_hash="null"
     task_upid=""; task_xs=""
+    # Critical 2: init exec-specific vars BEFORE trap install so EXIT trap can
+    # reference them safely under set -u even on early-die paths (e.g. unknown target).
+    EXEC_VIA=""; EXEC_GRADE=""; EXEC_RULE=""
 
     _audit() { # <exit-code>
       local end_ms; end_ms=$(date +%s%3N)
@@ -122,7 +137,9 @@ case "${1:-}" in
       local _xargs=() _xfilter=''
       if [[ "$action" == "exec" ]]; then
         _xargs=(--arg via "$EXEC_VIA" --arg cg "$EXEC_GRADE" --arg cr "$EXEC_RULE")
-        _xfilter=',via:$via,classify_grade:$cg,classify_rule:$cr'
+        # Important 2 fix: mirror task_upid/task_exitstatus convention — empty
+        # string (early-die exec path) becomes JSON null, not "".
+        _xfilter=',via:($via|if .=="" then null else . end),classify_grade:($cg|if .=="" then null else . end),classify_rule:($cr|if .=="" then null else . end)'
       fi
       # set -u 안전 배열 확장: _xargs 가 비어 있을 때 빈 배열을 "${arr[@]}" 로
       # 참조하면 unbound variable 오류가 발생하므로 "${arr[@]+"${arr[@]}"}" 관용구 사용.
@@ -180,7 +197,6 @@ case "${1:-}" in
     tags_t="$(jq -rc '.tags // []' <<<"$inv_json")"
 
     # exec 동적 등급: _classify 로 런타임 위임. non-exec 에서 gov 는 불허.
-    EXEC_VIA=""; EXEC_GRADE=""; EXEC_RULE=""
     if [[ "$action" == "exec" ]]; then
       via=""; cargs=()
       # nounset 안전 방어: extra 가 미정의일 때도 빈 배열로 처리.
@@ -236,8 +252,9 @@ case "${1:-}" in
     # exec 는 transport 가 dynamic — --via 로 실제 transport 결정.
     if [[ "$action" == "exec" ]]; then
       case "$EXEC_VIA" in
-        guest) _t="$(jq -r '.kind // ""' <<<"$inv_json")"
-               case "$_t" in proxmox-host|vm|lxc) _t=pve ;; *) _t=ssh ;; esac ;;
+        # Critical 1 fix: guest always means direct guest SSH (ssh-run), not
+        # kind-dispatch. Matches _backend exec:guest arm and --plan fix above.
+        guest) _t=ssh ;;
         node)  _t=host-ssh ;;
         pve)   _t=pve ;;
       esac
@@ -245,9 +262,18 @@ case "${1:-}" in
     _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$inv_json")"
     # host-ssh: 자격 대상이 owner_host(target). pdm: kind:pdm 엔트리.
     if [[ "$_t" == "host-ssh" ]]; then
-      # owner 부재 시 {} → _auth=key 로 보수적 진행(게이트가 HL_SSH_KEY 요구);
-      # --plan 의 hard-exit 보다 의도적으로 무름(게이트는 실행 전 방어선).
-      _hoinv="$("$HERE/inv" get "$(owner_host "$target")" 2>/dev/null || echo '{}')"
+      # Important 1 fix: exec --via node on an orphan target silently emits the
+      # guest's own SSH key (owner_host falls back to $target); die explicitly.
+      # Scoped to exec only: non-exec host-ssh ops (disk-attach/detach/grow) use
+      # the conservative fallback ({} → _auth=key) intentionally — they may have
+      # a different owner resolution path in _backend. Consistent with --plan scope.
+      if [[ "$action" == "exec" ]]; then
+        _rowner="$(owner_host "$target")"
+        [[ "$_rowner" == "$target" ]] && die "exec --via node: target '$target' has no owning Proxmox host in inventory (orphan)"
+        _hoinv="$("$HERE/inv" get "$_rowner" 2>/dev/null || echo '{}')"
+      else
+        _hoinv="$("$HERE/inv" get "$(owner_host "$target")" 2>/dev/null || echo '{}')"
+      fi
       _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$_hoinv")"
     fi
     if [[ "$grade" != "safe" ]]; then
