@@ -47,8 +47,88 @@ for tok in "$@"; do
   esac
 done
 case "$1" in
+  # 비-셸 인터프리터(python3 perl ruby 등)는 의도적으로 별도 처리 안 함: 어떤 allowlist에도
+  # 없으므로 fail-closed 기본값이 잡아냄. 만약 나중에 allowlist에 추가한다면 -c/-e 반드시 가드.
   sh|bash|dash|zsh|ash) for a in "$@"; do [[ "$a" == "-c" ]] && emit destructive metachar; done ;;
 esac
 
-# (Task 4 에서 read-only allowlist 채움) — 현재는 전부 fallback-deny
+# 커맨드 래퍼 차단: env/sudo 등 wrapper를 통한 allowlist 우회 방지.
+# 이 목록은 완전하지 않음(예: doas runuser chroot unshare nsenter). 완전성은 불필요 —
+# fail-closed 기본값이 미지의 $1을 이미 destructive로 만듦. 이 가드는 OTHERWISE-ALLOWLISTED
+# 결과를 세탁하는 경우를 막기 위해 존재.
+case "$1" in
+  env|sudo|su|xargs|nice|timeout|nohup|stdbuf|setsid)
+    emit destructive wrapper ;;
+esac
+
+# read-only allowlist (첫 토큰 = 바이너리). 단순 바이너리는 인자 무관 caution.
+# ip/ss/dmesg/journalctl 은 변이 플래그가 있어 별도 가드 블록에서 처리 (아래).
+case "$1" in
+  cat|ls|stat|df|du|lsblk|blkid|findmnt|free|uptime|hostname|id|whoami|date|uname|netstat|pvs|lvs|vgs)
+    emit caution "ro-allowlist:$1" ;;
+esac
+
+# 변이 가능 바이너리: 읽기 전용 형태만 caution, 변이 인자 있으면 fall-through → fallback-deny
+
+# journalctl: --flush/--rotate/--sync/--relinquish-var/--smart-relinquish-var/--vacuum* → mutating
+if [[ "$1" == journalctl ]]; then
+  _mutating=0
+  for _a in "${@:2}"; do
+    case "$_a" in
+      --flush|--rotate|--sync|--relinquish-var|--smart-relinquish-var|--vacuum*)
+        _mutating=1; break ;;
+    esac
+  done
+  if [[ $_mutating -eq 0 ]]; then emit caution "ro-allowlist:journalctl"; fi
+  # mutating → fall through to fallback-deny
+fi
+
+# dmesg: -C/--clear/-c/--read-clear → mutating
+if [[ "$1" == dmesg ]]; then
+  _mutating=0
+  for _a in "${@:2}"; do
+    case "$_a" in
+      -C|--clear|-c|--read-clear) _mutating=1; break ;;
+    esac
+  done
+  if [[ $_mutating -eq 0 ]]; then emit caution "ro-allowlist:dmesg"; fi
+fi
+
+# ss: -K/--kill → mutating
+if [[ "$1" == ss ]]; then
+  _mutating=0
+  for _a in "${@:2}"; do
+    case "$_a" in
+      -K|--kill) _mutating=1; break ;;
+    esac
+  done
+  if [[ $_mutating -eq 0 ]]; then emit caution "ro-allowlist:ss"; fi
+fi
+
+# ip: 변이 동사(add/del/delete/set/change/replace/flush/append/prepend) 없으면 caution
+if [[ "$1" == ip ]]; then
+  _mutating=0
+  for _a in "${@:2}"; do
+    case "$_a" in
+      add|del|delete|set|change|replace|flush|append|prepend)
+        _mutating=1; break ;;
+    esac
+  done
+  if [[ $_mutating -eq 0 ]]; then emit caution "ro-allowlist:ip"; fi
+fi
+# 서브커맨드 한정 화이트리스트: <bin> <sub> 형태만 caution
+sub="${2:-}"
+case "$1 $sub" in
+  "systemctl status"|"systemctl is-active"|"systemctl is-enabled"|"systemctl show"|"systemctl list-units")
+    emit caution "ro-allowlist:systemctl-${sub}" ;;
+  "qm config"|"qm list"|"qm status")
+    emit caution "ro-allowlist:qm-${sub}" ;;
+  "pct config"|"pct list"|"pct status")
+    emit caution "ro-allowlist:pct-${sub}" ;;
+  "pvesm status"|"pvesm list")
+    emit caution "ro-allowlist:pvesm-${sub}" ;;
+  "apt list"|"dpkg -l")
+    emit caution "ro-allowlist:pkg-query" ;;
+esac
+# 그 외 전부 — 미지/비화이트리스트 → fail-closed
 emit destructive fallback-deny
