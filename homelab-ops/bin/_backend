@@ -230,6 +230,42 @@ case "$action:$kind" in
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0
     fi
     "$HERE/ssh-run" "$target" -- sudo apt-get install -y "$@" ;;
+  service:*)
+    svc_sub="${1:-}"; svc_unit="${2:-}"
+    case "$svc_sub" in start|stop|restart|status) : ;; *) die "service: 서브커맨드는 start|stop|restart|status (받음: '$svc_sub')" ;; esac
+    [[ "$svc_unit" =~ ^[A-Za-z0-9_.@:-]+$ ]] || die "service: unit 명 charset 위반 (받음: '$svc_unit')"
+    if [[ $dry -eq 1 ]]; then echo "DRY-RUN: service $svc_sub $svc_unit on $target (guest ssh)"; exit 0; fi
+    "$HERE/ssh-run" "$target" -- systemctl "$svc_sub" "$svc_unit" ;;
+  logs:*)
+    lg_unit=""; lg_file=""; lg_n="100"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --unit) lg_unit="${2:-}"; shift 2 ;;
+        --file) lg_file="${2:-}"; shift 2 ;;
+        -n)     lg_n="${2:-}";    shift 2 ;;
+        *)      shift ;;
+      esac
+    done
+    [[ "$lg_n" =~ ^[0-9]+$ ]] || die "logs: -n 은 정수 (받음: '$lg_n')"
+    if [[ -n "$lg_unit" ]]; then
+      [[ "$lg_unit" =~ ^[A-Za-z0-9_.@:-]+$ ]] || die "logs: --unit charset 위반"
+      if [[ $dry -eq 1 ]]; then echo "DRY-RUN: logs journalctl -u $lg_unit -n $lg_n on $target"; exit 0; fi
+      "$HERE/ssh-run" "$target" -- journalctl -u "$lg_unit" -n "$lg_n" --no-pager
+    elif [[ -n "$lg_file" ]]; then
+      [[ "$lg_file" =~ ^/[A-Za-z0-9_./-]+$ ]] || die "logs: --file 은 절대경로·안전문자만"
+      [[ "$lg_file" != *..* ]] || die "logs: --file 에 '..' 경로 구성요소 불가"
+      if [[ $dry -eq 1 ]]; then echo "DRY-RUN: logs tail -n $lg_n $lg_file on $target"; exit 0; fi
+      "$HERE/ssh-run" "$target" -- tail -n "$lg_n" "$lg_file"
+    else die "logs: --unit <u> 또는 --file <path> 필요"; fi ;;
+  pkg-update:*)
+    if [[ $dry -eq 1 ]]; then echo "DRY-RUN: pkg-update (apt/dnf update+upgrade) on $target (guest ssh)"; exit 0; fi
+    # 내부에서 구성한 신뢰 명령(운영자 임의 입력 아님) — exec 분류기 metachar 규칙과 무관
+    "$HERE/ssh-run" "$target" -- sh -lc 'if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade; else dnf -y upgrade; fi' ;;
+  reboot:*)
+    # 알려진 한계: systemctl reboot 은 SSH 연결을 즉시 끊으므로 ssh-run 이 비-0(예: 255)으로
+    # 종료될 수 있다 — 게스트가 실제로 재부팅에 성공해도 감사 로그에 비-0 exit 이 기록됨.
+    if [[ $dry -eq 1 ]]; then echo "DRY-RUN: reboot guest OS on $target (systemctl reboot via guest ssh)"; exit 0; fi
+    "$HERE/ssh-run" "$target" -- systemctl reboot ;;
   provision:*)
     if [[ $dry -eq 1 ]]; then
       "$REPO_ROOT/provisioning/phase1" dry-run "$target" "$@"

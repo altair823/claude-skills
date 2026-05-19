@@ -24,9 +24,6 @@ trap 'rm -f bin/_tblprobe.sh' EXIT
 while read -r act grade _trans; do
   [[ "$grade" == "safe" ]] && continue
   [[ "$grade" == "dynamic" ]] && continue   # exec: dynamic arm 은 Plan Task 6 에서 추가
-  # 큐레이티드 신규 verb 는 backend arm 이 나중 태스크에서 추가되므로 제외.
-  # TODO(Plan Task 8): service/logs/pkg-update/reboot arm 추가 후 이 줄 제거.
-  case "$act" in service|logs|pkg-update|reboot) continue ;; esac
   o="$(bin/_backend "$act" vm-100 --dry-run -- probe-arg 2>&1 || true)"
   assert_not_contains "$o" "no backend mapping for action '$act'" \
     "table action '$act' is backend-routed"
@@ -62,7 +59,7 @@ while read -r act spec; do
   esac
 done < <(bash bin/_tblprobe.sh keys)
 # 큐레이티드 신규 verb 등급·transport 고정
-for kv in "service:caution guest" "logs:caution ssh" "pkg-update:caution ssh" "reboot:caution guest"; do
+for kv in "service:caution ssh" "logs:caution ssh" "pkg-update:caution ssh" "reboot:caution ssh"; do
   k="${kv%%:*}"; want="${kv#*:}"
   got="$(bash -c "source bin/_lib.sh; echo \"\${ACTIONS[$k]:-MISSING}\"")"
   assert_eq "$want" "$got" "ACTIONS[$k]=$want"

@@ -66,7 +66,7 @@ declare -gA ACTIONS=(
   [start]="caution guest"     [stop]="caution guest"  [restart]="caution guest"
   [snapshot]="caution guest"  [pkg-install]="caution ssh"  [pkg-update]="caution ssh"
   [backup]="caution pve"
-  [service]="caution guest"   [logs]="caution ssh"   [reboot]="caution guest"
+  [service]="caution ssh"     [logs]="caution ssh"   [reboot]="caution ssh"
   [disk-attach]="destructive host-ssh"  [disk-detach]="destructive host-ssh"
   [disk-grow]="destructive host-ssh"
   [remote-migrate]="destructive pdm"
