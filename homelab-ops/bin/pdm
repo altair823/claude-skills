@@ -11,6 +11,11 @@ addr="$(jq -r '.address // empty' <<<"$pe")"
 [[ -n "$addr" && "$addr" != "null" ]] || die "pdm entry has no address in inventory"
 [[ -n "${PDM_TOKEN:-}" ]] || { HL_EXIT=3 die "missing PDM_TOKEN — bitwarden-ops bw-exec 로 감싸 실행 (참고: \"$HERE/guard\" --plan)"; }
 token="$PDM_TOKEN"
+# PDM 은 PBS 계열 Rust 스택 → 인증 헤더는 `PDMAPIToken=` 이고 authid 와
+# secret 을 콜론으로 잇는다(`user@realm!tokenid:secret`). 저장형 PDM_TOKEN 은
+# PVE 와 통일된 `authid=secret` 형태로 보관하므로 첫 '=' 기준으로 분리한다
+# (authid·UUID secret 모두 '=' 미포함 → 첫 '=' 분리가 안전).
+pdm_auth="PDMAPIToken=${token%%=*}:${token#*=}"
 # base URL: address 에 :port 포함 가능. base_path 는 인벤토리 override 가능,
 # 기본은 PDM API 의 /api2/json. (운영자 PDM 버전에 맞춰 base_path 조정.)
 bp="$(jq -r '.access.api.base_path // "/api2/json"' <<<"$pe")"
@@ -26,15 +31,15 @@ if [[ -n "$ca_path" && "$ca_path" != "null" ]]; then
   ca_opt=(--cacert "$ca_path")
 fi
 
-# PDM 은 PVE 와 동일 Proxmox 토큰 인증 스택 → Authorization: PVEAPIToken= 동일 형식(헤더 전용, argv/디스크 미노출).
+# 인증은 헤더 전용(argv/디스크 미노출). PDM 스킴은 위 pdm_auth 참조.
 call() { # METHOD path [data]
   local m="$1" p="$2" d="${3:-}"
   if [[ -n "$d" ]]; then
     curl -sS --fail-with-body ${ca_opt[@]+"${ca_opt[@]}"} -X "$m" \
-      -H "Authorization: PVEAPIToken=${token}" --data "$d" "${base}${p}"
+      -H "Authorization: ${pdm_auth}" --data "$d" "${base}${p}"
   else
     curl -sS --fail-with-body ${ca_opt[@]+"${ca_opt[@]}"} -X "$m" \
-      -H "Authorization: PVEAPIToken=${token}" "${base}${p}"
+      -H "Authorization: ${pdm_auth}" "${base}${p}"
   fi
 }
 
