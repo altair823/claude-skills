@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/guard bin/_backend bin/pdm 2>/dev/null || true
-export PDM_TOKEN="stub-pdm-token"
+export PDM_TOKEN="a@pam!t=stub-pdm-token"   # 현실형(authid=secret); bin/pdm format 가드 통과
 
 assert_eq "destructive" "$(bin/guard grade remote-migrate lab-vm-900)" "remote-migrate destructive"
 assert_eq "destructive pdm" "$(bash -c 'source bin/_lib.sh; echo "${ACTIONS[remote-migrate]}"')" "ACTIONS[remote-migrate]=destructive pdm"
