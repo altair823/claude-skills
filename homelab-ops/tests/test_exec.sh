@@ -32,4 +32,22 @@ assert_status 1 "bin/guard exec lab-vm-900 --grade-override safe -- --via guest 
 assert_status 1 "bin/guard exec lab-vm-900 -- --via docker cat /etc/os-release" "잘못된 --via 는 실행 전 거부(die exit 1)"
 assert_status 1 "bin/guard exec lab-vm-900 -- --via guest" "exec --via 만 있고 명령 없음 → 거부"
 
+# node transport 라우팅 + pve transport 라우팅이 backend 로 흐른다 (실 backend, dry-run 경로)
+# vm-100(prod env): caution+prod → needs_approval=1 → DRY-RUN path through real backend.
+# _backend exec arm 이 출력하는 "via=node" / "via=pve" 문자열로 via 미스라우팅을 검출.
+# (guard 자체 dry-run 요약에는 "via=" 가 없으므로 backend 도달 여부가 명확히 구분됨.)
+export HOMELAB_BACKEND=bin/_backend
+on="$(bin/guard exec vm-100 -- --via node qm config 301 2>&1 || true)"
+assert_contains "$on" "via=node" "node 라우팅: backend exec arm 이 via=node 로 실행"
+op="$(bin/guard exec vm-100 -- --via pve --method GET --path /version 2>&1 || true)"
+assert_contains "$op" "via=pve" "pve 라우팅: backend exec arm 이 via=pve 로 실행"
+export HOMELAB_BACKEND=/tmp/fake-backend
+# 감사: via/classify_grade/classify_rule 항상 존재
+: > logs/audit.jsonl
+bin/guard exec lab-vm-900 --approve -- --via guest ls / >/dev/null 2>&1 || true
+rec="$(tail -1 logs/audit.jsonl)"
+assert_eq "guest" "$(jq -r .via <<<"$rec")" "via 감사"
+assert_eq "caution" "$(jq -r .classify_grade <<<"$rec")" "classify_grade 감사"
+assert_eq "ro-allowlist:ls" "$(jq -r .classify_rule <<<"$rec")" "classify_rule 감사"
+
 finish; echo "PASS test_exec"

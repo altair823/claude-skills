@@ -200,6 +200,46 @@ case "$action:$kind" in
     else
       "$REPO_ROOT/provisioning/phase1" apply "$target" "$@"
     fi ;;
+  exec:*)
+    via=""; cargs=()
+    # 1패스: --via 를 추출하고 --method/--path/--body 를 포함한 나머지 인자를
+    # 모두 cargs 로 정규화. cargs 는 표시(dry-run 메시지)·라우팅·pve 재파싱의
+    # 단일 정규 페이로드로, 세 경로 모두 이 배열을 출처로 삼는다.
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --via) via="${2:?exec: --via 에 값 필요}"; shift 2 ;;
+        --method) cargs+=(--method "${2:?exec: --method 에 값 필요}"); shift 2 ;;
+        --path)   cargs+=(--path   "${2:?exec: --path 에 값 필요}");   shift 2 ;;
+        --body)   cargs+=(--body   "${2:?exec: --body 에 값 필요}");   shift 2 ;;
+        --) shift; cargs+=("$@"); break ;;
+        *) cargs+=("$1"); shift ;;
+      esac
+    done
+    [[ "$via" =~ ^(guest|node|pve)$ ]] || die "exec: --via 는 guest|node|pve 중 하나여야 합니다 (받음: '${via:-<none>}')"
+    if [[ $dry -eq 1 ]]; then
+      echo "DRY-RUN: exec $target via=$via ${cargs[*]+"${cargs[*]}"}"; exit 0
+    fi
+    case "$via" in
+      guest) "$HERE/ssh-run" "$target" -- "${cargs[@]+"${cargs[@]}"}" ;;
+      node)  "$HERE/ssh-run" "$(owner_host "$target")" -- "${cargs[@]+"${cargs[@]}"}" ;;
+      pve)
+        method=""; path=""; body=()
+        # 2패스: pve 브랜치는 cargs(단일 정규 페이로드)를 재파싱해 --method/--path/--body
+        # 를 추출. cargs 가 단일 출처이므로 1패스에서 정규화된 인자가 일관되게 흘러온다.
+        # nounset 안전 관용구: cargs 가 비어 있을 때 "${arr[@]}" 참조를 차단.
+        set -- "${cargs[@]+"${cargs[@]}"}"
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --method) method="${2:?exec pve: --method 에 값 필요}"; shift 2 ;;
+            --path)   path="${2:?exec pve: --path 에 값 필요}";     shift 2 ;;
+            --body)   body+=("${2:?exec pve: --body 에 값 필요}"); shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [[ -n "$method" ]] || die "exec pve: --method 필요"
+        [[ -n "$path"   ]] || die "exec pve: --path 필요"
+        "$HERE/pve" "$(owner_host "$target")" api "$method" "$path" "${body[@]+"${body[@]}"}" ;;
+    esac ;;
   *)
     die "no backend mapping for action '$action' on kind '$kind'" ;;
 esac

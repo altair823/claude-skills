@@ -117,6 +117,15 @@ case "${1:-}" in
 
     _audit() { # <exit-code>
       local end_ms; end_ms=$(date +%s%3N)
+      # exec 전용 추가 인자·필터 — non-exec 는 둘 다 빈 채로 단일 호출로 진행.
+      # _xfilter 는 jq 변수 참조($via 등)를 담으므로 단일 인용('), shell 확장 없음.
+      local _xargs=() _xfilter=''
+      if [[ "$action" == "exec" ]]; then
+        _xargs=(--arg via "$EXEC_VIA" --arg cg "$EXEC_GRADE" --arg cr "$EXEC_RULE")
+        _xfilter=',via:$via,classify_grade:$cg,classify_rule:$cr'
+      fi
+      # set -u 안전 배열 확장: _xargs 가 비어 있을 때 빈 배열을 "${arr[@]}" 로
+      # 참조하면 unbound variable 오류가 발생하므로 "${arr[@]+"${arr[@]}"}" 관용구 사용.
       audit_append \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg session "$HOMELAB_SESSION_ID" --arg op "$op" \
@@ -125,12 +134,13 @@ case "${1:-}" in
         --argjson tags "$tags_t" --argjson inv "$inv_json" \
         --arg dh "$dryrun_hash" --arg apr "$approver" --arg apat "$approved_at" \
         --arg tu "$task_upid" --arg tx "$task_xs" \
-        --argjson ex "$1" --argjson dur "$((end_ms-start_ms))" '
-        {ts:$ts,session:$session,op:$op,actor:$actor,action:$action,
+        --argjson ex "$1" --argjson dur "$((end_ms-start_ms))" \
+        "${_xargs[@]+"${_xargs[@]}"}" \
+        '{ts:$ts,session:$session,op:$op,actor:$actor,action:$action,
          target:$target,grade:$grade,env:$env,tags:$tags,inv_snapshot:$inv,
          dryrun_hash:$dh,approver:$apr,approved_at:$apat,exit:$ex,duration_ms:$dur,
          task_upid:($tu|if .=="" then null else . end),
-         task_exitstatus:($tx|if .=="" then null else . end)}'
+         task_exitstatus:($tx|if .=="" then null else . end)'"${_xfilter}"'}'
     }
     # Forensic guarantee (spec §6): ANY termination — normal, preflight failure,
     # backend failure, OR operator interrupt (Ctrl-C / SIGTERM) — writes exactly
