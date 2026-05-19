@@ -37,6 +37,24 @@ case "${1:-}" in
     pinv="$("$HERE/inv" get "$pt")" || exit $?
     pkind="$(jq -r '.kind // ""' <<<"$pinv")"
     ptrans="$(op_transport "$pa" "$pkind")"
+    # exec: --via 로 실제 transport 결정
+    if [[ "$pa" == "exec" ]]; then
+      shift 3 2>/dev/null || true
+      [[ "${1:-}" == "--" ]] && shift || true
+      pvia=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --via) pvia="${2:-}"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      case "$pvia" in
+        guest) case "$pkind" in proxmox-host|vm|lxc) ptrans=pve ;; *) ptrans=ssh ;; esac ;;
+        node)  ptrans=host-ssh ;;
+        pve)   ptrans=pve ;;
+        *) die "--plan exec: --via guest|node|pve 필요" ;;
+      esac
+    fi
     case "$ptrans" in
       pve)
         pref="$("$HERE/inv" get "$(owner_host "$pt")" \
@@ -81,10 +99,11 @@ case "${1:-}" in
     shift 2
     orig_action="$action"
     action="$(canon_action "$action")"   # 별칭(delete→destroy) 정규화: 등급·경로·감사 일관
-    approve=0; extra=()
+    approve=0; extra=(); gov=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --approve) approve=1; shift ;;
+        --grade-override) gov="${2:?--grade-override 값 필요}"; shift 2 ;;
         --) shift; extra=("$@"); break ;;
         *) extra+=("$1"); shift ;;
       esac
@@ -149,7 +168,52 @@ case "${1:-}" in
     { _inv_tmp="$("$HERE/inv" get "$target")" && inv_json="$_inv_tmp"; } || die "cannot resolve target: $target"
     env_t="$(jq -r '.env // "unknown"' <<<"$inv_json")"
     tags_t="$(jq -rc '.tags // []' <<<"$inv_json")"
-    grade="$(guard_grade "$action" "$target")"
+
+    # exec 동적 등급: _classify 로 런타임 위임. non-exec 에서 gov 는 불허.
+    EXEC_VIA=""; EXEC_GRADE=""; EXEC_RULE=""
+    if [[ "$action" == "exec" ]]; then
+      via=""; cargs=()
+      # nounset 안전 방어: extra 가 미정의일 때도 빈 배열로 처리.
+      set -- "${extra[@]+"${extra[@]}"}"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --via) via="${2:?exec: --via <guest|node|pve> 필요}"; shift 2 ;;
+          --) shift; cargs=("$@"); break ;;
+          *) cargs+=("$1"); shift ;;
+        esac
+      done
+      [[ "$via" =~ ^(guest|node|pve)$ ]] || die "exec: --via 는 guest|node|pve 중 하나여야 합니다"
+      [[ "${#cargs[@]}" -gt 0 ]] || die "exec: 실행할 명령이 없습니다 (--via 뒤에 명령을 지정하세요)"
+      if [[ "$via" == "pve" ]]; then
+        cls="$("$HERE/_classify" pve "${cargs[@]+"${cargs[@]}"}")"
+      else
+        cls="$("$HERE/_classify" "$via" -- "${cargs[@]+"${cargs[@]}"}")"
+      fi
+      # _classify 출력 형식: grade<TAB>rule — tab 구분자로 분리.
+      cgrade="${cls%%$'\t'*}"; crule="${cls##*$'\t'}"
+      if [[ -n "$gov" ]]; then
+        case "$gov" in
+          destructive) cgrade=destructive; crule="${crule}+override" ;;
+          *) die "exec: --grade-override 는 상향(destructive)만 허용 (받음: $gov)" ;;
+        esac
+      fi
+      EXEC_VIA="$via"; EXEC_GRADE="$cgrade"; EXEC_RULE="$crule"
+    else
+      [[ -n "$gov" ]] && die "--grade-override 는 exec 전용"
+    fi
+
+    if [[ "$action" == "exec" ]]; then
+      grade="$EXEC_GRADE"
+      # Reuse already-fetched inv_json (line ~168) — avoids TOCTOU divergence
+      # between audit snapshot and critical-bump decision (IMPORTANT 1 fix).
+      _ejrc=0
+      jq -e '(.tags? // []) | index("critical")' >/dev/null 2>&1 <<<"$inv_json" || _ejrc=$?
+      [[ $_ejrc -eq 5 ]] && die "cannot parse inventory JSON for target: $target"
+      [[ $_ejrc -eq 0 && "$grade" != "safe" ]] && grade="$(_bump "$grade")"
+    else
+      grade="$(guard_grade "$action" "$target")"
+    fi
+
     rl="$(run_log_path "$op")"
     backend="${HOMELAB_BACKEND:-$HERE/_backend}"
 
@@ -159,6 +223,15 @@ case "${1:-}" in
     # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
     # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
+    # exec 는 transport 가 dynamic — --via 로 실제 transport 결정.
+    if [[ "$action" == "exec" ]]; then
+      case "$EXEC_VIA" in
+        guest) _t="$(jq -r '.kind // ""' <<<"$inv_json")"
+               case "$_t" in proxmox-host|vm|lxc) _t=pve ;; *) _t=ssh ;; esac ;;
+        node)  _t=host-ssh ;;
+        pve)   _t=pve ;;
+      esac
+    fi
     _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$inv_json")"
     # host-ssh: 자격 대상이 owner_host(target). pdm: kind:pdm 엔트리.
     if [[ "$_t" == "host-ssh" ]]; then
@@ -197,6 +270,7 @@ case "${1:-}" in
       dryrun_hash="$(printf '%s' "$dry" | sha256sum | awk '{print $1}')"
       if [[ "$approve" -ne 1 ]]; then
         echo "DRY-RUN [$grade] $action $target (env=$env_t tags=$tags_t)"
+        [[ "$action" == "exec" && -n "$EXEC_RULE" ]] && echo "classify_rule: $EXEC_RULE"
         echo "$dry" | mask
         echo "Impact above. Re-run with --approve to execute."
         _DONE=1; _audit 10 || echo "homelab-ops: AUDIT FAILED op=$op rc=10" >&2
