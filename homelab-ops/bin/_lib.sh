@@ -99,15 +99,16 @@ canon_action() {
   echo "${ACTION_ALIASES[$a]:-$a}"
 }
 
-# action_grade <action> -> safe|caution|destructive (deny-by-default).
+# action_grade <action> -> safe|caution|destructive|dynamic (deny-by-default).
 # critical 승급은 적용하지 않는다 — 그건 target 이 필요하므로 guard 소관.
+# 'dynamic' 첫 토큰(exec)이면 'dynamic' 을 반환 — guard 가 bin/_classify 로 동적 위임한다.
 action_grade() {
   local a; a="$(canon_action "${1:?action_grade: action required}")"
   local spec="${ACTIONS[$a]:-}"
   if [[ -n "$spec" ]]; then echo "${spec%% *}"; else echo destructive; fi
 }
 
-# op_transport <action> <kind> -> pve | ssh | host-ssh | pdm | none  (테이블 둘째 토큰 해석)
+# op_transport <action> <kind> -> pve | ssh | host-ssh | pdm | none | dynamic  (테이블 둘째 토큰 해석)
 op_transport() {
   local a; a="$(canon_action "${1:?op_transport: action required}")"
   local kind="${2:-}" spec t
@@ -115,6 +116,7 @@ op_transport() {
   if [[ -z "$spec" ]]; then echo none; return; fi
   t="${spec##* }"
   case "$t" in
+    exec) echo dynamic ;;          # exec 의 transport 는 런타임(--via)에 결정 — 동적 표식
     none|pve|ssh|host-ssh|pdm) echo "$t" ;;
     guest) case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
     *) echo none ;;
