@@ -27,11 +27,11 @@
 
 | verb | 등급 / transport | 동작 | 안전 가드 |
 |---|---|---|---|
-| `service` | `caution guest` | `-- <start\|stop\|restart\|status> <unit>` (게스트 systemctl) | 서브커맨드 4종 + unit 명 charset 화이트리스트; 그 외 거부 |
+| `service` | `caution ssh` ~~`caution guest`~~ | `-- <start\|stop\|restart\|status> <unit>` (게스트 systemctl) | 서브커맨드 4종 + unit 명 charset 화이트리스트; 그 외 거부 |
 | `logs` | `caution ssh` | `-- --unit <u> [-n N]` (journalctl) 또는 `-- --file <path> [-n N]` (tail). 읽기 전용 | "safe" 는 자격 불필요 인벤토리 읽기 전용 전용 — 원격 읽기는 transport 자격이 필요하므로 최소 `caution`. unit/path charset 가드 |
 | `disk-grow` (확장) | `destructive host-ssh` | 기존 verb 에 `--to <size>` 옵션 추가: owner 노드에서 `qm resize <vmid> <disk> <size>` → 이어서 기존 게스트 내부 시퀀스. `--to` 없으면 기존 동작 그대로(하위호환) | `--to` 절대값·증가만; 목표 ≤ 현재 거부. 대상 디스크 단일 자동탐지, 다중이면 `--disk` 명시 요구. size charset 가드 |
 | `pkg-update` | `caution ssh` | 게스트 apt/dnf update + upgrade (비대화식) | 기존 `pkg-install` 미러; 패키지 매니저 자동탐지(apt/dnf) |
-| `reboot` | `caution guest` | 게스트 OS 재부팅 | `restart`(VM 재시작)와 구분 — 게스트 내부 `systemctl reboot`. prod 는 기존 caution 규칙대로 --approve |
+| `reboot` | `caution ssh` ~~`caution guest`~~ | 게스트 OS 재부팅 | `restart`(VM 재시작)와 구분 — 게스트 내부 `systemctl reboot`. prod 는 기존 caution 규칙대로 --approve |
 
 ### 묶음 B — `exec` 범용 hatch (동적 등급 verb)
 
@@ -54,10 +54,19 @@
 
 보수적 allowlist 규칙(순서대로, 첫 매치 승):
 
-1. **메타문자 차단**: argv 어느 토큰이든 셸 체이닝/리다이렉트 메타(`; | & $ \` ( ) < > && ||` 및 개행) 포함, 또는 `--shell`/`bash -c`/`sh -c` 형태 → **destructive** (`rule=metachar`).
-2. **pve transport**: `--method GET` 만 → `caution` (`rule=pve-get`); `POST|PUT|DELETE` 또는 미지 method → **destructive** (`rule=pve-write`).
-3. **읽기 전용 바이너리 allowlist** (guest/node): 첫 토큰이 알려진 read-only 집합 — `cat ls stat df du lsblk findmnt blkid free uptime hostname id whoami date uname ip ss netstat journalctl dmesg pvs lvs vgs` + 서브커맨드 한정 화이트리스트(`systemctl status|is-active|is-enabled|show|list-units`, `qm config|list|status`, `pct config|list|status`, `pvesm status|list`, `apt list`, `dpkg -l`) → `caution` (`rule=ro-allowlist:<bin>`).
-4. **그 외 전부** (미지 바이너리, 비-화이트리스트 서브커맨드, 인자 파싱 실패) → **destructive** (`rule=fallback-deny`).
+0. **잘못된 via 차단** ~~(원래 spec 에 미기재)~~: `--via` 가 `guest|node|pve` 외 값 → **destructive** (`rule=invalid-via`). guard 가 별도로도 검증하지만 분류기도 독립적으로 차단한다.
+1. **메타문자 차단**: argv 어느 토큰이든 셸 체이닝/리다이렉트 메타(`; | & $ \` ( ) < > && ||` 및 개행) 포함, 또는 `bash -c`/`sh -c` 등 셸 인터프리터에 `-c` 동반 → **destructive** (`rule=metachar`).
+2. **래퍼 바이너리 차단** ~~(원래 spec 의 메타문자 규칙에 포함 기술됐으나 별도 레이블로 구현됨)~~: `env sudo su xargs nice timeout nohup stdbuf setsid` 가 첫 토큰 → **destructive** (`rule=wrapper`). allowlist 우회 세탁 방지 목적; 미지 래퍼는 fallback-deny 가 잡음.
+3. **pve transport**: `--method GET` 만 → `caution` (`rule=pve-get`); `POST|PUT|DELETE` 또는 미지 method → **destructive** (`rule=pve-write`).
+4. **읽기 전용 바이너리 allowlist** (guest/node): 첫 토큰이 알려진 read-only 집합 → `caution` (`rule=ro-allowlist:<bin>`). **구현 확정(원래 spec 의 단순 나열과 다름)**:
+   - 인자 무관 caution: `cat ls stat df du lsblk blkid findmnt free uptime hostname id whoami date uname netstat pvs lvs vgs`
+   - **읽기 전용 형태만 caution, 변이 플래그/서브커맨드 → destructive fallback-deny**:
+     - `ip`: 서브/인자에 `add|del|delete|set|change|replace|flush|append|prepend` 없으면 caution
+     - `ss`: `-K|--kill` 없으면 caution
+     - `dmesg`: `-C|--clear|-c|--read-clear` 없으면 caution
+     - `journalctl`: `--flush|--rotate|--sync|--vacuum*` 등 변이 플래그 없으면 caution
+   - 서브커맨드 한정: `systemctl status|is-active|is-enabled|show|list-units`, `qm config|list|status`, `pct config|list|status`, `pvesm status|list`, `apt list`, `dpkg -l`
+5. **그 외 전부** (미지 바이너리, 비-화이트리스트 서브커맨드, 인자 파싱 실패) → **destructive** (`rule=fallback-deny`).
 
 `caution` 이 분류기가 낼 수 있는 **최저** 등급(원격+자격이라 `safe` 없음). `--grade-override destructive` 는 상향만 허용; 하향 인자는 파싱 단계에서 거부.
 
@@ -120,3 +129,15 @@ user → guard exec <target> --via X -- <cmd>
 - 게스트/owner 노드 SSH 자격의 vault 등록(`bw-put`) — 운영자 데이터 작업.
 - `exec --via pve` 의 PVE 토큰 권한 범위 — 운영자 보유 토큰에 의존.
 - 큐레이티드 verb 대상 게스트의 QEMU guest-agent 동작(disk-grow 계열).
+
+## 구현 중 spec 정정 (review-driven)
+
+이 섹션은 원래 승인된 spec 에서 구현 리뷰 중 수정된 항목을 명시적으로 기록한다. spec 에서 벗어난 이유와 근거를 감사 가능하게 보존한다.
+
+| 항목 | 원래 spec | 구현 결과(as-built) | 수정 근거 |
+|---|---|---|---|
+| `service` transport | `caution guest` | `caution ssh` | `_backend` `service:*` arm 이 `bin/ssh-run` 으로 게스트 SSH 직접 경유 — 게스트 PVE API 경로 없음. transport label 은 자격 종류를 나타내며 `ssh` 가 정확하다. |
+| `reboot` transport | `caution guest` | `caution ssh` | `_backend` `reboot:*` arm 이 `bin/ssh-run` 으로 `systemctl reboot` 실행 — PVE API 가 아닌 게스트 SSH. |
+| `ip ss dmesg journalctl` 분류 | spec 의 단순 바이너리 나열 → 무조건 caution 으로 기술 | 읽기 전용 형태만 caution; 변이 플래그/서브커맨드(`ip link set`, `journalctl --rotate`, `ss -K`, `dmesg --clear` 등) → `fallback-deny` | 보수적 강화. 이 바이너리들은 mutating 플래그가 있으므로 무조건 caution 은 과도한 하향을 허용함. test_classify.sh 가 변이 형태의 fallback-deny 를 단언한다. |
+| `invalid-via` 규칙 레이블 | spec 에 미기재 (분류기 입력 검증 내용으로만 언급) | `_classify` 가 `invalid-via` 레이블을 명시적으로 emit | 감사 레코드의 `classify_rule` 을 명확히 하기 위해 별도 레이블로 구현. |
+| `wrapper` 규칙 레이블 | spec 이 래퍼 차단을 메타문자 규칙 설명 안에 포함 기술 | `_classify` 가 래퍼를 독립 가드 블록으로 구현하고 `wrapper` 레이블 emit | 래퍼 차단과 메타문자 차단을 감사 레코드에서 구분 가능하도록 분리. test_classify.sh 가 `env`/`sudo` → `wrapper` 를 단언한다. |

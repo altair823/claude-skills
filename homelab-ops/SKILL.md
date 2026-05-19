@@ -35,6 +35,9 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
   target 이지만 **owner Proxmox 노드에 root SSH** 로 실행(`qm set`/`qm guest
   exec`). 자격은 owner_host 엔트리의 `access.ssh`. disk-attach 는 게스트
   엔트리 `disks[].serial` opt-in 선언 필요.
+- **guest-ssh transport.** `service`/`logs`/`pkg-update`/`reboot`/`exec --via guest`
+  는 **게스트 엔트리의 `access.ssh`** (`key_ref` 또는 `pass_ref`) 자격으로 직접
+  접속. `pkg-install` 과 동일 패턴.
 - **Per-host CA.** A homelab Proxmox serves a self-signed cert from its built-in
   CA (Proxmox names it "PVE Cluster Manager CA" even on a standalone, non-
   clustered node), so system trust alone fails verification. Set
@@ -85,9 +88,21 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 - "Start/stop/restart/snapshot X" → `"$HL/bin/guard" <verb> <id>` (prod ⇒ needs `--approve`)
 - "Back up X (vzdump)" → `"$HL/bin/guard" backup <id> -- <storage> [mode] [compress]` (caution; prod ⇒ `--approve`)
 - "Destroy/delete X" → `"$HL/bin/guard" destroy <id>` (`delete` = `destroy` 별칭) → show the DRY-RUN/impact → re-run with `--approve`
-- storage/network 변경은 **미지원**(Phase 2 후보). 임의 verb 를 던지면 deny-by-default 가 destructive 로 거부한다.
+- storage/network 변경은 **미지원**(Phase 2 후보). 임의 verb 를 던지면 deny-by-default 가 destructive 로 거부한다. 단, `disk-grow --to` 의 `qm resize`(단일 디스크 증가)와 `exec`(모든 `--via`; 분류기 가드 하 범용) 는 예외.
 - "물리 디스크 attach/detach (by-id)" → `"$HL/bin/guard" disk-attach <guest> -- --by-id /dev/disk/by-id/<id> [--index N]` (destructive; by-id 강제·serial opt-in)
-- "게스트 디스크 확장" → `"$HL/bin/guard" disk-grow <guest> [-- --lv <vg/lv>]` (destructive; qm guest exec, 게스트 내부 LVM/FS 만 — PVE 가상디스크 사전 확장 전제)
+- "게스트 디스크 확장(내부 LVM/FS 만)" → `"$HL/bin/guard" disk-grow <guest> [-- --lv <vg/lv>]` (destructive; qm guest exec — PVE 가상디스크 사전 확장 전제)
+- "PVE 가상디스크 + 게스트 내부 확장(한 번에)" → `"$HL/bin/guard" disk-grow <guest> -- --to <NG|NT> [--disk scsiN]` (destructive; owner 노드에서 `qm resize` 선행 후 게스트 내부 시퀀스; 증가만, 목표 ≤ 현재 거부)
+- "게스트 서비스 제어" → `"$HL/bin/guard" service <id> -- <start|stop|restart|status> <unit>` (caution; guest ssh; 서브커맨드 4종 + unit charset 가드)
+- "게스트 로그 조회" → `"$HL/bin/guard" logs <id> -- --unit <unit> [-n N]` 또는 `-- --file <abs-path> [-n N]` (caution; 읽기 전용; unit/path charset 가드)
+- "게스트 패키지 업데이트" → `"$HL/bin/guard" pkg-update <id>` (caution; guest ssh; apt/dnf 자동탐지)
+- "게스트 OS 재부팅" → `"$HL/bin/guard" reboot <id>` (caution; guest ssh; `systemctl reboot` — `restart`(VM 재시작)와 구분)
+- "임의 명령 (동적 등급)" → `"$HL/bin/guard" exec <id> -- --via <guest|node|pve> <cmd...>` (pve: `--via pve --method GET|POST|PUT|DELETE --path /...`). 등급은 분류기 `bin/_classify` 가 동적 결정 (`--grade-override destructive` 는 상향만; destructive 시 `--approve` 필요). 분류 규칙 요약:
+  - 읽기 전용 allowlist (`cat ls journalctl systemctl status qm config` 등) → **caution**
+  - `ip ss dmesg journalctl` 은 **읽기 전용 형태만** caution — 변이 플래그/서브커맨드 (`ip link set`, `dmesg --clear`, `journalctl --vacuum-*`, `ss -K` 등) → destructive
+  - 래퍼 바이너리 (`env sudo su xargs nice timeout nohup stdbuf setsid`) → destructive (`wrapper` rule; allowlist 우회 차단)
+  - 셸 메타문자 / `sh|bash -c` → destructive (`metachar` rule)
+  - pve transport: `GET` → caution, 그 외 method → destructive
+  - 그 외(미지 바이너리, 매치 없음) → destructive (`fallback-deny`)
 - "노드 간 이전 (PDM)" → `"$HL/bin/guard" remote-migrate <guest> -- --to <node> [--target-storage <map>] [--online]` (destructive; PDM 경유)
 - "Provision a VM" → `"$HL/bin/guard" provision <pve-host-id> -- --from-template <vmid> --new-vmid <vmid>`
 - "What happened / why did X fail?" → `"$HL/bin/forensics" {session|target|timeline} <id>`, `"$HL/bin/forensics" runlog <session>/<op>.log`
