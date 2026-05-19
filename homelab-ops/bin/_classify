@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# 순수 분류기: exec 의 동적 등급 단일 출처. 외부 의존 없음.
+# 사용:
+#   _classify <guest|node> -- <argv...>
+#   _classify pve --method <M> --path <P> [--body ...]
+# 출력(stdout): "<grade>\t<rule>"  grade ∈ {caution,destructive} (safe 없음)
+set -euo pipefail
+via="${1:?_classify: via required}"; shift
+
+emit() { printf '%s\t%s\n' "$1" "$2"; exit 0; }
+
+# 유효하지 않은 via 는 즉시 fail-closed (invalid-via)
+case "$via" in
+  guest|node|pve) ;;
+  *) emit destructive invalid-via ;;
+esac
+
+# pve transport: GET 만 caution, 그 외 destructive
+if [[ "$via" == pve ]]; then
+  method=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method)
+        method="${2:-}"
+        shift
+        if [[ $# -gt 0 ]]; then shift; fi
+        ;;
+      *) shift ;;
+    esac
+  done
+  case "$method" in
+    GET) emit caution pve-get ;;
+    *)   emit destructive pve-write ;;
+  esac
+fi
+
+# guest/node: argv 는 '--' 다음
+[[ "${1:-}" == "--" ]] && shift || true
+[[ $# -gt 0 ]] || emit destructive fallback-deny
+
+# 메타문자/셸 차단: 어떤 토큰이든 셸 체이닝·리다이렉트·치환·개행 포함,
+# 또는 첫 토큰이 셸 인터프리터(-c 동반)면 destructive.
+for tok in "$@"; do
+  case "$tok" in
+    *';'*|*'|'*|*'&'*|*'$'*|*'`'*|*'('*|*')'*|*'<'*|*'>'*|*$'\n'*)
+      emit destructive metachar ;;
+  esac
+done
+case "$1" in
+  sh|bash|dash|zsh|ash) for a in "$@"; do [[ "$a" == "-c" ]] && emit destructive metachar; done ;;
+esac
+
+# (Task 4 에서 read-only allowlist 채움) — 현재는 전부 fallback-deny
+emit destructive fallback-deny
