@@ -37,6 +37,28 @@ case "${1:-}" in
     pinv="$("$HERE/inv" get "$pt")" || exit $?
     pkind="$(jq -r '.kind // ""' <<<"$pinv")"
     ptrans="$(op_transport "$pa" "$pkind")"
+    # exec: --via 로 실제 transport 결정
+    if [[ "$pa" == "exec" ]]; then
+      shift 3 2>/dev/null || true
+      [[ "${1:-}" == "--" ]] && shift || true
+      pvia=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --via) pvia="${2:-}"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      case "$pvia" in
+        # Critical 1 fix: guest always means direct SSH to the guest (ssh-run).
+        # The old kind-dispatch (vm/lxc→pve, else→ssh) diverged from _backend's
+        # exec:guest arm which unconditionally calls ssh-run. Both plan and
+        # runtime now agree: guest → ssh transport (HL_SSH_KEY).
+        guest) ptrans=ssh ;;
+        node)  ptrans=host-ssh ;;
+        pve)   ptrans=pve ;;
+        *) die "--plan exec: --via guest|node|pve 필요" ;;
+      esac
+    fi
     case "$ptrans" in
       pve)
         pref="$("$HERE/inv" get "$(owner_host "$pt")" \
@@ -52,7 +74,15 @@ case "${1:-}" in
           [[ -n "$pref" ]] && printf 'HL_SSH_KEY=%s\n' "$pref"
         fi ;;
       host-ssh)
-        pho="$("$HERE/inv" get "$(owner_host "$pt")")" || exit $?
+        # Important 1 fix: orphan guard — if owner_host falls back to the target
+        # itself (no Proxmox host claims it as a child), --via node is nonsensical
+        # and would silently emit the guest's own key. Die explicitly.
+        _powner="$(owner_host "$pt")"
+        # 이 --plan host-ssh 가지는 exec --via node 외에 비-exec host-ssh verb
+        # (disk-attach/detach/grow)도 도달 가능. orphan 거부는 양쪽 모두에서 안전한
+        # 정책(고아 게스트에 host-ssh 시도는 호출자 의도와 무관하게 잘못된 키 사용).
+        [[ "$_powner" == "$pt" ]] && die "host-ssh op '$pa': target '$pt' has no owning Proxmox host in inventory (orphan)"
+        pho="$("$HERE/inv" get "$_powner")" || exit $?
         phauth="$(jq -r '.access.ssh.auth // "key"' <<<"$pho")"
         if [[ "$phauth" == "password" ]]; then
           pref="$(jq -r '.access.ssh.pass_ref // empty' <<<"$pho")"
@@ -81,10 +111,11 @@ case "${1:-}" in
     shift 2
     orig_action="$action"
     action="$(canon_action "$action")"   # 별칭(delete→destroy) 정규화: 등급·경로·감사 일관
-    approve=0; extra=()
+    approve=0; extra=(); gov=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --approve) approve=1; shift ;;
+        --grade-override) gov="${2:?--grade-override 값 필요}"; shift 2 ;;
         --) shift; extra=("$@"); break ;;
         *) extra+=("$1"); shift ;;
       esac
@@ -95,9 +126,23 @@ case "${1:-}" in
     grade="unknown"; env_t="unknown"; tags_t="[]"
     inv_json="null"; approver="null"; approved_at="null"; dryrun_hash="null"
     task_upid=""; task_xs=""
+    # Critical 2: init exec-specific vars BEFORE trap install so EXIT trap can
+    # reference them safely under set -u even on early-die paths (e.g. unknown target).
+    EXEC_VIA=""; EXEC_GRADE=""; EXEC_RULE=""
 
     _audit() { # <exit-code>
       local end_ms; end_ms=$(date +%s%3N)
+      # exec 전용 추가 인자·필터 — non-exec 는 둘 다 빈 채로 단일 호출로 진행.
+      # _xfilter 는 jq 변수 참조($via 등)를 담으므로 단일 인용('), shell 확장 없음.
+      local _xargs=() _xfilter=''
+      if [[ "$action" == "exec" ]]; then
+        _xargs=(--arg via "$EXEC_VIA" --arg cg "$EXEC_GRADE" --arg cr "$EXEC_RULE")
+        # Important 2 fix: mirror task_upid/task_exitstatus convention — empty
+        # string (early-die exec path) becomes JSON null, not "".
+        _xfilter=',via:($via|if .=="" then null else . end),classify_grade:($cg|if .=="" then null else . end),classify_rule:($cr|if .=="" then null else . end)'
+      fi
+      # set -u 안전 배열 확장: _xargs 가 비어 있을 때 빈 배열을 "${arr[@]}" 로
+      # 참조하면 unbound variable 오류가 발생하므로 "${arr[@]+"${arr[@]}"}" 관용구 사용.
       audit_append \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg session "$HOMELAB_SESSION_ID" --arg op "$op" \
@@ -106,12 +151,13 @@ case "${1:-}" in
         --argjson tags "$tags_t" --argjson inv "$inv_json" \
         --arg dh "$dryrun_hash" --arg apr "$approver" --arg apat "$approved_at" \
         --arg tu "$task_upid" --arg tx "$task_xs" \
-        --argjson ex "$1" --argjson dur "$((end_ms-start_ms))" '
-        {ts:$ts,session:$session,op:$op,actor:$actor,action:$action,
+        --argjson ex "$1" --argjson dur "$((end_ms-start_ms))" \
+        "${_xargs[@]+"${_xargs[@]}"}" \
+        '{ts:$ts,session:$session,op:$op,actor:$actor,action:$action,
          target:$target,grade:$grade,env:$env,tags:$tags,inv_snapshot:$inv,
          dryrun_hash:$dh,approver:$apr,approved_at:$apat,exit:$ex,duration_ms:$dur,
          task_upid:($tu|if .=="" then null else . end),
-         task_exitstatus:($tx|if .=="" then null else . end)}'
+         task_exitstatus:($tx|if .=="" then null else . end)'"${_xfilter}"'}'
     }
     # Forensic guarantee (spec §6): ANY termination — normal, preflight failure,
     # backend failure, OR operator interrupt (Ctrl-C / SIGTERM) — writes exactly
@@ -149,7 +195,51 @@ case "${1:-}" in
     { _inv_tmp="$("$HERE/inv" get "$target")" && inv_json="$_inv_tmp"; } || die "cannot resolve target: $target"
     env_t="$(jq -r '.env // "unknown"' <<<"$inv_json")"
     tags_t="$(jq -rc '.tags // []' <<<"$inv_json")"
-    grade="$(guard_grade "$action" "$target")"
+
+    # exec 동적 등급: _classify 로 런타임 위임. non-exec 에서 gov 는 불허.
+    if [[ "$action" == "exec" ]]; then
+      via=""; cargs=()
+      # nounset 안전 방어: extra 가 미정의일 때도 빈 배열로 처리.
+      set -- "${extra[@]+"${extra[@]}"}"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --via) via="${2:?exec: --via <guest|node|pve> 필요}"; shift 2 ;;
+          --) shift; cargs=("$@"); break ;;
+          *) cargs+=("$1"); shift ;;
+        esac
+      done
+      [[ "$via" =~ ^(guest|node|pve)$ ]] || die "exec: --via 는 guest|node|pve 중 하나여야 합니다"
+      [[ "${#cargs[@]}" -gt 0 ]] || die "exec: 실행할 명령이 없습니다 (--via 뒤에 명령을 지정하세요)"
+      if [[ "$via" == "pve" ]]; then
+        cls="$("$HERE/_classify" pve "${cargs[@]+"${cargs[@]}"}")"
+      else
+        cls="$("$HERE/_classify" "$via" -- "${cargs[@]+"${cargs[@]}"}")"
+      fi
+      # _classify 출력 형식: grade<TAB>rule — tab 구분자로 분리.
+      cgrade="${cls%%$'\t'*}"; crule="${cls##*$'\t'}"
+      if [[ -n "$gov" ]]; then
+        case "$gov" in
+          destructive) cgrade=destructive; crule="${crule}+override" ;;
+          *) die "exec: --grade-override 는 상향(destructive)만 허용 (받음: $gov)" ;;
+        esac
+      fi
+      EXEC_VIA="$via"; EXEC_GRADE="$cgrade"; EXEC_RULE="$crule"
+    else
+      [[ -n "$gov" ]] && die "--grade-override 는 exec 전용"
+    fi
+
+    if [[ "$action" == "exec" ]]; then
+      grade="$EXEC_GRADE"
+      # Reuse already-fetched inv_json (line ~168) — avoids TOCTOU divergence
+      # between audit snapshot and critical-bump decision (IMPORTANT 1 fix).
+      _ejrc=0
+      jq -e '(.tags? // []) | index("critical")' >/dev/null 2>&1 <<<"$inv_json" || _ejrc=$?
+      [[ $_ejrc -eq 5 ]] && die "cannot parse inventory JSON for target: $target"
+      [[ $_ejrc -eq 0 && "$grade" != "safe" ]] && grade="$(_bump "$grade")"
+    else
+      grade="$(guard_grade "$action" "$target")"
+    fi
+
     rl="$(run_log_path "$op")"
     backend="${HOMELAB_BACKEND:-$HERE/_backend}"
 
@@ -159,12 +249,31 @@ case "${1:-}" in
     # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
     # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
+    # exec 는 transport 가 dynamic — --via 로 실제 transport 결정.
+    if [[ "$action" == "exec" ]]; then
+      case "$EXEC_VIA" in
+        # Critical 1 fix: guest always means direct guest SSH (ssh-run), not
+        # kind-dispatch. Matches _backend exec:guest arm and --plan fix above.
+        guest) _t=ssh ;;
+        node)  _t=host-ssh ;;
+        pve)   _t=pve ;;
+      esac
+    fi
     _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$inv_json")"
     # host-ssh: 자격 대상이 owner_host(target). pdm: kind:pdm 엔트리.
     if [[ "$_t" == "host-ssh" ]]; then
-      # owner 부재 시 {} → _auth=key 로 보수적 진행(게이트가 HL_SSH_KEY 요구);
-      # --plan 의 hard-exit 보다 의도적으로 무름(게이트는 실행 전 방어선).
-      _hoinv="$("$HERE/inv" get "$(owner_host "$target")" 2>/dev/null || echo '{}')"
+      # Important 1 fix: exec --via node on an orphan target silently emits the
+      # guest's own SSH key (owner_host falls back to $target); die explicitly.
+      # Scoped to exec only: non-exec host-ssh ops (disk-attach/detach/grow) use
+      # the conservative fallback ({} → _auth=key) intentionally — they may have
+      # a different owner resolution path in _backend. Consistent with --plan scope.
+      if [[ "$action" == "exec" ]]; then
+        _rowner="$(owner_host "$target")"
+        [[ "$_rowner" == "$target" ]] && die "exec --via node: target '$target' has no owning Proxmox host in inventory (orphan)"
+        _hoinv="$("$HERE/inv" get "$_rowner" 2>/dev/null || echo '{}')"
+      else
+        _hoinv="$("$HERE/inv" get "$(owner_host "$target")" 2>/dev/null || echo '{}')"
+      fi
       _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$_hoinv")"
     fi
     if [[ "$grade" != "safe" ]]; then
@@ -197,6 +306,7 @@ case "${1:-}" in
       dryrun_hash="$(printf '%s' "$dry" | sha256sum | awk '{print $1}')"
       if [[ "$approve" -ne 1 ]]; then
         echo "DRY-RUN [$grade] $action $target (env=$env_t tags=$tags_t)"
+        [[ "$action" == "exec" && -n "$EXEC_RULE" ]] && echo "classify_rule: $EXEC_RULE"
         echo "$dry" | mask
         echo "Impact above. Re-run with --approve to execute."
         _DONE=1; _audit 10 || echo "homelab-ops: AUDIT FAILED op=$op rc=10" >&2

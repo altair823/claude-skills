@@ -83,4 +83,12 @@ menv="$(bash bin/_libprobe.sh mask_env)"
   || { echo "  FAIL: HL_SSH_KEY leaked"; exit 1; }
 assert_contains "$menv" "MASKED" "env-token inputs produce mask markers"
 
+# dynamic 첫 토큰: action_grade 는 리터럴 'dynamic' 을 반환(guard 가 _classify 로 위임).
+assert_eq "dynamic" "$(bash bin/_libprobe.sh grade exec)" "action_grade exec → dynamic (정적 산출 안 함)"
+# op_transport 도 dynamic 토큰이면 'dynamic' 을 반환(실 transport 는 --via 로 guard 결정).
+assert_eq "dynamic" "$(bash bin/_libprobe.sh transport exec vm)" "op_transport exec → dynamic"
+# 정적 verb 회귀
+assert_eq "destructive" "$(bash bin/_libprobe.sh grade disk-grow)" "정적 disk-grow 회귀"
+assert_eq "host-ssh" "$(bash bin/_libprobe.sh transport disk-grow vm)" "정적 disk-grow transport 회귀"
+
 finish; echo "PASS test_lib"

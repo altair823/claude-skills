@@ -96,14 +96,40 @@ case "$action:$kind" in
       "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
     fi ;;
   disk-grow:*)
-    lv=""
+    lv=""; to=""; disksel=""
     while [[ $# -gt 0 ]]; do
-      case "$1" in --lv) lv="${2:-}"; shift 2 ;; *) shift ;; esac
+      case "$1" in
+        --lv)   lv="${2:-}"; shift 2 ;;
+        --to)   to="${2:-}"; shift 2 ;;
+        --disk) disksel="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
     done
     vmid="$(jq -r '.vmid // empty' <<<"$inv")"
     [[ -n "$vmid" ]] || die "disk-grow: target '$target' has no vmid"
     [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-grow: vmid 비정상"
     oh="$(owner_host "$target")"
+    # --to 처리: 크기 검증 + 디스크 탐지/지정 (read-only, dry/apply 공통)
+    if [[ -n "$to" ]]; then
+      [[ "$to" =~ ^[0-9]+[GT]$ ]] \
+        || die "disk-grow --to: 크기 형식 [0-9]+(G|T) 만 (받음: '$to')"
+      if [[ -n "$disksel" ]]; then
+        [[ "$disksel" =~ ^(scsi|virtio|sata|ide)[0-9]+$ ]] \
+          || die "disk-grow --disk: 유효하지 않은 디스크 식별자 (scsi|virtio|sata|ide)[0-9]+ 형식만 (받음: '$disksel')"
+      else
+        # owner 노드에서 qm config 읽기(read-only)로 단일 디스크 자동탐지
+        # 주의: grep 패턴은 cdrom(ide2: ...,media=cdrom)·cloudinit 행도 매칭함 —
+        # 의도적 비필터링(fail-closed): growable 디스크가 모호하면 operator 가 --disk 로 명시.
+        qmcfg="$("$HERE/ssh-run" "$oh" -- qm config "$vmid" 2>&1)" \
+          || die "disk-grow --to: qm config 조회 실패: $qmcfg"
+        mapfile -t disklines < <(grep -E '^(scsi|virtio|sata|ide)[0-9]+:' <<<"$qmcfg" || true)
+        if [[ "${#disklines[@]}" -eq 1 ]]; then
+          disksel="${disklines[0]%%:*}"
+        else
+          die "disk-grow --to: 디스크 단일 자동탐지 실패 (${#disklines[@]}개 검출) — --disk <scsi0|...> 명시 필요 (cdrom/cloudinit 포함 가능 — growable 디스크를 --disk <scsiN> 로 명시)"
+        fi
+      fi
+    fi
     _ga() { # <argv...> -> guest-exec out-data, die if exitcode!=0/agent down
       local raw od ec
       raw="$("$HERE/ssh-run" "$oh" -- qm guest exec "$vmid" -- "$@" 2>&1)" \
@@ -148,10 +174,20 @@ case "$action:$kind" in
     seq3="lvextend -l +100%FREE ${lv}"
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: disk-grow $target (vmid=$vmid via $oh, guest-agent)"
-      echo "  주의: PVE 레벨 가상디스크 확장은 본 verb 범위 밖(게스트 내부 전용) — PVE 디스크는 사전 확장 전제"
+      if [[ -n "$to" ]]; then
+        echo "  1단계(PVE): qm resize $vmid $disksel $to  ← owner 노드($oh) 에서 실행 (절대크기, 증가만; 축소는 PVE 거부)"
+        echo "  주의: PVE 가상디스크 확장은 위 1단계(qm resize)로 수행됨 — 이어서 게스트 내부 확장 진행"
+      else
+        echo "  주의: PVE 레벨 가상디스크 확장은 본 verb 범위 밖(게스트 내부 전용) — PVE 디스크는 사전 확장 전제"
+      fi
       echo "  탐지: PV=$pvname LV=$lv FS=$fstype mnt=$mnt"
       echo "  시퀀스: $seq1 && $seq2 && $seq3 && $fscmd"
       exit 0
+    fi
+    # apply: --to 지정 시 PVE 레벨 qm resize 선행
+    if [[ -n "$to" ]]; then
+      "$HERE/ssh-run" "$oh" -- qm resize "$vmid" "$disksel" "$to" \
+        || die "disk-grow --to: qm resize $vmid $disksel $to 실패 (PVE 거부 — 크기 축소·VM 잠금·스토리지 부족·권한 등; 위 ssh 오류 확인)"
     fi
     _ga growpart "$disk" "$partnum" >/dev/null
     _ga pvresize "$pvname" >/dev/null
@@ -194,12 +230,90 @@ case "$action:$kind" in
       echo "DRY-RUN: would apt-get install on $target: ${*:-<none>}"; exit 0
     fi
     "$HERE/ssh-run" "$target" -- sudo apt-get install -y "$@" ;;
+  service:*)
+    svc_sub="${1:-}"; svc_unit="${2:-}"
+    case "$svc_sub" in start|stop|restart|status) : ;; *) die "service: 서브커맨드는 start|stop|restart|status (받음: '$svc_sub')" ;; esac
+    [[ "$svc_unit" =~ ^[A-Za-z0-9_.@:-]+$ ]] || die "service: unit 명 charset 위반 (받음: '$svc_unit')"
+    if [[ $dry -eq 1 ]]; then echo "DRY-RUN: service $svc_sub $svc_unit on $target (guest ssh)"; exit 0; fi
+    "$HERE/ssh-run" "$target" -- systemctl "$svc_sub" "$svc_unit" ;;
+  logs:*)
+    lg_unit=""; lg_file=""; lg_n="100"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --unit) lg_unit="${2:-}"; shift 2 ;;
+        --file) lg_file="${2:-}"; shift 2 ;;
+        -n)     lg_n="${2:-}";    shift 2 ;;
+        *)      shift ;;
+      esac
+    done
+    [[ "$lg_n" =~ ^[0-9]+$ ]] || die "logs: -n 은 정수 (받음: '$lg_n')"
+    if [[ -n "$lg_unit" ]]; then
+      [[ "$lg_unit" =~ ^[A-Za-z0-9_.@:-]+$ ]] || die "logs: --unit charset 위반"
+      if [[ $dry -eq 1 ]]; then echo "DRY-RUN: logs journalctl -u $lg_unit -n $lg_n on $target"; exit 0; fi
+      "$HERE/ssh-run" "$target" -- journalctl -u "$lg_unit" -n "$lg_n" --no-pager
+    elif [[ -n "$lg_file" ]]; then
+      [[ "$lg_file" =~ ^/[A-Za-z0-9_./-]+$ ]] || die "logs: --file 은 절대경로·안전문자만"
+      [[ "$lg_file" != *..* ]] || die "logs: --file 에 '..' 경로 구성요소 불가"
+      if [[ $dry -eq 1 ]]; then echo "DRY-RUN: logs tail -n $lg_n $lg_file on $target"; exit 0; fi
+      "$HERE/ssh-run" "$target" -- tail -n "$lg_n" "$lg_file"
+    else die "logs: --unit <u> 또는 --file <path> 필요"; fi ;;
+  pkg-update:*)
+    if [[ $dry -eq 1 ]]; then echo "DRY-RUN: pkg-update (apt/dnf update+upgrade) on $target (guest ssh)"; exit 0; fi
+    # 내부에서 구성한 신뢰 명령(운영자 임의 입력 아님) — exec 분류기 metachar 규칙과 무관
+    "$HERE/ssh-run" "$target" -- sh -lc 'if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade; else dnf -y upgrade; fi' ;;
+  reboot:*)
+    # 알려진 한계: systemctl reboot 은 SSH 연결을 즉시 끊으므로 ssh-run 이 비-0(예: 255)으로
+    # 종료될 수 있다 — 게스트가 실제로 재부팅에 성공해도 감사 로그에 비-0 exit 이 기록됨.
+    if [[ $dry -eq 1 ]]; then echo "DRY-RUN: reboot guest OS on $target (systemctl reboot via guest ssh)"; exit 0; fi
+    "$HERE/ssh-run" "$target" -- systemctl reboot ;;
   provision:*)
     if [[ $dry -eq 1 ]]; then
       "$REPO_ROOT/provisioning/phase1" dry-run "$target" "$@"
     else
       "$REPO_ROOT/provisioning/phase1" apply "$target" "$@"
     fi ;;
+  exec:*)
+    via=""; cargs=()
+    # 1패스: --via 를 추출하고 --method/--path/--body 를 포함한 나머지 인자를
+    # 모두 cargs 로 정규화. cargs 는 표시(dry-run 메시지)·라우팅·pve 재파싱의
+    # 단일 정규 페이로드로, 세 경로 모두 이 배열을 출처로 삼는다.
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --via) via="${2:?exec: --via 에 값 필요}"; shift 2 ;;
+        --method) cargs+=(--method "${2:?exec: --method 에 값 필요}"); shift 2 ;;
+        --path)   cargs+=(--path   "${2:?exec: --path 에 값 필요}");   shift 2 ;;
+        --body)   cargs+=(--body   "${2:?exec: --body 에 값 필요}");   shift 2 ;;
+        --) shift; cargs+=("$@"); break ;;
+        *) cargs+=("$1"); shift ;;
+      esac
+    done
+    [[ "$via" =~ ^(guest|node|pve)$ ]] || die "exec: --via 는 guest|node|pve 중 하나여야 합니다 (받음: '${via:-<none>}')"
+    if [[ $dry -eq 1 ]]; then
+      # 표시 전용: 사람이 읽는 한 줄 메시지라 의도적으로 ${cargs[*]} 사용.
+      # 실 실행 경로(아래 case)는 모두 ${cargs[@]} 로 argv-safe 전달.
+      echo "DRY-RUN: exec $target via=$via ${cargs[*]+"${cargs[*]}"}"; exit 0
+    fi
+    case "$via" in
+      guest) "$HERE/ssh-run" "$target" -- "${cargs[@]+"${cargs[@]}"}" ;;
+      node)  "$HERE/ssh-run" "$(owner_host "$target")" -- "${cargs[@]+"${cargs[@]}"}" ;;
+      pve)
+        method=""; path=""; body=()
+        # 2패스: pve 브랜치는 cargs(단일 정규 페이로드)를 재파싱해 --method/--path/--body
+        # 를 추출. cargs 가 단일 출처이므로 1패스에서 정규화된 인자가 일관되게 흘러온다.
+        # nounset 안전 관용구: cargs 가 비어 있을 때 "${arr[@]}" 참조를 차단.
+        set -- "${cargs[@]+"${cargs[@]}"}"
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --method) method="${2:?exec pve: --method 에 값 필요}"; shift 2 ;;
+            --path)   path="${2:?exec pve: --path 에 값 필요}";     shift 2 ;;
+            --body)   body+=("${2:?exec pve: --body 에 값 필요}"); shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        [[ -n "$method" ]] || die "exec pve: --method 필요"
+        [[ -n "$path"   ]] || die "exec pve: --path 필요"
+        "$HERE/pve" "$(owner_host "$target")" api "$method" "$path" "${body[@]+"${body[@]}"}" ;;
+    esac ;;
   *)
     die "no backend mapping for action '$action' on kind '$kind'" ;;
 esac
