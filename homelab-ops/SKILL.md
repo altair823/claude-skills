@@ -88,7 +88,9 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 - "Start/stop/restart/snapshot X" → `"$HL/bin/guard" <verb> <id>` (prod ⇒ needs `--approve`)
 - "Back up X (vzdump)" → `"$HL/bin/guard" backup <id> -- <storage> [mode] [compress]` (caution; prod ⇒ `--approve`)
 - "Destroy/delete X" → `"$HL/bin/guard" destroy <id>` (`delete` = `destroy` 별칭) → show the DRY-RUN/impact → re-run with `--approve`
-- storage/network 변경은 **미지원**(Phase 2 후보). 임의 verb 를 던지면 deny-by-default 가 destructive 로 거부한다. 단, `disk-grow --to` 의 `qm resize`(단일 디스크 증가)와 `exec`(모든 `--via`; 분류기 가드 하 범용) 는 예외.
+- storage/network 변경은 **미지원**(Phase 2 후보). 임의 verb 를 던지면 deny-by-default 가 destructive 로 거부한다.
+  - 예외 1: `disk-grow --to` 의 `qm resize` (단일 디스크 증가만).
+  - 예외 2: `exec` (모든 `--via`; 분류기 가드 하 범용 — 아래 항목 참조).
 - "물리 디스크 attach/detach (by-id)" → `"$HL/bin/guard" disk-attach <guest> -- --by-id /dev/disk/by-id/<id> [--index N]` (destructive; by-id 강제·serial opt-in)
 - "게스트 디스크 확장(내부 LVM/FS 만)" → `"$HL/bin/guard" disk-grow <guest> [-- --lv <vg/lv>]` (destructive; qm guest exec — PVE 가상디스크 사전 확장 전제)
 - "PVE 가상디스크 + 게스트 내부 확장(한 번에)" → `"$HL/bin/guard" disk-grow <guest> -- --to <NG|NT> [--disk scsiN]` (destructive; owner 노드에서 `qm resize` 선행 후 게스트 내부 시퀀스; 증가만, 목표 ≤ 현재 거부)

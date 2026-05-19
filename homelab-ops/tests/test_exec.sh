@@ -57,15 +57,15 @@ assert_eq "ro-allowlist:ls" "$(jq -r .classify_rule <<<"$rec")" "classify_rule �
 # HL_SSH_KEY=x (set below), gate passes, caution+prod → exit 10.
 cred_gate_o="$(env -u PVE_TOKEN HL_SSH_KEY=x HOMELAB_BACKEND=/tmp/fake-backend \
   bin/guard exec vm-100 -- --via guest ls 2>&1 || true)"
-assert_not_contains "$cred_gate_o" "missing PVE_TOKEN" "cred-gate: --via guest は PVE_TOKEN を要求しない"
+assert_not_contains "$cred_gate_o" "missing PVE_TOKEN" "cred-gate: --via guest 는 PVE_TOKEN 을 요구하지 않는다"
 assert_status 10 \
   "env -u PVE_TOKEN HL_SSH_KEY=x HOMELAB_BACKEND=/tmp/fake-backend bin/guard exec vm-100 -- --via guest ls" \
   "cred-gate: --via guest (vm, prod) → exit 10 (DRY-RUN), not exit 3"
 
 # ── Regression: Critical 1 — plan cred parity (--plan exec --via guest must emit HL_SSH_KEY, not PVE_TOKEN) ──
 plan_o="$(env -u HL_SSH_KEY -u PVE_TOKEN bin/guard --plan exec vm-100 -- --via guest 2>&1)"
-assert_contains "$plan_o" "HL_SSH_KEY=" "--plan --via guest: HL_SSH_KEY= が出力される"
-assert_not_contains "$plan_o" "PVE_TOKEN=" "--plan --via guest: PVE_TOKEN= は出力されない"
+assert_contains "$plan_o" "HL_SSH_KEY=" "--plan --via guest: HL_SSH_KEY= 가 출력된다"
+assert_not_contains "$plan_o" "PVE_TOKEN=" "--plan --via guest: PVE_TOKEN= 은 출력되지 않는다"
 
 # ── Regression: Critical 2 — audit record written even when target does not exist ──
 : > logs/audit.jsonl

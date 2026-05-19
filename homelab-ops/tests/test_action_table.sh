@@ -23,7 +23,10 @@ trap 'rm -f bin/_tblprobe.sh' EXIT
 # dynamic 등급 센티넬(exec 등)은 backend arm 이 나중 태스크에서 추가되므로 제외.
 while read -r act grade _trans; do
   [[ "$grade" == "safe" ]] && continue
-  [[ "$grade" == "dynamic" ]] && continue   # exec: dynamic arm 은 Plan Task 6 에서 추가
+  # exec(dynamic 등급)은 --via 인자가 있어야 동작 — Direction 1 의 probe-arg
+  # 형태로는 정상 dry-run 이 안 되므로 제외. exec 전용 dry-run/라우팅은
+  # test_exec.sh 가 별도 커버.
+  [[ "$grade" == "dynamic" ]] && continue
   o="$(bin/_backend "$act" vm-100 --dry-run -- probe-arg 2>&1 || true)"
   assert_not_contains "$o" "no backend mapping for action '$act'" \
     "table action '$act' is backend-routed"

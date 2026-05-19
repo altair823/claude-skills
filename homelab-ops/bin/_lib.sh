@@ -52,7 +52,7 @@ run_log_path() { # <op-id> -> path (creates session run dir)
 #   grade:     safe | caution | destructive | dynamic
 #     dynamic  = 정적값 없음 — guard 가 bin/_classify 로 동적 위임(exec 전용)
 #   transport: none | pve | ssh | guest | host-ssh | pdm | dynamic
-#     dynamic  = 실 transport 는 --via 로 런타임 결정(exec 전용; Plan Task 2)
+#     dynamic  = 실 transport 는 --via 로 런타임 결정(exec 전용)
 #     guest    = 대상 kind 가 proxmox-host/vm/lxc 면 pve, 그 외(appliance 등)면 ssh
 #     host-ssh = owner_host(target) 에 root SSH (자격·실행 대상이 owner 노드)
 #     pdm      = kind:pdm 인벤토리 엔트리 경유 (bin/pdm, PDM_TOKEN)

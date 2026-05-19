@@ -21,6 +21,9 @@ if [[ "$via" == pve ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --method)
+        # `shift 2` 가 아니라 명시 분기: --method 가 마지막 인자일 때
+        # (`_classify pve --method`) `shift 2` 는 set -e 에서 over-shift 로
+        # exit 1 + 빈 stdout 을 만든다 (guard 가 빈 줄을 받아 오등급).
         method="${2:-}"
         shift
         if [[ $# -gt 0 ]]; then shift; fi
