@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib.sh
 chmod +x bin/pdm 2>/dev/null || true
-export PDM_TOKEN="stub-pdm-token"
+export PDM_TOKEN="root@pam!claude=stub-secret-uuid"
 
 # 범용 api: curl 스텁이 결정적 JSON 반환
 sp="$(mktemp -d)"
@@ -19,12 +19,21 @@ assert_contains "$out" '"ok"' "pdm api GET returns json"
 grep -q -- 'https://10.0.0.9/api2/json/version' "$cargs" \
   && echo "  ok: pdm base URL from inventory entry" \
   || { echo "  FAIL: pdm base URL wrong: $(cat "$cargs")"; exit 1; }
-grep -q -- 'PVEAPIToken=stub-pdm-token' "$cargs" \
-  && echo "  ok: pdm token header" || { echo "  FAIL: pdm token header"; exit 1; }
+# PDM 은 PBS 계열 스택: 헤더는 PDMAPIToken= + authid:secret (콜론 구분).
+# 저장형 PDM_TOKEN 은 PVE 와 통일된 authid=secret 형태 → 첫 '=' 로 분리.
+grep -q -- 'PDMAPIToken=root@pam!claude:stub-secret-uuid' "$cargs" \
+  && echo "  ok: pdm token header (PDMAPIToken authid:secret)" \
+  || { echo "  FAIL: pdm token header: $(cat "$cargs")"; exit 1; }
+grep -q -- 'PVEAPIToken' "$cargs" \
+  && { echo "  FAIL: pdm used PVE scheme (PVEAPIToken)"; exit 1; } \
+  || echo "  ok: not PVE scheme"
 grep -q -- '-k' "$cargs" && { echo "FAIL: pdm used -k"; exit 1; } || echo "  ok: TLS verification on"
 
 # 미주입 PDM_TOKEN → exit 3
 assert_status 3 'env -u PDM_TOKEN bin/pdm api GET /version' "pdm without PDM_TOKEN exits 3"
+
+# 시크릿-only(`=` 없는) PDM_TOKEN → format 가드 die (불투명 401 방지)
+assert_status 1 'PDM_TOKEN=secretonlynoeq bin/pdm api GET /version' "pdm with =-less PDM_TOKEN dies"
 
 # pdm_wait_task: OK / 실패 / 타임아웃
 cat > bin/_pdmwait.sh <<'EOF'
@@ -42,7 +51,7 @@ echo '{"data":{"status":"stopped","exitstatus":"OK"}}'
 EOF
 chmod +x "$okd/curl"
 set +e
-out="$(PDM_TOKEN=x PATH="$okd:$PWD/tests/stubs:$PATH" bash bin/_pdmwait.sh "$T")"; rc=$?
+out="$(PDM_TOKEN=a@pam!t=x PATH="$okd:$PWD/tests/stubs:$PATH" bash bin/_pdmwait.sh "$T")"; rc=$?
 set -e
 assert_eq "0" "$rc" "pdm_wait_task OK → 0"
 assert_contains "$out" "HO-TASK upid=$T exitstatus=OK" "pdm_wait_task emits HO-TASK OK"
@@ -54,7 +63,7 @@ echo '{"data":{"status":"stopped","exitstatus":"migrate failed"}}'
 EOF
 chmod +x "$errd/curl"
 set +e
-out="$(PDM_TOKEN=x PATH="$errd:$PWD/tests/stubs:$PATH" bash bin/_pdmwait.sh "$T")"; rc=$?
+out="$(PDM_TOKEN=a@pam!t=x PATH="$errd:$PWD/tests/stubs:$PATH" bash bin/_pdmwait.sh "$T")"; rc=$?
 set -e
 assert_eq "1" "$rc" "pdm_wait_task non-OK → 1"
 assert_contains "$out" "exitstatus=migrate failed" "pdm_wait_task carries error xs"
@@ -66,7 +75,7 @@ echo '{"data":{"status":"running"}}'
 EOF
 chmod +x "$rund/curl"
 set +e
-out="$(HOMELAB_TASK_TIMEOUT=0 PDM_TOKEN=x PATH="$rund:$PWD/tests/stubs:$PATH" bash bin/_pdmwait.sh "$T")"; rc=$?
+out="$(HOMELAB_TASK_TIMEOUT=0 PDM_TOKEN=a@pam!t=x PATH="$rund:$PWD/tests/stubs:$PATH" bash bin/_pdmwait.sh "$T")"; rc=$?
 set -e
 assert_eq "75" "$rc" "pdm_wait_task timeout → 75"
 assert_contains "$out" "exitstatus=TIMEOUT" "pdm_wait_task TIMEOUT preserves task id"
