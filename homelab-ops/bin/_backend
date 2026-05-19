@@ -96,14 +96,40 @@ case "$action:$kind" in
       "$HERE/ssh-run" "$(owner_host "$target")" -- qm set "$vmid" -delete "${bus}${idx}"
     fi ;;
   disk-grow:*)
-    lv=""
+    lv=""; to=""; disksel=""
     while [[ $# -gt 0 ]]; do
-      case "$1" in --lv) lv="${2:-}"; shift 2 ;; *) shift ;; esac
+      case "$1" in
+        --lv)   lv="${2:-}"; shift 2 ;;
+        --to)   to="${2:-}"; shift 2 ;;
+        --disk) disksel="${2:-}"; shift 2 ;;
+        *) shift ;;
+      esac
     done
     vmid="$(jq -r '.vmid // empty' <<<"$inv")"
     [[ -n "$vmid" ]] || die "disk-grow: target '$target' has no vmid"
     [[ "$vmid" =~ ^[0-9]+$ ]] || die "disk-grow: vmid 비정상"
     oh="$(owner_host "$target")"
+    # --to 처리: 크기 검증 + 디스크 탐지/지정 (read-only, dry/apply 공통)
+    if [[ -n "$to" ]]; then
+      [[ "$to" =~ ^[0-9]+[GT]$ ]] \
+        || die "disk-grow --to: 크기 형식 [0-9]+(G|T) 만 (받음: '$to')"
+      if [[ -n "$disksel" ]]; then
+        [[ "$disksel" =~ ^(scsi|virtio|sata|ide)[0-9]+$ ]] \
+          || die "disk-grow --disk: 유효하지 않은 디스크 식별자 (scsi|virtio|sata|ide)[0-9]+ 형식만 (받음: '$disksel')"
+      else
+        # owner 노드에서 qm config 읽기(read-only)로 단일 디스크 자동탐지
+        # 주의: grep 패턴은 cdrom(ide2: ...,media=cdrom)·cloudinit 행도 매칭함 —
+        # 의도적 비필터링(fail-closed): growable 디스크가 모호하면 operator 가 --disk 로 명시.
+        qmcfg="$("$HERE/ssh-run" "$oh" -- qm config "$vmid" 2>&1)" \
+          || die "disk-grow --to: qm config 조회 실패: $qmcfg"
+        mapfile -t disklines < <(grep -E '^(scsi|virtio|sata|ide)[0-9]+:' <<<"$qmcfg" || true)
+        if [[ "${#disklines[@]}" -eq 1 ]]; then
+          disksel="${disklines[0]%%:*}"
+        else
+          die "disk-grow --to: 디스크 단일 자동탐지 실패 (${#disklines[@]}개 검출) — --disk <scsi0|...> 명시 필요 (cdrom/cloudinit 포함 가능 — growable 디스크를 --disk <scsiN> 로 명시)"
+        fi
+      fi
+    fi
     _ga() { # <argv...> -> guest-exec out-data, die if exitcode!=0/agent down
       local raw od ec
       raw="$("$HERE/ssh-run" "$oh" -- qm guest exec "$vmid" -- "$@" 2>&1)" \
@@ -148,10 +174,20 @@ case "$action:$kind" in
     seq3="lvextend -l +100%FREE ${lv}"
     if [[ $dry -eq 1 ]]; then
       echo "DRY-RUN: disk-grow $target (vmid=$vmid via $oh, guest-agent)"
-      echo "  주의: PVE 레벨 가상디스크 확장은 본 verb 범위 밖(게스트 내부 전용) — PVE 디스크는 사전 확장 전제"
+      if [[ -n "$to" ]]; then
+        echo "  1단계(PVE): qm resize $vmid $disksel $to  ← owner 노드($oh) 에서 실행 (절대크기, 증가만; 축소는 PVE 거부)"
+        echo "  주의: PVE 가상디스크 확장은 위 1단계(qm resize)로 수행됨 — 이어서 게스트 내부 확장 진행"
+      else
+        echo "  주의: PVE 레벨 가상디스크 확장은 본 verb 범위 밖(게스트 내부 전용) — PVE 디스크는 사전 확장 전제"
+      fi
       echo "  탐지: PV=$pvname LV=$lv FS=$fstype mnt=$mnt"
       echo "  시퀀스: $seq1 && $seq2 && $seq3 && $fscmd"
       exit 0
+    fi
+    # apply: --to 지정 시 PVE 레벨 qm resize 선행
+    if [[ -n "$to" ]]; then
+      "$HERE/ssh-run" "$oh" -- qm resize "$vmid" "$disksel" "$to" \
+        || die "disk-grow --to: qm resize $vmid $disksel $to 실패 (PVE 거부 — 크기 축소·VM 잠금·스토리지 부족·권한 등; 위 ssh 오류 확인)"
     fi
     _ga growpart "$disk" "$partnum" >/dev/null
     _ga pvresize "$pvname" >/dev/null
