@@ -19,7 +19,7 @@ Gitea REST API thin wrapper, [`tea` CLI](https://gitea.com/gitea/tea) 위에 구
 
 ```sh
 # 1. 작성자가 PR 생성
-gitea-pr --title "위젯 추가" --head feat/widget
+gitea-pr --title "feat(gitea-ops): 위젯 추가" --head feat/gitea-ops-widget
 
 # 2. 리뷰어 (별도 Claude 세션, reviewer-token):
 gitea-pr-diff 42                    # 분석용 meta+diff dump
@@ -126,10 +126,13 @@ gitea-release v0.1.2 --auto-notes --notes "Image: harbor.example.com/foo:v0.1.2"
 ```
 gitea-pr --title "..." --body "..." --head BRANCH [--base main]
          [--draft] [--assignee USER]... [--label LABEL]...
+         [--no-lint] [--no-trailer]
          [-r owner/repo] [-u URL]
 ```
 
 `--head`가 로컬에만 있고 remote에 없으면 push 후 PR 작성.
+
+PR 생성 전 `_lint.sh` 의 제목/브랜치/본문 lint 가 실패하면 push·생성을 모두 거부. `--no-lint` 로 우회 가능 (sledgehammer — `--no-trailer` 도 함께 적용). `Assisted-by: Claude Code` trailer 가 body 끝에 자동 부착되며 `--no-trailer` 로 끄거나 이미 본문에 있으면 중복 부착 안 함 (idempotent).
 
 ### `gitea-pr-diff`
 
@@ -282,6 +285,9 @@ gitea-mirror-unlink <mirror-name> [--gitea-repo owner/repo]
 - 401 (tea api 호출 시) → token 만료/회수. 새 token 으로 `tea logins edit` 또는 token 파일 갱신 후 `tea logins delete <name>` + 재등록.
 - 403 → 작업 scope 부족 (예: write:issue 없이 issue 생성).
 - `/repos/.../releases/tags/TAG` 에서 404 → tag 가 아직 remote 에 없음. `gitea-release` 가 push 후 1회 재시도.
+- `lint failed: title does not match ^(feat|fix|...)...` → PR title 이 정규식 통과하지 않음. `feat(scope): ...` 형태로 수정. cross-cutting 이면 scope 생략 OK.
+- `lint failed: branch does not match ^(feat|fix|...)/...` → 브랜치 이름이 정규식 통과하지 않음. `git branch -m new-name` 으로 재명명 후 다시 push.
+- `lint failed: body missing required header '## 요약'` → PR body 가 표준 골격 미준수. `## 요약` / `## 검증` 헤더 추가, `## 요약` 절 본문 1자 이상.
 
 ## 인코딩 / Multi-byte 안전성
 
@@ -304,7 +310,41 @@ JSON 본문은 모두 `tea api -d @-` (stdin) 로 전송한다. 과거 curl `--d
 PR/release/issue/review 본문 작성 시 (대화창 출력과 별개):
 
 - **언어**: 한국어 기본 (사용자 "영어로" 명시 시 영문). PR/branch/merge/commit/push/head/base/tag/release/review/gate/token/worktree 등 기술 키워드는 한국어 산문 안에 영문 inline. CLI 식별자·flag·URL·code block 은 영문 그대로. 체크리스트/표 헤더는 한국어.
-- **commit 메시지 / PR title**: Conventional Commits — `feat(scope): ...`, `fix(scope): ...`. 영문 prefix + 한국어 본문 OK.
+- **PR title / commit 메시지**: Conventional Commits. PR title 정규식 강제 (entry-gate / `gitea-pr` lint):
+  ```
+  ^(feat|fix|docs|refactor|chore|test)(\([a-z0-9-]+\))?: .+
+  ```
+  scope 는 lowercase + 숫자 + 하이픈 (보통 스킬 이름). scope 생략 (`feat: ...`) 은 **cross-cutting 변경에 한해** 허용 — 단일 스킬만 영향이면 scope 명시 필수. 영문 prefix + 한국어 본문 OK. commit 메시지는 lint 안 함 (가이드라인만) — 회차 반영 커밋은 `chore(scope): PR #N 회차 K 리뷰 반영` 형식 권고.
+- **브랜치 이름**: `<type>/<topic-kebab>` 패턴 강제 (entry-gate / `gitea-pr` lint). 정규식:
+  ```
+  ^(feat|fix|docs|refactor|chore|test)/[a-z0-9]+(-[a-z0-9]+)*$
+  ```
+  scope 는 topic 안에 kebab 으로 들어감 (`feat/homelab-ops-exec-and-curated-verbs`). scope 생략 시 `docs/cross-cutting-readme` 같이 type+topic 만. PR title 의 scope 유무와 브랜치의 scope-in-topic 일치 여부는 lint 가 검증 안 함 — 사용자 책임.
+- **PR 본문 골격**: 필수 헤더 `## 요약` + `## 검증` (정확히 이 문자열). `## 요약` 헤더 뒤에는 비어있지 않은 본문이 1자 이상 (whitespace·개행 제거 후). 권장 헤더 4종:
+  - `설계: docs/superpowers/specs/...` / `계획: docs/superpowers/plans/...` 줄 — `## 요약` 절 직후
+  - `## 시험 항목 (Test Plan)` — feature PR 체크박스
+  - `## 비범위` 또는 `## 변경 없음` — 회귀 위험 PR
+  - `## 카테고리` (자유 명명) — 변경량 많을 때 분할
+
+  표준 골격 (PR #30 스타일):
+  ```markdown
+  ## 요약
+  <수준·동기·핵심 설계 1–2 문단>
+
+  설계: docs/superpowers/specs/...
+  계획: docs/superpowers/plans/...
+
+  ## <카테고리 A>
+  - ...
+
+  ## 검증
+  - 전체 테스트 녹색
+  - ...
+
+  ## 시험 항목 (Test Plan)
+  - [ ] ...
+  ```
+- **Trailer**: PR body 마지막 빈 줄 다음에 `Assisted-by: Claude Code` 한 줄 (RFC 822 git trailer 스타일). `gitea-pr` 가 자동 부착·idempotent. `--no-trailer` 로 끌 수 있음 (사람이 직접 PR 만들 때). 옛 `🤖 Generated with [Claude Code](...)` 푸터는 신규 PR 에서 금지 — lint 가 *제거*하진 않으나 (작성자가 직접 본문에 남기면 통과) 가이드라인으로 비권장.
 - **caveman 모드 미적용**: caveman 모드여도 PR/issue/review 본문은 자연스러운 산문 (영구 기록). 대화창만 caveman.
 - **PR review (`gitea-pr-review`)**: summary 는 짧게 (방향성/총평), 구체 지적은 inline. 적극적으로 달 것.
   - 문제 (bug/의도 불명확/edge case 누락/보안·성능/명명) + **칭찬도 의도적으로** (좋은 추상화, 영리한 jq filter, test 커버리지 등) — 무미건조하지 않게.
