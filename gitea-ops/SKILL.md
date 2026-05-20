@@ -49,6 +49,9 @@ gitea-pr-review 42 --event APPROVE \
 - `changed_files > 0`
 - `draft == false`
 - `base` / `head` branch 존재
+- PR 제목이 정규식 `^(feat|fix|docs|refactor|chore|test)(\(...\))?: .+` 통과
+- 브랜치 이름이 정규식 `^(feat|fix|...)/[a-z0-9]+(-[a-z0-9]+)*$` 통과
+- PR body 에 `## 요약` 및 `## 검증` 헤더 존재, `## 요약` 절 본문이 whitespace 제거 후 1자 이상
 
 #### CI 항목 (조건부)
 PR head SHA combined status 조회. `total_count==0` (CI 없음) → skip. `success` → 통과, `failure`/`error` → 거부, `pending` → 30초 간격 최대 20분 polling. 20분 timeout 시 **자동 실패 처리 안 함** — 사용자에게 결정 위임 (`gitea-pr-status` exit 3).
@@ -160,7 +163,7 @@ gitea-pr-status <PR#> [--json] [--wait-ci]
 
 PR entry-gate 메타 + CI 상태를 한 번에 출력. flag: `--json` (기본은 `key=value`), `--wait-ci` (pending polling), `--ci-timeout SECONDS` (기본 1200), `--ci-poll-interval SECONDS` (기본 30).
 
-출력 키: `title_ok` / `body_ok` / `changed_files` / `draft` / `base` / `head` / `head_sha` / `ci_state` (`none|pending|success|failure|error`) / `ci_count` / `gate_passed`. `gate_passed=true` 는 모든 필수 항목 통과 + (CI 없음 OR `ci_state=success`) 일 때만.
+출력 키: `title_ok` / `body_ok` / `changed_files` / `draft` / `base` / `head` / `head_sha` / `ci_state` (`none|pending|success|failure|error`) / `ci_count` / `lint_title` / `lint_branch` / `lint_body` / `gate_passed`. `gate_passed=true` 는 모든 필수 항목 통과 + 모든 `lint_*` 항목이 `pass` + (CI 없음 OR `ci_state=success`) 일 때만.
 
 종료 코드: `0` 통과 / `1` 필수 실패 또는 CI pending(--wait-ci 미사용) / `2` CI failure·error / `3` --wait-ci timeout (**자동 실패 아님** — 사용자 결정 위임 신호) / 그 외 API 오류.
 

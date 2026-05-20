@@ -45,7 +45,7 @@ teardown
 setup
 install_curl_stub
 fixture GET /api/v1/repos/owner/repo/pulls/42 \
-    '{"number":42,"title":"Add widget","body":"Adds widget","draft":false,"changed_files":3,"base":{"ref":"main","sha":"def"},"head":{"ref":"feat/widget","sha":"abc"}}'
+    '{"number":42,"title":"feat(gitea-ops): 위젯 추가","body":"## 요약\n위젯 추가\n\n## 검증\n- 테스트 녹색","draft":false,"changed_files":3,"base":{"ref":"main","sha":"def"},"head":{"ref":"feat/gitea-ops-widget","sha":"abc"}}'
 fixture GET /api/v1/repos/owner/repo/commits/abc/status \
     '{"state":"pending","total_count":0,"statuses":[]}'
 
@@ -57,7 +57,7 @@ assert_contains "$out" "body_ok=true" "body_ok in output"
 assert_contains "$out" "changed_files=3" "changed_files in output"
 assert_contains "$out" "draft=false" "draft in output"
 assert_contains "$out" "base=main" "base ref in output"
-assert_contains "$out" "head=feat/widget" "head ref in output"
+assert_contains "$out" "head=feat/gitea-ops-widget" "head ref in output"
 assert_contains "$out" "head_sha=abc" "head_sha in output"
 assert_contains "$out" "ci_state=none" "ci_state=none when statuses empty"
 assert_contains "$out" "ci_count=0" "ci_count in output"
@@ -133,7 +133,7 @@ teardown
 setup
 install_curl_stub
 fixture GET /api/v1/repos/owner/repo/pulls/42 \
-    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+    '{"title":"feat(gitea-ops): 위젯 추가","body":"## 요약\n위젯 추가\n\n## 검증\n- 테스트 녹색","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"feat/gitea-ops-widget","sha":"abc"}}'
 fixture GET /api/v1/repos/owner/repo/commits/abc/status \
     '{"state":"success","total_count":2,"statuses":[{"context":"build","state":"success"},{"context":"lint","state":"success"}]}'
 
@@ -191,7 +191,7 @@ teardown
 setup
 install_curl_stub
 fixture GET /api/v1/repos/owner/repo/pulls/42 \
-    '{"title":"x","body":"y","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"f","sha":"abc"}}'
+    '{"title":"feat(gitea-ops): 위젯 추가","body":"## 요약\n위젯 추가\n\n## 검증\n- 테스트 녹색","draft":false,"changed_files":1,"base":{"ref":"main","sha":"d"},"head":{"ref":"feat/gitea-ops-widget","sha":"abc"}}'
 # First call: pending. Second call: success.
 fixture_seq GET /api/v1/repos/owner/repo/commits/abc/status \
     '{"state":"pending","total_count":1,"statuses":[{"context":"build","state":"pending"}]}' \
@@ -222,21 +222,87 @@ teardown
 setup
 install_curl_stub
 fixture GET /api/v1/repos/owner/repo/pulls/42 \
-    '{"title":"My PR","body":"body","draft":false,"changed_files":7,"base":{"ref":"main","sha":"d"},"head":{"ref":"feat","sha":"abc"}}'
+    '{"title":"feat(gitea-ops): 위젯 추가","body":"## 요약\n위젯 추가\n\n## 검증\n- 테스트 녹색","draft":false,"changed_files":7,"base":{"ref":"main","sha":"d"},"head":{"ref":"feat/gitea-ops-widget","sha":"abc"}}'
 fixture GET /api/v1/repos/owner/repo/commits/abc/status \
     '{"state":"success","total_count":1,"statuses":[{"context":"build","state":"success"}]}'
 
 out="$("$BIN/gitea-pr-status" 42 --json)"
-assert_eq "$(printf '%s' "$out" | jq -r '.title_ok')"      "true"    "json title_ok"
-assert_eq "$(printf '%s' "$out" | jq -r '.body_ok')"       "true"    "json body_ok"
-assert_eq "$(printf '%s' "$out" | jq -r '.changed_files')" "7"       "json changed_files"
-assert_eq "$(printf '%s' "$out" | jq -r '.draft')"         "false"   "json draft"
-assert_eq "$(printf '%s' "$out" | jq -r '.base')"          "main"    "json base"
-assert_eq "$(printf '%s' "$out" | jq -r '.head')"          "feat"    "json head"
-assert_eq "$(printf '%s' "$out" | jq -r '.head_sha')"      "abc"     "json head_sha"
-assert_eq "$(printf '%s' "$out" | jq -r '.ci_state')"      "success" "json ci_state"
-assert_eq "$(printf '%s' "$out" | jq -r '.ci_count')"      "1"       "json ci_count"
-assert_eq "$(printf '%s' "$out" | jq -r '.gate_passed')"   "true"    "json gate_passed"
+assert_eq "$(printf '%s' "$out" | jq -r '.title_ok')"      "true"                   "json title_ok"
+assert_eq "$(printf '%s' "$out" | jq -r '.body_ok')"       "true"                   "json body_ok"
+assert_eq "$(printf '%s' "$out" | jq -r '.changed_files')" "7"                      "json changed_files"
+assert_eq "$(printf '%s' "$out" | jq -r '.draft')"         "false"                  "json draft"
+assert_eq "$(printf '%s' "$out" | jq -r '.base')"          "main"                   "json base"
+assert_eq "$(printf '%s' "$out" | jq -r '.head')"          "feat/gitea-ops-widget"  "json head"
+assert_eq "$(printf '%s' "$out" | jq -r '.head_sha')"      "abc"                    "json head_sha"
+assert_eq "$(printf '%s' "$out" | jq -r '.ci_state')"      "success"                "json ci_state"
+assert_eq "$(printf '%s' "$out" | jq -r '.ci_count')"      "1"                      "json ci_count"
+assert_eq "$(printf '%s' "$out" | jq -r '.gate_passed')"   "true"                   "json gate_passed"
+teardown
+
+# --- lint_title fail: 잘못된 제목 → gate_passed=false, exit 1 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/50 \
+    '{"number":50,"title":"no prefix here","body":"## 요약\n내용\n\n## 검증\n- ok","draft":false,"changed_files":2,"base":{"ref":"main","sha":"def"},"head":{"ref":"feat/gitea-ops-widget","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"success","total_count":1}'
+rc=0
+out="$("$BIN/gitea-pr-status" 50 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on lint_title fail"
+assert_contains "$out" "lint_title=fail" "lint_title key=fail"
+assert_contains "$out" "gate_passed=false" "gate fails"
+teardown
+
+# --- lint_branch fail: 잘못된 브랜치 → gate_passed=false ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/51 \
+    '{"number":51,"title":"feat: ok","body":"## 요약\n내용\n\n## 검증\n- ok","draft":false,"changed_files":2,"base":{"ref":"main","sha":"def"},"head":{"ref":"Bad_Branch","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"success","total_count":1}'
+rc=0
+out="$("$BIN/gitea-pr-status" 51 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on lint_branch fail"
+assert_contains "$out" "lint_branch=fail" "lint_branch key=fail"
+teardown
+
+# --- lint_body fail: ## 요약 누락 → gate_passed=false ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/52 \
+    '{"number":52,"title":"feat: ok","body":"본문에 표준 헤더 없음","draft":false,"changed_files":2,"base":{"ref":"main","sha":"def"},"head":{"ref":"feat/x-y","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"success","total_count":1}'
+rc=0
+out="$("$BIN/gitea-pr-status" 52 2>"$TEST_TMP/err")" || rc=$?
+assert_eq "$rc" "1" "exit 1 on lint_body fail"
+assert_contains "$out" "lint_body=fail" "lint_body key=fail"
+teardown
+
+# --- --json 모드: lint_title/branch/body 모두 키 노출 ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/53 \
+    '{"number":53,"title":"feat(gitea-ops): ok","body":"## 요약\n내용\n\n## 검증\n- ok","draft":false,"changed_files":2,"base":{"ref":"main","sha":"def"},"head":{"ref":"feat/gitea-ops-x","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"success","total_count":1}'
+out="$("$BIN/gitea-pr-status" 53 --json 2>"$TEST_TMP/err")"
+echo "$out" | jq -e '.lint_title == "pass"' >/dev/null || { echo "FAIL: --json lint_title key"; exit 1; }
+echo "$out" | jq -e '.lint_branch == "pass"' >/dev/null || { echo "FAIL: --json lint_branch key"; exit 1; }
+echo "$out" | jq -e '.lint_body == "pass"' >/dev/null || { echo "FAIL: --json lint_body key"; exit 1; }
+echo "$out" | jq -e '.gate_passed == true' >/dev/null || { echo "FAIL: --json gate_passed true"; exit 1; }
+teardown
+
+# --- CI failure 와 lint fail 동시: exit 2 (CI 우선) ---
+setup
+install_curl_stub
+fixture GET /api/v1/repos/owner/repo/pulls/54 \
+    '{"number":54,"title":"BAD","body":"본문 없음","draft":false,"changed_files":2,"base":{"ref":"main","sha":"def"},"head":{"ref":"BAD","sha":"abc"}}'
+fixture GET /api/v1/repos/owner/repo/commits/abc/status \
+    '{"state":"failure","total_count":1}'
+rc=0
+"$BIN/gitea-pr-status" 54 2>"$TEST_TMP/err" >/dev/null || rc=$?
+assert_eq "$rc" "2" "exit 2 when CI failure even with lint fail"
 teardown
 
 echo OK
