@@ -49,8 +49,8 @@ gitea-pr-review 42 --event APPROVE \
 - `changed_files > 0`
 - `draft == false`
 - `base` / `head` branch 존재
-- PR 제목이 정규식 `^(feat|fix|docs|refactor|chore|test)(\(...\))?: .+` 통과
-- 브랜치 이름이 정규식 `^(feat|fix|...)/[a-z0-9]+(-[a-z0-9]+)*$` 통과
+- PR 제목이 정규식 `^(feat|fix|docs|refactor|chore|test)(\([a-z0-9-]+\))?: .+` 통과
+- 브랜치 이름이 정규식 `^(feat|fix|docs|refactor|chore|test)/[a-z0-9]+(-[a-z0-9]+)*$` 통과
 - PR body 에 `## 요약` 및 `## 검증` 헤더 존재, `## 요약` 절 본문이 whitespace 제거 후 1자 이상
 
 #### CI 항목 (조건부)
