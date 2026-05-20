@@ -99,6 +99,8 @@ out="$("$BIN/gitea-pr" \
 assert_contains "$out" "/pulls/100" "PR created despite lint fail under --no-lint"
 posts="$(grep -c '^POST' "$CALL_LOG" || :)"
 assert_eq "$posts" "1" "POST called under --no-lint"
+trailer_in_post="$(grep '^POST' "$CALL_LOG" | grep -c 'Assisted-by: Claude Code' || :)"
+assert_eq "$trailer_in_post" "0" "sledgehammer --no-lint also suppresses trailer"
 cd - >/dev/null
 teardown
 
