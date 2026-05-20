@@ -165,6 +165,8 @@ PR entry-gate 메타 + CI 상태를 한 번에 출력. flag: `--json` (기본은
 
 출력 키: `title_ok` / `body_ok` / `changed_files` / `draft` / `base` / `head` / `head_sha` / `ci_state` (`none|pending|success|failure|error`) / `ci_count` / `lint_title` / `lint_branch` / `lint_body` / `gate_passed`. `gate_passed=true` 는 모든 필수 항목 통과 + 모든 `lint_*` 항목이 `pass` + (CI 없음 OR `ci_state=success`) 일 때만.
 
+lint 실패 시 진단 사유는 stderr 로 emit (`--json` 모드여도 동일) — JSON/key=value 출력은 stdout 으로 클린하게 유지. 자동화 caller 는 stdout 만 파이프하면 됨.
+
 종료 코드: `0` 통과 / `1` 필수 실패 또는 CI pending(--wait-ci 미사용) / `2` CI failure·error / `3` --wait-ci timeout (**자동 실패 아님** — 사용자 결정 위임 신호) / 그 외 API 오류.
 
 ### `gitea-pr-review`

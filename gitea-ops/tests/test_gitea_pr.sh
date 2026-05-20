@@ -104,6 +104,13 @@ assert_eq "$trailer_in_post" "0" "sledgehammer --no-lint also suppresses trailer
 cd - >/dev/null
 teardown
 
+# --- --help 출력에 신규 flag 가 노출되는지 (헤더 line range drift 잠금) ---
+setup
+out="$("$BIN/gitea-pr" --help 2>&1)"
+assert_contains "$out" "--no-lint" "--help shows --no-lint flag"
+assert_contains "$out" "--no-trailer" "--help shows --no-trailer flag"
+teardown
+
 # --- trailer 자동 부착: --no-trailer 미사용 시 body 에 trailer 들어감 ---
 setup
 install_curl_stub

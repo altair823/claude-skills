@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 본 plan 의 step checkbox 는 write-once artifact — 진행 추적은 git log 와 task list 로 대체. 머지 후 retroactive check 안 함.
+
 **Goal:** PR 제목·브랜치·본문 골격을 정규식·헤더 검증으로 자동화하고 `Assisted-by: Claude Code` trailer 부착을 통일해 신규 PR의 일관성 흔들림을 구조적으로 차단한다.
 
 **Architecture:** 신규 `bin/_lint.sh` 가 stateless 검증 3 종을 제공. trailer 헬퍼는 `bin/_common.sh` 에 추가. `gitea-pr` 가 PR 생성 *전* lint + trailer 부착, `gitea-pr-status` 가 PR 생성 *후* 동일 lint 를 entry-gate 에 통합. SKILL.md `## 작성 규칙` 절을 단일 진실 출처로 확장. Forward-only — 기존 머지된 PR 은 손대지 않는다.
