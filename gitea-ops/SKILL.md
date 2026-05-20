@@ -290,7 +290,7 @@ gitea-mirror-unlink <mirror-name> [--gitea-repo owner/repo]
 - `/repos/.../releases/tags/TAG` 에서 404 → tag 가 아직 remote 에 없음. `gitea-release` 가 push 후 1회 재시도.
 - `lint failed: title does not match ^(feat|fix|...)...` → PR title 이 정규식 통과하지 않음. `feat(scope): ...` 형태로 수정. cross-cutting 이면 scope 생략 OK.
 - `lint failed: branch does not match ^(feat|fix|...)/...` → 브랜치 이름이 정규식 통과하지 않음. `git branch -m new-name` 으로 재명명 후 다시 push.
-- `lint failed: body missing required header '## 요약'` → PR body 가 표준 골격 미준수. `## 요약` / `## 검증` 헤더 추가, `## 요약` 절 본문 1자 이상.
+- `lint failed: body missing required header ## 요약` → PR body 가 표준 골격 미준수. `## 요약` / `## 검증` 헤더 추가, `## 요약` 절 본문 1자 이상.
 
 ## 인코딩 / Multi-byte 안전성
 
