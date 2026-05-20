@@ -183,20 +183,32 @@ pve_wait_task() {
 
 # pdm_wait_task <task-id> -> 0: OK / 1: not OK / 75: 타임아웃.
 # pve_wait_task 와 동일 계약(HO-TASK emit, HOMELAB_TASK_TIMEOUT/INTERVAL).
-# 상태는 bin/pdm api GET 로 폴링. PDM task 상태 경로는 base_path 와 함께
-# 인벤토리 access.api.task_status_path (기본 /tasks) 로 override 가능 —
+# 상태는 bin/pdm api GET 로 폴링. 경로 템플릿은 인벤토리 access.api.task_status_path
+# 로 override 가능. 기본은 PDM 1.0 형: `/pve/remotes/{remote}/tasks/{tid}/status`.
+#   {tid}    = task-id 그대로(composite "pve:<remote>!<UPID>" 형태)
+#   {remote} = composite tid 의 remote 부분(없으면 빈 문자열)
 # 운영자 PDM 버전에 맞춰 조정(known-unknown, spec §5).
 pdm_wait_task() {
   local tid="${1:?pdm_wait_task: task-id required}"
   local timeout="${HOMELAB_TASK_TIMEOUT:-600}"
   local interval="${HOMELAB_TASK_POLL_INTERVAL:-2}"
-  local waited=0 resp st xs tsp
+  local waited=0 resp st xs tsp_tpl tsp remote
   [[ "$timeout"  =~ ^[0-9]+$ ]] || die "pdm_wait_task: HOMELAB_TASK_TIMEOUT must be a non-negative integer (got: $timeout)"
   [[ "$interval" =~ ^[0-9]+$ ]] || die "pdm_wait_task: HOMELAB_TASK_POLL_INTERVAL must be a non-negative integer (got: $interval)"
-  tsp="$("$REPO_ROOT/bin/inv" get "$(pdm_entry)" 2>/dev/null | jq -r '.access.api.task_status_path // "/tasks"' 2>/dev/null || true)"
-  tsp="${tsp:-/tasks}"
+  # NOTE: bash 의 `${var:-default}` 는 default 안의 `}` 를 닫는 괄호로 잘못
+  # 해석해 template 이 doubling 되는 버그가 있다. default 는 jq `//` 에만 맡길 것.
+  tsp_tpl="$("$REPO_ROOT/bin/inv" get "$(pdm_entry)" 2>/dev/null | jq -r '.access.api.task_status_path // "/pve/remotes/{remote}/tasks/{tid}/status"' 2>/dev/null)"
+  [[ -n "$tsp_tpl" ]] || die "pdm_wait_task: task_status_path template 해석 실패 (인벤토리 pdm 엔트리 누락?)"
+  # PDM composite tid: "pve:<remote>!<UPID>" — remote 추출.
+  if [[ "$tid" == pve:*!* ]]; then
+    remote="${tid#pve:}"; remote="${remote%%!*}"
+  else
+    remote=""
+  fi
+  tsp="${tsp_tpl//\{tid\}/$tid}"
+  tsp="${tsp//\{remote\}/$remote}"
   while :; do
-    resp="$("$REPO_ROOT/bin/pdm" api GET "${tsp}/${tid}/status" 2>/dev/null || true)"
+    resp="$("$REPO_ROOT/bin/pdm" api GET "$tsp" 2>/dev/null || true)"
     st="$(jq -r '.data.status // empty' <<<"$resp" 2>/dev/null || true)"
     if [[ "$st" == "stopped" ]]; then
       xs="$(jq -r '.data.exitstatus // "UNKNOWN"' <<<"$resp" 2>/dev/null || echo UNKNOWN)"

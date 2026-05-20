@@ -49,15 +49,19 @@ call() { # METHOD path [data]
 case "$sub" in
   api) call "${2:?METHOD}" "${3:?path}" "${4:-}" ;;
   remote-migrate)
-    # 인자: <vmid> <to-node> [target-storage] [online(0/1)] [source-node]
-    vmid="${2:?vmid}"; to="${3:?to-node}"; tstor="${4:-}"; online="${5:-0}"; src="${6:?source node required}"
+    # 인자: <vmid> <to-node> [target-storage] [online(0/1)] [source-node] [target-bridge] [target-vmid]
+    vmid="${2:?vmid}"; to="${3:?to-node}"; tstor="${4:-}"; online="${5:-0}"; src="${6:?source node required}"; tbridge="${7:-}"; tvmid="${8:-}"
     # PDM 원격 마이그레이션 API path 는 인벤토리 구성형(운영자 PDM 버전 의존,
     # spec §5 known-unknown). 기본값은 PVE 노드 remote_migrate 형태.
+    # {remote} 도 치환 가능 — PDM 1.0 path 형 `/pve/remotes/{remote}/qemu/...` 지원.
     mp="$(jq -r --arg s "$src" '.access.api.migrate_path
           // ("/nodes/"+$s+"/qemu/{vmid}/remote_migrate")' <<<"$pe")"
     mp="${mp//\{vmid\}/$vmid}"
+    mp="${mp//\{remote\}/$src}"
     d="target=${to}&online=${online}"
     [[ -n "$tstor" ]] && d="${d}&target-storage=${tstor}"
+    [[ -n "$tbridge" ]] && d="${d}&target-bridge=${tbridge}"
+    [[ -n "$tvmid" ]] && d="${d}&target-vmid=${tvmid}"
     resp="$(call POST "$mp" "$d")" || exit $?
     printf '%s\n' "$resp"
     tid="$(jq -r 'if (.data|type)=="string" then .data else empty end' <<<"$resp" 2>/dev/null || true)"
