@@ -66,4 +66,25 @@ assert_eq "destructive	fallback-deny" "$(C guest -- rm /tmp/x)" "rm → fallback
 assert_eq "destructive	fallback-deny" "$(C guest -- chmod 777 /etc)" "chmod → fallback-deny"
 assert_eq "destructive	fallback-deny" "$(C guest -- kill 1)" "kill → fallback-deny"
 
+# kube via: kubectl 서브커맨드 기반 분류
+assert_eq "caution	kube-ro:get" "$(C kube -- get pods -A)" "kubectl get → caution"
+assert_eq "caution	kube-ro:describe" "$(C kube -- describe pod foo)" "kubectl describe → caution"
+assert_eq "caution	kube-ro:logs" "$(C kube -- logs foo -c bar)" "kubectl logs → caution"
+assert_eq "caution	kube-ro:top" "$(C kube -- top pods)" "kubectl top → caution"
+assert_eq "caution	kube-ro:cluster-info" "$(C kube -- cluster-info)" "kubectl cluster-info → caution"
+assert_eq "caution	kube-ro:version" "$(C kube -- version)" "kubectl version → caution"
+assert_eq "destructive	kube-write:apply" "$(C kube -- apply -f x.yaml)" "kubectl apply → destructive"
+assert_eq "destructive	kube-write:delete" "$(C kube -- delete pod foo)" "kubectl delete → destructive"
+assert_eq "destructive	kube-write:scale" "$(C kube -- scale deploy/foo --replicas=3)" "kubectl scale → destructive"
+assert_eq "destructive	kube-write:rollout" "$(C kube -- rollout restart deploy/foo)" "kubectl rollout → destructive"
+assert_eq "destructive	kube-write:exec" "$(C kube -- exec foo -- bash)" "kubectl exec → destructive (셸 분기)"
+assert_eq "destructive	kube-write:cp" "$(C kube -- cp foo:/etc x)" "kubectl cp → destructive"
+assert_eq "destructive	kube-write:port-forward" "$(C kube -- port-forward svc/foo 8080)" "kubectl port-forward → destructive"
+assert_eq "destructive	kube-write:drain" "$(C kube -- drain node-1)" "kubectl drain → destructive"
+# 미지 서브커맨드 → fail-closed
+assert_eq "destructive	fallback-deny" "$(C kube -- frobnicate-resource)" "kubectl 미지 서브커맨드 → fallback-deny"
+# 인자 없음 → fail-closed
+assert_eq "destructive	fallback-deny" "$(C kube --)" "kubectl 인자 없음 → fallback-deny"
+assert_eq "destructive	fallback-deny" "$(C kube)" "kubectl '--' 없음 → fallback-deny"
+
 finish; echo "PASS test_classify"

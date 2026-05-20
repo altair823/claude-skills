@@ -95,6 +95,14 @@ case "${1:-}" in
         pref="$("$HERE/inv" get "$(pdm_entry)" \
                 | jq -r '.access.api.token_ref // empty')"
         [[ -n "$pref" ]] && printf 'PDM_TOKEN=%s\n' "$pref" ;;
+      kube)
+        # k8s-cluster 엔트리 검증 + kubeconfig ref 추출.
+        pkind_cluster="$(jq -r '.kind // ""' <<<"$pinv")"
+        [[ "$pkind_cluster" == "k8s-cluster" ]] \
+          || die "--plan kubectl: target '$pt' is kind '$pkind_cluster' (need k8s-cluster)"
+        pref="$(jq -r '.access.kubeconfig.ref // empty' <<<"$pinv")"
+        [[ -n "$pref" ]] || die "--plan kubectl: target '$pt' has no access.kubeconfig.ref"
+        printf 'HL_KUBECONFIG=%s\n' "$pref" ;;
       none)
         # status|metrics|get 은 정당한 무자격 read-only. 그 외(deny-default
         # destructive 로 등급된 미매핑 액션)는 stdout 계약을 더럽히지 않도록
@@ -135,7 +143,7 @@ case "${1:-}" in
       # exec 전용 추가 인자·필터 — non-exec 는 둘 다 빈 채로 단일 호출로 진행.
       # _xfilter 는 jq 변수 참조($via 등)를 담으므로 단일 인용('), shell 확장 없음.
       local _xargs=() _xfilter=''
-      if [[ "$action" == "exec" ]]; then
+      if [[ "$action" == "exec" || "$action" == "kubectl" ]]; then
         _xargs=(--arg via "$EXEC_VIA" --arg cg "$EXEC_GRADE" --arg cr "$EXEC_RULE")
         # Important 2 fix: mirror task_upid/task_exitstatus convention — empty
         # string (early-die exec path) becomes JSON null, not "".
@@ -196,20 +204,27 @@ case "${1:-}" in
     env_t="$(jq -r '.env // "unknown"' <<<"$inv_json")"
     tags_t="$(jq -rc '.tags // []' <<<"$inv_json")"
 
-    # exec 동적 등급: _classify 로 런타임 위임. non-exec 에서 gov 는 불허.
-    if [[ "$action" == "exec" ]]; then
+    # 동적 등급(exec/kubectl): _classify 로 런타임 위임. 그 외 액션에서 gov 는 불허.
+    if [[ "$action" == "exec" || "$action" == "kubectl" ]]; then
       via=""; cargs=()
       # nounset 안전 방어: extra 가 미정의일 때도 빈 배열로 처리.
       set -- "${extra[@]+"${extra[@]}"}"
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --via) via="${2:?exec: --via <guest|node|pve> 필요}"; shift 2 ;;
-          --) shift; cargs=("$@"); break ;;
-          *) cargs+=("$1"); shift ;;
-        esac
-      done
-      [[ "$via" =~ ^(guest|node|pve)$ ]] || die "exec: --via 는 guest|node|pve 중 하나여야 합니다"
-      [[ "${#cargs[@]}" -gt 0 ]] || die "exec: 실행할 명령이 없습니다 (--via 뒤에 명령을 지정하세요)"
+      if [[ "$action" == "kubectl" ]]; then
+        # kubectl: --via 인자 없음(kube 고정). extra 전체가 kubectl argv.
+        via="kube"
+        cargs=("$@")
+        [[ "${#cargs[@]}" -gt 0 ]] || die "kubectl: 실행할 kubectl 인자가 없습니다"
+      else
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --via) via="${2:?exec: --via <guest|node|pve> 필요}"; shift 2 ;;
+            --) shift; cargs=("$@"); break ;;
+            *) cargs+=("$1"); shift ;;
+          esac
+        done
+        [[ "$via" =~ ^(guest|node|pve)$ ]] || die "exec: --via 는 guest|node|pve 중 하나여야 합니다"
+        [[ "${#cargs[@]}" -gt 0 ]] || die "exec: 실행할 명령이 없습니다 (--via 뒤에 명령을 지정하세요)"
+      fi
       if [[ "$via" == "pve" ]]; then
         cls="$("$HERE/_classify" pve "${cargs[@]+"${cargs[@]}"}")"
       else
@@ -220,15 +235,15 @@ case "${1:-}" in
       if [[ -n "$gov" ]]; then
         case "$gov" in
           destructive) cgrade=destructive; crule="${crule}+override" ;;
-          *) die "exec: --grade-override 는 상향(destructive)만 허용 (받음: $gov)" ;;
+          *) die "$action: --grade-override 는 상향(destructive)만 허용 (받음: $gov)" ;;
         esac
       fi
       EXEC_VIA="$via"; EXEC_GRADE="$cgrade"; EXEC_RULE="$crule"
     else
-      [[ -n "$gov" ]] && die "--grade-override 는 exec 전용"
+      [[ -n "$gov" ]] && die "--grade-override 는 exec/kubectl 전용"
     fi
 
-    if [[ "$action" == "exec" ]]; then
+    if [[ "$action" == "exec" || "$action" == "kubectl" ]]; then
       grade="$EXEC_GRADE"
       # Reuse already-fetched inv_json (line ~168) — avoids TOCTOU divergence
       # between audit snapshot and critical-bump decision (IMPORTANT 1 fix).
@@ -250,6 +265,7 @@ case "${1:-}" in
     # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
     # exec 는 transport 가 dynamic — --via 로 실제 transport 결정.
+    # kubectl 은 정적 transport(kube) — op_transport 가 이미 "kube" 를 반환하므로 별도 매핑 불필요.
     if [[ "$action" == "exec" ]]; then
       case "$EXEC_VIA" in
         # Critical 1 fix: guest always means direct guest SSH (ssh-run), not
@@ -280,6 +296,7 @@ case "${1:-}" in
       _gate_var=""
       [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}" ]] && _gate_var="PVE_TOKEN"
       [[ "$_t" == "pdm" && -z "${PDM_TOKEN:-}" ]] && _gate_var="PDM_TOKEN"
+      [[ "$_t" == "kube" && -z "${HL_KUBECONFIG:-}" ]] && _gate_var="HL_KUBECONFIG"
       if [[ "$_t" == "ssh" || "$_t" == "host-ssh" ]]; then
         if [[ "$_auth" == "password" ]]; then
           [[ -z "${HL_SSH_PASS:-}" ]] && _gate_var="HL_SSH_PASS"
@@ -306,7 +323,7 @@ case "${1:-}" in
       dryrun_hash="$(printf '%s' "$dry" | sha256sum | awk '{print $1}')"
       if [[ "$approve" -ne 1 ]]; then
         echo "DRY-RUN [$grade] $action $target (env=$env_t tags=$tags_t)"
-        [[ "$action" == "exec" && -n "$EXEC_RULE" ]] && echo "classify_rule: $EXEC_RULE"
+        { [[ "$action" == "exec" || "$action" == "kubectl" ]] && [[ -n "$EXEC_RULE" ]]; } && echo "classify_rule: $EXEC_RULE"
         echo "$dry" | mask
         echo "Impact above. Re-run with --approve to execute."
         _DONE=1; _audit 10 || echo "homelab-ops: AUDIT FAILED op=$op rc=10" >&2
@@ -349,7 +366,7 @@ case "${1:-}" in
     } | sed -uE \
         -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{ s/.*/***MASKED-PRIVATE-KEY***/ }' \
         -e 's/(BW_SESSION=)[^[:space:]]+/\1***MASKED***/g' \
-        -e 's/((PVE_TOKEN|PDM_TOKEN|HL_SSH_KEY|HL_SSH_PASS|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
+        -e 's/((PVE_TOKEN|PDM_TOKEN|HL_SSH_KEY|HL_SSH_PASS|HL_KUBECONFIG|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
         -e 's/(Authorization:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]]+/\1***MASKED***/gI' \
         -e 's/(("?)(token|password|secret|api[_-]?token)("?)[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1***MASKED***/gI' \
         -e 's/(PVEAPIToken[^=]*=)[^[:space:]]+/\1***MASKED***/g' \

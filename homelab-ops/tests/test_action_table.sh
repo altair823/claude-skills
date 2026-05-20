@@ -51,11 +51,13 @@ while read -r al target; do
   esac
 done < <(bash bin/_tblprobe.sh aliases)
 
-# exec 는 동적 등급 센티넬(첫 토큰 dynamic), 정적 verb 엔 dynamic 토큰 없음.
+# exec/kubectl 은 동적 등급 센티넬(첫 토큰 dynamic), 그 외 정적 verb 엔 dynamic 토큰 없음.
 exec_spec="$(bash -c 'source bin/_lib.sh; echo "${ACTIONS[exec]:-MISSING}"')"
 assert_eq "dynamic exec" "$exec_spec" "ACTIONS[exec]=dynamic exec (동적 센티넬)"
+kubectl_spec="$(bash -c 'source bin/_lib.sh; echo "${ACTIONS[kubectl]:-MISSING}"')"
+assert_eq "dynamic kube" "$kubectl_spec" "ACTIONS[kubectl]=dynamic kube (동적 센티넬)"
 while read -r act spec; do
-  [[ "$act" == "exec" ]] && continue
+  case "$act" in exec|kubectl) continue ;; esac
   case "$spec" in
     dynamic*) echo "  FAIL: 정적 verb '$act' 에 dynamic 토큰"; _FAILS=$((_FAILS+1)) ;;
     *) : ;;

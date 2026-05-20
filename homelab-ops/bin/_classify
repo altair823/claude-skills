@@ -11,9 +11,31 @@ emit() { printf '%s\t%s\n' "$1" "$2"; exit 0; }
 
 # 유효하지 않은 via 는 즉시 fail-closed (invalid-via)
 case "$via" in
-  guest|node|pve) ;;
+  guest|node|pve|kube) ;;
   *) emit destructive invalid-via ;;
 esac
+
+# kube transport: kubectl 첫 토큰(서브커맨드)을 기준으로 분류.
+# 읽기 전용 서브커맨드 → caution, 변이/대화형 → destructive, 그 외 fail-closed.
+# - kubectl 은 `--kubeconfig` 거부 가드를 bin/kube 가 별도 수행하므로 분류기는 토큰만 본다.
+# - 셸 메타문자/래퍼는 kubectl argv 에 직접 흘러도 의미를 갖지 않으나(파일 인자/-l selector),
+#   상위 exec 가 처리하는 metachar 가드는 여기선 적용하지 않는다 — kubectl 자체가 셸을
+#   실행하지 않음. (실제 셸 분기는 kubectl exec/run/debug 가 컨테이너 내부에서 일으키므로
+#   그쪽은 destructive 로 분류한다.)
+if [[ "$via" == kube ]]; then
+  [[ "${1:-}" == "--" ]] && shift || true
+  [[ $# -gt 0 ]] || emit destructive fallback-deny
+  case "$1" in
+    # 읽기 전용 — 클러스터 상태/로그 조회. caution.
+    get|describe|logs|top|cluster-info|version|explain|api-resources|api-versions|config|wait|diff|auth|events)
+      emit caution "kube-ro:$1" ;;
+    # 변이 — 리소스/스케일/롤아웃 조작. destructive.
+    apply|create|delete|replace|patch|edit|scale|rollout|cordon|drain|uncordon|taint|annotate|label|set|expose|autoscale|run|exec|cp|port-forward|proxy|attach|debug|apply-set|apply-view-last-applied|delete-cluster|certificate)
+      emit destructive "kube-write:$1" ;;
+  esac
+  # 미지/비분류 서브커맨드 → fail-closed
+  emit destructive fallback-deny
+fi
 
 # pve transport: GET 만 caution, 그 외 destructive
 if [[ "$via" == pve ]]; then

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# kubectl stub for offline tests. Echos args + KUBECONFIG so the test can assert
+# routing/credentials. Reads KUBECONFIG content size to verify bin/kube wrote
+# the secret to a tmpfile (without echoing the secret value).
+set -euo pipefail
+kc_path="${KUBECONFIG:-<unset>}"
+kc_size=""
+kc_mode=""
+if [[ -f "$kc_path" ]]; then
+  kc_size="$(wc -c < "$kc_path" 2>/dev/null || echo "?")"
+  kc_mode="$(stat -c '%a' "$kc_path" 2>/dev/null || echo "?")"
+fi
+echo "KUBECTL-STUB args=[$*] kubeconfig_path=$kc_path kubeconfig_size=$kc_size kubeconfig_mode=$kc_mode"

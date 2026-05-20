@@ -1,6 +1,6 @@
 ---
 name: homelab-ops
-description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, and standalone appliances like Victoria Metrics / NAS) — list/status/metrics, start/stop/restart/snapshot, destroy, backup, disk-attach/detach, disk-grow, PDM remote-migrate, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
+description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, standalone appliances like Victoria Metrics / NAS, and k8s clusters running on the VMs) — list/status/metrics, start/stop/restart/snapshot, destroy, backup, disk-attach/detach, disk-grow, PDM remote-migrate, kubectl against k8s-cluster targets, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
 ---
 
 # homelab-ops
@@ -38,6 +38,13 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
 - **guest-ssh transport.** `service`/`logs`/`pkg-update`/`reboot`/`exec --via guest`
   는 **게스트 엔트리의 `access.ssh`** (`key_ref` 또는 `pass_ref`) 자격으로 직접
   접속. `pkg-install` 과 동일 패턴.
+- **k8s-cluster + kube transport.** `kind: k8s-cluster` 엔트리는 VM 위에 올린
+  논리 클러스터(`endpoint`, `access.kubeconfig.ref: bw://kubeconfig-<id>/notes`,
+  `members.control_plane[]`, `members.workers[]`). `kubectl` verb 는 이 엔트리만
+  타깃으로 받고 `bin/kube` 가 자격을 0600 ephemeral tmpfile 로 변환해 `kubectl`
+  을 호출(`KUBECONFIG` override; 종료 시 tmpfile 제거; `--kubeconfig` 인자 거부).
+  자격은 `HL_KUBECONFIG` env (kubeconfig YAML 내용). 분류는 `bin/_classify kube`
+  가 첫 토큰(get/apply/...)으로 동적 결정.
 - **Per-host CA.** A homelab Proxmox serves a self-signed cert from its built-in
   CA (Proxmox names it "PVE Cluster Manager CA" even on a standalone, non-
   clustered node), so system trust alone fails verification. Set
@@ -48,8 +55,9 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
   fails closed.
 
 ## Credentials — delegated to bitwarden-ops (homelab-ops never touches `bw`)
-homelab-ops holds only `bw://` references (in inventory). Resolution is delegated
-to the **bitwarden-ops** skill:
+homelab-ops holds only `bw://` references (in inventory: `token_ref` for PVE/PDM
+API tokens, `key_ref`/`pass_ref` for SSH, `kubeconfig.ref` for k8s clusters).
+Resolution is delegated to the **bitwarden-ops** skill:
 
 1. Ensure the vault is unlocked: invoke the bitwarden-ops skill and run its
    `bw-unlock` (the session then persists for subsequent calls). The user types
@@ -98,6 +106,11 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 - "게스트 로그 조회" → `"$HL/bin/guard" logs <id> -- --unit <unit> [-n N]` 또는 `-- --file <abs-path> [-n N]` (caution; 읽기 전용; unit/path charset 가드)
 - "게스트 패키지 업데이트" → `"$HL/bin/guard" pkg-update <id>` (caution; guest ssh; apt/dnf 자동탐지)
 - "게스트 OS 재부팅" → `"$HL/bin/guard" reboot <id>` (caution; guest ssh; `systemctl reboot` — `restart`(VM 재시작)와 구분)
+- "k8s 클러스터 조회/조작 (kubectl)" → `"$HL/bin/guard" kubectl <cluster-id> -- <kubectl-args...>` (target 은 `kind:k8s-cluster` 만; 자격은 `HL_KUBECONFIG`; 등급은 동적 분류기 `bin/_classify kube` 가 결정). 분류 규칙 요약:
+  - 읽기 전용 (`get describe logs top cluster-info version explain api-resources api-versions config wait diff auth events`) → **caution**
+  - 변이/대화형 (`apply create delete replace patch edit scale rollout cordon drain uncordon taint annotate label set expose autoscale run exec cp port-forward proxy attach debug`) → **destructive** (`--approve` 필요)
+  - 미지 서브커맨드 → destructive `fallback-deny`
+  - `--kubeconfig` 인자 주입은 `bin/kube` 가 거부 (자격은 bw 단일 출처)
 - "임의 명령 (동적 등급)" → `"$HL/bin/guard" exec <id> -- --via <guest|node|pve> <cmd...>` (pve: `--via pve --method GET|POST|PUT|DELETE --path /...`). 등급은 분류기 `bin/_classify` 가 동적 결정 (`--grade-override destructive` 는 상향만; destructive 시 `--approve` 필요). 분류 규칙 요약:
   - 읽기 전용 allowlist (`cat ls journalctl systemctl status qm config` 등) → **caution**
   - `ip ss dmesg journalctl` 은 **읽기 전용 형태만** caution — 변이 플래그/서브커맨드 (`ip link set`, `dmesg --clear`, `journalctl --vacuum-*`, `ss -K` 등) → destructive
@@ -116,11 +129,11 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
   `disk-attach`/`disk-detach`/`disk-grow`(host-ssh)는 노드에서 동기 실행
   (`qm set`/`qm guest exec`)이라 task 폴링이 아니라 명령 exit 를 감사한다.
 
-Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터 migration, or IaC (Phase 2, not yet). (PDM 경유 노드 간 `remote-migrate` 는 지원 — 독립 노드 대상.)
+Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터 migration, or IaC (Phase 2, not yet). (PDM 경유 노드 간 `remote-migrate` 는 지원 — 독립 노드 대상.) k8s 는 클러스터 단위 `kubectl` 만 지원 — 클러스터 자체의 lifecycle(생성/삭제/노드 추가)은 범위 밖.
 
 ## Hard rules (non-negotiable — destructive mistakes must be hard, every action reconstructable)
 1. **No guard bypass.** Every state change runs as `"$HL/bin/guard" <action> <target> [--approve]`. `bin/pve` and `bin/ssh-run` are read/transport layers — never invoke them to mutate state.
-2. **Credential injected via bitwarden-ops for any change.** A non-safe op whose transport credential (`PVE_TOKEN`/`HL_SSH_KEY`/`HL_SSH_PASS`) is absent refuses (exit 3). Resolve refs with `guard --plan` and wrap the run in bitwarden-ops `bw-exec`; never see, store, or handle the master password, and never reimplement `bw` here.
+2. **Credential injected via bitwarden-ops for any change.** A non-safe op whose transport credential (`PVE_TOKEN`/`PDM_TOKEN`/`HL_SSH_KEY`/`HL_SSH_PASS`/`HL_KUBECONFIG`) is absent refuses (exit 3). Resolve refs with `guard --plan` and wrap the run in bitwarden-ops `bw-exec`; never see, store, or handle the master password, and never reimplement `bw` here.
 3. **deny-by-default.** Any action not in guard's grade table is treated as destructive. Don't add ad-hoc actions to dodge this — extend the grade table deliberately if genuinely needed.
 4. **Destructive needs eyes.** destructive (and prod-caution) ops print a DRY-RUN + impact and exit 10. Show that to the user, get explicit approval, THEN re-run with `--approve`. A `critical`-tagged target escalates one grade — **but read-only safe ops (`status`/`metrics`/`get`/`list`/`inventory`) are NEVER escalated**: observability of critical hosts must not require `--approve` (the rule makes destructive mistakes hard, not looking impossible).
 5. **No log gaps.** `logs/audit.jsonl` is append-only; full per-op output is in `logs/runs/<session>/<op>.log` (secrets masked). Never edit, truncate, or skip them. Operational state is local to the operator and gitignored — back it up out-of-band if you need tamper-evidence.

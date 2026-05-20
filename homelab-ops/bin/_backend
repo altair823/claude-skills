@@ -278,6 +278,14 @@ case "$action:$kind" in
     else
       "$REPO_ROOT/provisioning/phase1" apply "$target" "$@"
     fi ;;
+  kubectl:*)
+    [[ "$kind" == "k8s-cluster" ]] \
+      || die "kubectl: target '$target' is kind '$kind' (need k8s-cluster)"
+    if [[ $dry -eq 1 ]]; then
+      # 표시 전용: 사람이 읽는 한 줄 메시지 — 실 실행 경로는 ${@} 로 argv-safe 전달.
+      echo "DRY-RUN: kubectl $target -- ${*:-<no args>}"; exit 0
+    fi
+    "$HERE/kube" "$target" -- "$@" ;;
   exec:*)
     via=""; cargs=()
     # 1패스: --via 를 추출하고 --method/--path/--body 를 포함한 나머지 인자를

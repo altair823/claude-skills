@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# kube transport — k8s-cluster 대상 kubectl 실행. ssh-run 의 k8s 대응체.
+# 사용:
+#   kube <cluster-id> -- <kubectl-args...>
+# 자격:
+#   HL_KUBECONFIG (kubeconfig YAML 내용; bw-exec 가 bw://kubeconfig-*/notes 에서 주입).
+#   미주입 시 fail-closed(exit 3). 디스크에 영구 저장 안 함 — 호출 동안만 0600 tmpfile.
+# 가드:
+#   - target.kind 가 k8s-cluster 가 아니면 die.
+#   - 호출자가 --kubeconfig 를 주면 거부(자격은 bw 경유 단일 출처).
+#   - 호출자가 KUBECONFIG env 를 가져왔어도 우리 tmpfile 로 override.
+source "$(dirname "$0")/_lib.sh"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+target="${1:-}"
+[[ -n "$target" ]] || die "usage: kube <cluster-id> -- <kubectl-args...>"
+shift
+[[ "${1:-}" == "--" ]] && shift || die "usage: kube <cluster-id> -- <kubectl-args...>"
+[[ $# -ge 1 ]] || die "no kubectl args given"
+
+inv="$("$HERE/inv" get "$target")" || die "no such target: $target"
+kind="$(jq -r '.kind // empty' <<<"$inv")"
+[[ "$kind" == "k8s-cluster" ]] \
+  || die "kube: target '$target' is kind '$kind' (need k8s-cluster)"
+
+# 호출자 --kubeconfig 주입 거부. argv 어디든 등장하면 die — 우회 차단.
+for _a in "$@"; do
+  case "$_a" in
+    --kubeconfig|--kubeconfig=*)
+      die "kube: --kubeconfig 사용 불가 (자격은 bw://...에서만 해석)" ;;
+  esac
+done
+
+[[ -n "${HL_KUBECONFIG:-}" ]] || { HL_EXIT=3 die "missing HL_KUBECONFIG — bitwarden-ops bw-exec 로 감싸 실행 (참고: \"$HERE/guard\" --plan kubectl $target)"; }
+command -v kubectl >/dev/null 2>&1 || { HL_EXIT=3 die "kubectl 미설치 — k8s 조작에 필요"; }
+
+# 0600 tmpfile (XDG_RUNTIME_DIR 우선 tmpfs, fallback /tmp). 어떤 경로든
+# umask 077 로 다른 사용자 가시성 차단. 종료 시 (정상/시그널) 무조건 제거.
+_kc="$(umask 077; mktemp "${XDG_RUNTIME_DIR:-/tmp}/homelab-kc.XXXXXX")"
+trap 'rm -f "$_kc" 2>/dev/null || true' EXIT INT TERM
+printf '%s' "$HL_KUBECONFIG" > "$_kc" \
+  || die "kube: tmpfile 쓰기 실패 ($_kc)"
+
+# KUBECONFIG override 단일 출처. 운영자 셸의 기존 KUBECONFIG 는 무시됨.
+KUBECONFIG="$_kc" kubectl "$@"

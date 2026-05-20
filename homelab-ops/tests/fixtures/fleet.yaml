@@ -73,3 +73,26 @@
   access:
     api: { token_ref: "bw://Proxmox-Datacenter-Manager pdm-01/api-token" }
   tags: []
+
+# K8s clusters (fixture mirrors prod inventory shape; values are dummies).
+- id: k8s-dev
+  kind: k8s-cluster
+  env: dev
+  endpoint: https://k8s-dev-cp.lab.local:6443
+  access:
+    kubeconfig: { ref: "bw://kubeconfig-k8s-dev/notes" }
+  members:
+    control_plane: [vm-100]
+    workers:       []
+  tags: []
+
+- id: k8s-prod
+  kind: k8s-cluster
+  env: prod
+  endpoint: https://k8s-prod-cp.lab.local:6443
+  access:
+    kubeconfig: { ref: "bw://kubeconfig-k8s-prod/notes" }
+  members:
+    control_plane: [vm-100]
+    workers:       []
+  tags: [critical]

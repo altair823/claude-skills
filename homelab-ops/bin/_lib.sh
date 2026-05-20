@@ -26,7 +26,7 @@ mask() {
   sed -E \
     -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{ s/.*/***MASKED-PRIVATE-KEY***/ }' \
     -e 's/(BW_SESSION=)[^[:space:]]+/\1***MASKED***/g' \
-    -e 's/((PVE_TOKEN|PDM_TOKEN|HL_SSH_KEY|HL_SSH_PASS|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
+    -e 's/((PVE_TOKEN|PDM_TOKEN|HL_SSH_KEY|HL_SSH_PASS|HL_KUBECONFIG|SSHPASS)=)[^[:space:]]+/\1***MASKED***/g' \
     -e 's/(Authorization:[[:space:]]*[A-Za-z]+[[:space:]]+)[^[:space:]]+/\1***MASKED***/gI' \
     -e 's/(("?)(token|password|secret|api[_-]?token)("?)[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1***MASKED***/gI' \
     -e 's/(PVEAPIToken[^=]*=)[^[:space:]]+/\1***MASKED***/g' \
@@ -72,6 +72,7 @@ declare -gA ACTIONS=(
   [remote-migrate]="destructive pdm"
   [provision]="destructive pve"  [destroy]="destructive guest"
   [exec]="dynamic exec"
+  [kubectl]="dynamic kube"
 )
 declare -gA ACTION_ALIASES=( [delete]="destroy" )
 
@@ -117,7 +118,7 @@ op_transport() {
   t="${spec##* }"
   case "$t" in
     exec) echo dynamic ;;          # exec 의 transport 는 런타임(--via)에 결정 — 동적 표식
-    none|pve|ssh|host-ssh|pdm) echo "$t" ;;
+    none|pve|ssh|host-ssh|pdm|kube) echo "$t" ;;
     guest) case "$kind" in proxmox-host|vm|lxc) echo pve ;; *) echo ssh ;; esac ;;
     *) echo none ;;
   esac
