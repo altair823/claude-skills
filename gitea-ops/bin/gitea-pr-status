@@ -15,6 +15,7 @@
 
 set -eu
 . "$(dirname "$0")/_common.sh"
+. "$(dirname "$0")/_lint.sh"
 
 PR=""
 JSON=0
@@ -63,6 +64,20 @@ head_ref="$(printf '%s' "$pr_json" | jq -r '.head.ref // ""')"
 head_sha="$(printf '%s' "$pr_json" | jq -r '.head.sha // ""')"
 changed_files="$(printf '%s' "$pr_json" | jq -r '.changed_files // 0')"
 
+lint_title=pass; lint_branch=pass; lint_body=pass
+if ! lint_msg="$(lint_pr_title "$title" 2>&1)"; then
+    lint_title=fail
+    printf '%s\n' "$lint_msg" >&2
+fi
+if ! lint_msg="$(lint_branch_name "$head_ref" 2>&1)"; then
+    lint_branch=fail
+    printf '%s\n' "$lint_msg" >&2
+fi
+if ! lint_msg="$(lint_pr_body "$body" 2>&1)"; then
+    lint_body=fail
+    printf '%s\n' "$lint_msg" >&2
+fi
+
 [ -n "$title" ] && title_ok=true || title_ok=false
 [ -n "$body" ]  && body_ok=true  || body_ok=false
 
@@ -97,6 +112,9 @@ if [ "$title_ok" = "true" ] && [ "$body_ok" = "true" ] && \
 fi
 gate_passed=false
 if [ "$required_ok" = "true" ] && \
+   [ "$lint_title" = "pass" ] && \
+   [ "$lint_branch" = "pass" ] && \
+   [ "$lint_body" = "pass" ] && \
    { [ "$ci_state" = "none" ] || [ "$ci_state" = "success" ]; }; then
     gate_passed=true
 fi
@@ -112,8 +130,11 @@ if [ "$JSON" = "1" ]; then
        --arg head_sha "$head_sha" \
        --arg ci_state "$ci_state" \
        --argjson ci_count "$ci_count" \
+       --arg lint_title "$lint_title" \
+       --arg lint_branch "$lint_branch" \
+       --arg lint_body "$lint_body" \
        --argjson gate_passed "$gate_passed" \
-       '{title_ok:$title_ok, body_ok:$body_ok, changed_files:$changed_files, draft:$draft, base:$base, head:$head, head_sha:$head_sha, ci_state:$ci_state, ci_count:$ci_count, gate_passed:$gate_passed}'
+       '{title_ok:$title_ok, body_ok:$body_ok, changed_files:$changed_files, draft:$draft, base:$base, head:$head, head_sha:$head_sha, ci_state:$ci_state, ci_count:$ci_count, lint_title:$lint_title, lint_branch:$lint_branch, lint_body:$lint_body, gate_passed:$gate_passed}'
 else
     printf 'title_ok=%s\n'      "$title_ok"
     printf 'body_ok=%s\n'       "$body_ok"
@@ -124,6 +145,9 @@ else
     printf 'head_sha=%s\n'      "$head_sha"
     printf 'ci_state=%s\n'      "$ci_state"
     printf 'ci_count=%s\n'      "$ci_count"
+    printf 'lint_title=%s\n'    "$lint_title"
+    printf 'lint_branch=%s\n'   "$lint_branch"
+    printf 'lint_body=%s\n'     "$lint_body"
     printf 'gate_passed=%s\n'   "$gate_passed"
 fi
 
