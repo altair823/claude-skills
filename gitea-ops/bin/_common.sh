@@ -183,3 +183,24 @@ secret_scan_history() {
         || true
     return 0
 }
+
+# PR body 끝에 `Assisted-by: Claude Code` trailer 를 idempotent 하게 부착.
+# 본문에 이미 동일 trailer 가 한 줄로 존재하면 그대로 반환.
+append_trailer() {
+    _body="$1"
+    _trailer='Assisted-by: Claude Code'
+    if printf '%s\n' "$_body" | grep -qFx "$_trailer"; then
+        printf '%s' "$_body"
+        return 0
+    fi
+    # body 끝 trailing whitespace·newline 제거 후, 빈 줄 1개 + trailer.
+    _trimmed="$(printf '%s' "$_body" | awk '
+        { lines[NR] = $0 }
+        END {
+            n = NR
+            while (n > 0 && lines[n] ~ /^[ \t]*$/) n--
+            for (i = 1; i <= n; i++) printf "%s%s", lines[i], (i < n ? "\n" : "")
+        }
+    ')"
+    printf '%s\n\n%s' "$_trimmed" "$_trailer"
+}
