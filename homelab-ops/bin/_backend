@@ -17,6 +17,17 @@ kind="$(jq -r .kind <<<"$inv")"
 case "$action:$kind" in
   status:*|metrics:*|get:*)
     "$HERE/inv" resolve "$target" ;;
+  verify-specs:*)
+    # Read-only: compares declared hardware: block against live PVE API.
+    # Safe — no dry-run probe (guard runs safe ops directly). 'safe pve' in
+    # ACTIONS forces guard --plan to surface PVE_TOKEN under bw-exec.
+    exec "$HERE/_verify_specs" "$target" ;;
+  hwsync:*)
+    # Read-only: prints a paste-ready YAML `hardware:` fragment from the live
+    # authoritative source for the target's kind. Transport (and credential
+    # gating) is decided by ACTIONS[hwsync]="safe guest" — kind-dispatch picks
+    # PVE_TOKEN (proxmox-host/vm/lxc) or HL_SSH_KEY/HL_SSH_PASS (appliance).
+    exec "$HERE/_hwsync" "$target" ;;
   # NOTE: 이 mutating action 목록은 _lib.sh op_transport 의 동명 arm 과 반드시
   # 함께 갱신해야 한다 (transport 결정의 단일 출처 — 둘이 어긋나면 오라우팅).
   # backup:* / pkg-install:* / provision:* 는 의도적으로 별도 arm 으로 분리되어 있으며,

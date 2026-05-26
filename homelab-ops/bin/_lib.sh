@@ -63,6 +63,8 @@ run_log_path() { # <op-id> -> path (creates session run dir)
 declare -gA ACTIONS=(
   [status]="safe none"        [list]="safe none"      [metrics]="safe none"
   [get]="safe none"           [inventory]="safe none"
+  [verify-specs]="safe pve"
+  [hwsync]="safe guest"
   [start]="caution guest"     [stop]="caution guest"  [restart]="caution guest"
   [snapshot]="caution guest"  [pkg-install]="caution ssh"  [pkg-update]="caution ssh"
   [backup]="caution pve"

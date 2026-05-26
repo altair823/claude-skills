@@ -21,6 +21,33 @@
     ssh: { user: root, key_ref: "bw://ssh-pve-01/notes" }
   children: [vm-100, lxc-201]
   tags: [critical]
+  # Optional. Operator-declared physical capacity contract for VM placement
+  # planning. `inv specs <id>` prints this block (no credentials). `guard
+  # verify-specs <id>` (safe, needs PVE_TOKEN) cross-checks against the live
+  # PVE API and surfaces drift. `guard hwsync <id>` regenerates this block
+  # from the live source for any kind (proxmox-host/vm/lxc/appliance).
+  hardware:
+    resource_type: physical   # physical | virtual — auto-set by `guard hwsync`
+    cpu:
+      model: "AMD Ryzen 7 7700"   # informational (vendor string)
+      sockets: 1
+      cores: 8                     # total physical cores (= PVE cpuinfo.cores)
+      threads: 16                  # total logical CPUs   (= PVE cpuinfo.cpus)
+    memory:
+      total_gib: 128
+      reserved_gib: 8              # operator policy — usable for VMs = total - reserved
+    storages:
+      # name+type verified exactly. size_tib/size_gib verified within ±5%.
+      - { name: local-zfs, type: zfs, size_tib: 2.0 }
+      - { name: local-lvm, type: lvmthin, size_gib: 500 }
+    nics:
+      # speed_gbps is informational — PVE API does not expose link speed.
+      # The iface name's existence on the node IS verified.
+      - { name: vmbr0, speed_gbps: 1 }
+    passthrough:
+      # `id` is "vendor:device" in lowercase hex (matched against /hardware/pci).
+      # `kind` and `bound_to` are operator metadata (not verified).
+      - { kind: gpu, id: "10de:2206", bound_to: workspace-02, note: "RTX 3080" }
 
 - id: vm-100
   kind: vm

@@ -27,6 +27,17 @@ assert_eq "" "$(bin/inv children vm-100)" "leaf node has no children"
 assert_status 1 'bin/inv resolve nope' "resolve unknown id exits 1"
 assert_status 1 'bin/inv' "no subcommand exits 1"
 
+# inv specs: 선언 hardware 블록만 출력 (PVE API 호출 0, credential 0).
+specs="$(bin/inv specs pve-01)"
+assert_contains "$specs" '"sockets": 1' "specs prints declared cpu.sockets"
+assert_contains "$specs" '"total_gib": 128' "specs prints declared memory.total_gib"
+assert_contains "$specs" '"local-zfs"' "specs prints declared storages[].name"
+# hardware 미선언 host: stderr 안내, exit 0 (없어도 인벤토리 조회는 항상 가능)
+noh="$(bin/inv specs vm-100 2>&1 >/dev/null)"
+assert_contains "$noh" "no 'hardware:' block declared" "specs on hardware-less host explains"
+assert_status 0 'bin/inv specs vm-100' "specs on hardware-less host exits 0 (informational)"
+assert_status 1 'bin/inv specs nope' "specs on unknown id exits 1"
+
 # HOMELAB_INVENTORY_DIR overrides the inventory location so the live
 # inventory/ can hold the operator's real fleet without breaking the
 # stub-driven suite (which points at a fixed fixture).

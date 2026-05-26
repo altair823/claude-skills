@@ -26,6 +26,20 @@ y2j() {
     || die "y2j: failed to parse $1 (python3/PyYAML available?)"
 }
 
+# Optional dict-rooted yaml (e.g. defaults.yaml). Absent file → {}; non-dict
+# top-level (e.g. accidentally a list) is coerced to {} so callers can rely on
+# a stable object shape for deep-merge.
+y2j_optional_dict() {
+  if [[ -f "$1" ]]; then
+    python3 -c 'import sys,yaml,json; v=yaml.safe_load(sys.stdin); json.dump(v if isinstance(v, dict) else {}, sys.stdout)' < "$1" \
+      || die "y2j_optional_dict: failed to parse $1"
+  else
+    echo '{}'
+  fi
+}
+DEFAULTS_FILE="$INV_DIR/defaults.yaml"
+defaults_json="$(y2j_optional_dict "$DEFAULTS_FILE")"
+
 cmd="${1:-}"; arg="${2:-}"
 case "$cmd" in
   list)
@@ -35,21 +49,57 @@ case "$cmd" in
     _f="$(y2j "$FLEET")"
     echo "$_f" | jq -e --arg id "$arg" '.[] | select(.id==$id)' >/dev/null 2>&1 \
       || die "no such inventory id: $arg"
-    echo "$_f" | jq --arg id "$arg" '.[] | select(.id==$id)' ;;
+    # defaults.yaml fields fill in only what the entry omits (entry wins).
+    echo "$_f" | jq --argjson d "$defaults_json" --arg id "$arg" '
+      # Capture a,b to vars; inside reduce, `.` becomes the accumulator and
+      # would shadow `b` causing entry-level values to be lost.
+      def deepmerge(a; b):
+        (a) as $a | (b) as $b
+        | if ($a|type) == "object" and ($b|type) == "object" then
+            reduce (($a|keys_unsorted) + ($b|keys_unsorted) | unique)[] as $k
+              ({}; .[$k] = deepmerge($a[$k]; $b[$k]))
+          elif $b == null then $a
+          else $b
+          end;
+      .[] | select(.id==$id) | deepmerge($d; .)
+    ' ;;
   resolve)
     [[ -n "$arg" ]] || die "usage: inv resolve <id>"
     e="$(y2j "$FLEET")"; g="$(y2j "$GROUPS_FILE")"
     echo "$e" | jq -e --arg id "$arg" '.[]|select(.id==$id)' >/dev/null 2>&1 \
       || die "no such inventory id: $arg"
-    jq -n --argjson f "$e" --argjson g "$g" --arg id "$arg" '
+    jq -n --argjson f "$e" --argjson g "$g" --argjson d "$defaults_json" --arg id "$arg" '
+      # Capture a,b to vars; inside reduce, `.` becomes the accumulator and
+      # would shadow `b` causing entry-level values to be lost.
+      def deepmerge(a; b):
+        (a) as $a | (b) as $b
+        | if ($a|type) == "object" and ($b|type) == "object" then
+            reduce (($a|keys_unsorted) + ($b|keys_unsorted) | unique)[] as $k
+              ({}; .[$k] = deepmerge($a[$k]; $b[$k]))
+          elif $b == null then $a
+          else $b
+          end;
       ($f[] | select(.id==$id)) as $entry
-      | $entry + { groups: ($g | to_entries | map(select(.value|index($id)) | .key)) }' ;;
+      | deepmerge($d; $entry)
+      + { groups: ($g | to_entries | map(select(.value|index($id)) | .key)) }
+    ' ;;
   children)
     [[ -n "$arg" ]] || die "usage: inv children <id>"
     "$0" get "$arg" | jq -r '.children[]? // empty' ;;
   group)
     [[ -n "$arg" ]] || die "usage: inv group <name>"
     y2j "$GROUPS_FILE" | jq -r --arg n "$arg" '.[$n][]? // empty' ;;
+  specs)
+    # Print just the declared `hardware:` block for a host (no PVE API call,
+    # no credentials needed). Use `guard verify-specs <id>` to cross-check
+    # against live PVE API.
+    [[ -n "$arg" ]] || die "usage: inv specs <id>"
+    e="$("$0" get "$arg")" || exit $?
+    if [[ "$(jq '.hardware // null' <<<"$e")" == "null" ]]; then
+      echo "no 'hardware:' block declared for $arg" >&2
+      exit 0
+    fi
+    jq '.hardware' <<<"$e" ;;
   *)
-    die "usage: inv {list|get <id>|resolve <id>|children <id>|group <name>}" ;;
+    die "usage: inv {list|get <id>|resolve <id>|children <id>|group <name>|specs <id>}" ;;
 esac

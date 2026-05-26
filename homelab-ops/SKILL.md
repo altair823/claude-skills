@@ -27,6 +27,16 @@ Read: `"$HL/bin/inv"`, `"$HL/bin/forensics"`. Mutations: `"$HL/bin/guard"` ONLY.
   백업 용이; repo `inventory/` 도 여전히 동작). 셋 다 없으면 `bin/inv` 가
   세 후보 경로를 출력하고 종료한다. A `proxmox-host` entry's `id` MUST
   equal the real PVE node name (API paths are `/nodes/<id>/...`).
+- **Inventory defaults.** 인벤토리 디렉터리에 선택적으로 `defaults.yaml`
+  (dict-rooted) 을 두면, `bin/inv get`/`resolve` 가 모든 entry 에 대해 그
+  내용을 **deep-merge** 한다 — **entry-level 값이 항상 wins, defaults 는 entry
+  가 비워둔 필드만 채운다**. 부재 시 기존 동작 그대로 (`y2j_optional_dict` 가
+  `{}` 로 fall-through). 대표 용도: `access.ssh.key_ref` 를 default 로 깔아두고
+  entry 별로 키를 명시 안 한 호스트에 운영자 personal 키 (`bw://ssh-<user>-
+  personal/notes`) 가 자동 적용되게. 같은 규칙으로 secret 자체는 절대 담지 말
+  것 — `defaults.yaml` 도 `bw://` REFERENCE 만 (fleet.yaml 과 동일 룰).
+  `user` 는 default 로 박지 말 것을 권장: ssh-run 의 `// "root"` fallback 이
+  기본값을 제공하고, 비-root 사용자가 필요한 entry 는 자기 `user` 를 명시한다.
 - **PDM 엔트리.** `remote-migrate` 는 인벤토리에 `kind: pdm` 엔트리(정확히 1개:
   `address`[:port], `access.api.token_ref`→`PDM_TOKEN`, `ca_path`, 선택
   `base_path`/`task_status_path`/`migrate_path`)가 필요하다. `bin/pdm` 가 단일
@@ -85,6 +95,8 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 > - SSH **키** 호스트의 `access.ssh.key_ref` 는 `bw://ssh-<id>/notes` 규약
 >   (키는 vault item notes 에 저장; `bw-put ... --type note --from-file` 로
 >   등록). `guard --plan` 은 key_ref 를 verbatim 으로 `HL_SSH_KEY` 에 싣는다.
+>   entry 가 `key_ref` 를 생략한 경우 `defaults.yaml` (위 "Inventory
+>   defaults" 참조) 의 `access.ssh.key_ref` 가 자동 적용된다.
 > - SSH **패스워드** 호스트는 `access.ssh.auth: password` + `pass_ref:
 >   "bw://ssh-<id>-pass"` (single-line; `bw-put` tty 또는 `--from-file` 로 등록).
 >   `guard --plan` 은 `HL_SSH_PASS` 를, `ssh-run` 은 `sshpass -e` 를 쓴다.
@@ -93,6 +105,9 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`
+- "이 호스트의 선언된 사양은?" → `"$HL/bin/inv" specs <id>` (선언 `hardware:` 블록만 출력; credential 0)
+- "선언 사양과 실제 PVE 가 일치하나? (drift 확인)" → `"$HL/bin/guard" verify-specs <pve-host>` (safe; PVE_TOKEN 필요 — `bw-exec` 로 감싸 실행; **proxmox-host 한정** CPU/메모리/스토리지/NIC/PCI 패스스루를 라이브 비교, drift 시 exit 1)
+- "현재 하드웨어/자원을 인벤토리 YAML 로 뽑아 줘 (paste-ready)" → `"$HL/bin/guard" hwsync <id>` (safe; kind 별 transport — `proxmox-host`/`vm`/`lxc` → PVE API · `appliance` → SSH `/proc/{cpuinfo,meminfo}` · `pdm` → 거부). 출력 `hardware:` 블록은 `resource_type: physical|virtual` 로 자기 분류. **vm/lxc 결과는 정보용** — PVE config 가 권위이므로 인벤토리에 박지 말 것 (`hwsync` 헤더에 경고 포함). `hardware:` 블록 스키마는 `inventory/fleet.example.yaml` 참고.
 - "Start/stop/restart/snapshot X" → `"$HL/bin/guard" <verb> <id>` (prod ⇒ needs `--approve`)
 - "Back up X (vzdump)" → `"$HL/bin/guard" backup <id> -- <storage> [mode] [compress]` (caution; prod ⇒ `--approve`)
 - "Destroy/delete X" → `"$HL/bin/guard" destroy <id>` (`delete` = `destroy` 별칭) → show the DRY-RUN/impact → re-run with `--approve`

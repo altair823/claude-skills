@@ -11,6 +11,17 @@
     ssh: { user: root, key_ref: "bw://ssh-pve-01" }
   children: [vm-100, lxc-201]
   tags: [critical]
+  # Hardware spec for verify-specs/inv-specs tests. Numbers match the stub
+  # response so a no-drift run is the expected default.
+  hardware:
+    cpu: { model: "Stub CPU", sockets: 1, cores: 8, threads: 16 }
+    memory: { total_gib: 128, reserved_gib: 8 }
+    storages:
+      - { name: local-zfs, type: zfs, size_tib: 2.0 }
+    nics:
+      - { name: vmbr0, speed_gbps: 1 }
+    passthrough:
+      - { kind: gpu, id: "10de:2206", bound_to: vm-100 }
 
 - id: vm-100
   kind: vm

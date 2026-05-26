@@ -33,10 +33,12 @@ case "${1:-}" in
     [[ $# -ge 3 ]] || die "usage: guard --plan <action> <target-id>"
     pa="$2"; pt="$3"
     pgrade="$(guard_grade "$pa" "$pt")"        # target 존재도 검증; 없으면 die
-    [[ "$pgrade" == "safe" ]] && exit 0        # safe op 는 credential 불필요
     pinv="$("$HERE/inv" get "$pt")" || exit $?
     pkind="$(jq -r '.kind // ""' <<<"$pinv")"
     ptrans="$(op_transport "$pa" "$pkind")"
+    # safe + transport=none (status/metrics/get/list/inventory): 자격 불필요.
+    # safe + transport!=none (verify-specs 등): credential 산출 진행 — 아래 케이스.
+    [[ "$pgrade" == "safe" && "$ptrans" == "none" ]] && exit 0
     # exec: --via 로 실제 transport 결정
     if [[ "$pa" == "exec" ]]; then
       shift 3 2>/dev/null || true
@@ -258,11 +260,11 @@ case "${1:-}" in
     rl="$(run_log_path "$op")"
     backend="${HOMELAB_BACKEND:-$HERE/_backend}"
 
-    # Credential gate: 비-safe op 는 그 op 의 transport(pve|ssh)가 요구하는
-    # credential env 가 있어야 한다. transport none(예: critical 로 caution 이 된
-    # status — _backend 는 inv resolve 만 함)은 시크릿이 필요 없으므로 통과.
-    # credential 은 bitwarden-ops bw-exec 가 주입 (homelab-ops 는 bw 를 모른다).
-    # _t 는 safe 여부와 무관하게 미리 산출(대칭·가독). gate 본문은 아래 if 에서만.
+    # Credential gate: transport != none 이면 그 transport 의 credential env 가
+    # 있어야 한다 — grade 와 무관(safe pve 인 verify-specs 도 PVE_TOKEN 필요).
+    # transport == none(safe none: status/metrics/get — _backend 는 inv resolve
+    # 만 함)은 시크릿 불필요로 통과. credential 은 bitwarden-ops bw-exec 가 주입
+    # (homelab-ops 는 bw 를 모른다).
     _t="$(op_transport "$action" "$(jq -r '.kind // ""' <<<"$inv_json")")"
     # exec 는 transport 가 dynamic — --via 로 실제 transport 결정.
     # kubectl 은 정적 transport(kube) — op_transport 가 이미 "kube" 를 반환하므로 별도 매핑 불필요.
@@ -292,7 +294,7 @@ case "${1:-}" in
       fi
       _auth="$(jq -r '.access.ssh.auth // "key"' <<<"$_hoinv")"
     fi
-    if [[ "$grade" != "safe" ]]; then
+    if [[ "$_t" != "none" ]]; then
       _gate_var=""
       [[ "$_t" == "pve" && -z "${PVE_TOKEN:-}" ]] && _gate_var="PVE_TOKEN"
       [[ "$_t" == "pdm" && -z "${PDM_TOKEN:-}" ]] && _gate_var="PDM_TOKEN"

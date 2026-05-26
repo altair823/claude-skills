@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# hwsync <id>
+#   Print a paste-ready YAML `hardware:` fragment showing the *current* state
+#   of the target's hardware/resources, read from the authoritative source for
+#   that kind. Read-only.
+#
+#   proxmox-host : PVE API → physical CPU/memory/storage/NICs/PCI
+#   vm           : PVE /qemu/<vmid>/config       → virtual (informational —
+#                  PVE config IS the source of truth; do not paste into inventory)
+#   lxc          : PVE /lxc/<vmid>/config        → virtual (same caveat as vm)
+#   appliance    : SSH /proc/cpuinfo + /proc/meminfo → physical (CPU + memory only;
+#                  add disks/PCI/NICs manually if needed — varies wildly per box)
+#   pdm          : refused (management plane has no hardware)
+#
+# Output starts with a comment header showing the source and `resource_type:`
+# is always set. The full JSON envelope is passed to _hwsync.py for YAML
+# serialization (kept out of bash so we get block/flow styling for free).
+set -euo pipefail
+source "$(dirname "$0")/_lib.sh"
+HERE="$(dirname "$0")"
+
+target="${1:-}"
+[[ -n "$target" ]] || { echo "usage: _hwsync <id>" >&2; exit 2; }
+
+inv="$("$HERE/inv" get "$target")" || exit $?
+kind="$(jq -r .kind <<<"$inv")"
+vmid="$(jq -r '.vmid // empty' <<<"$inv")"
+
+case "$kind" in
+  proxmox-host)
+    status="$("$HERE/pve" "$target" api GET "/nodes/$target/status")"
+    storage="$("$HERE/pve" "$target" api GET "/nodes/$target/storage")"
+    network="$("$HERE/pve" "$target" api GET "/nodes/$target/network")"
+    # /hardware/pci often needs Sys.Audit — degrade gracefully if forbidden.
+    pci="$("$HERE/pve" "$target" api GET "/nodes/$target/hardware/pci" 2>/dev/null || echo '{"data":[]}')"
+    jq -n \
+      --arg kind "$kind" --arg target "$target" \
+      --argjson status "$status" --argjson storage "$storage" \
+      --argjson network "$network" --argjson pci "$pci" \
+      '{kind:$kind, target:$target, status:$status, storage:$storage, network:$network, pci:$pci}' \
+      | python3 "$HERE/_hwsync.py" ;;
+  vm|lxc)
+    [[ -n "$vmid" ]] || die "hwsync $kind: target '$target' has no vmid in inventory"
+    owner="$(owner_host "$target")"
+    [[ "$owner" != "$target" ]] \
+      || die "hwsync $kind: target '$target' has no owning Proxmox host in inventory (orphan)"
+    api_kind="qemu"; [[ "$kind" == "lxc" ]] && api_kind="lxc"
+    cfg="$("$HERE/pve" "$owner" api GET "/nodes/$owner/$api_kind/$vmid/config")"
+    jq -n \
+      --arg kind "$kind" --arg target "$target" --arg vmid "$vmid" --arg owner "$owner" \
+      --argjson cfg "$cfg" \
+      '{kind:$kind, target:$target, vmid:($vmid|tonumber), owner_host:$owner, config:$cfg}' \
+      | python3 "$HERE/_hwsync.py" ;;
+  appliance)
+    cpuinfo="$("$HERE/ssh-run" "$target" -- cat /proc/cpuinfo)"
+    meminfo="$("$HERE/ssh-run" "$target" -- cat /proc/meminfo)"
+    # Pass /proc text through stdin envelope as JSON strings (preserves \n).
+    jq -n \
+      --arg kind "$kind" --arg target "$target" \
+      --arg cpuinfo "$cpuinfo" --arg meminfo "$meminfo" \
+      '{kind:$kind, target:$target, cpuinfo:$cpuinfo, meminfo:$meminfo}' \
+      | python3 "$HERE/_hwsync.py" ;;
+  pdm)
+    die "hwsync: kind=pdm has no hardware to report (management plane only)" ;;
+  *)
+    die "hwsync: unsupported kind='$kind' for target '$target'" ;;
+esac

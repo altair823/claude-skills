@@ -1,5 +1,46 @@
 #!/usr/bin/env bash
 # Record args so tests can assert StrictHostKeyChecking; echo a marker.
+# Content-aware overrides for specific remote commands:
+#   cat /proc/cpuinfo  → minimal 2-socket × 4-cores × 2-threads stub
+#   cat /proc/meminfo  → MemTotal 16 GiB
+# Default: "stub-ssh-output" (preserves existing test expectations).
 echo "ssh $*" >> "${SSH_SPY:-/tmp/ssh-args}"
 echo "ssh-stub args: $*" >&2
-echo "stub-ssh-output"
+all="$*"
+if [[ "$all" == *"cat /proc/cpuinfo"* ]]; then
+  cat <<'EOF'
+processor	: 0
+model name	: Stub Appliance CPU
+physical id	: 0
+siblings	: 4
+core id		: 0
+cpu cores	: 2
+
+processor	: 1
+model name	: Stub Appliance CPU
+physical id	: 0
+siblings	: 4
+core id		: 1
+cpu cores	: 2
+
+processor	: 2
+model name	: Stub Appliance CPU
+physical id	: 0
+siblings	: 4
+core id		: 0
+cpu cores	: 2
+
+processor	: 3
+model name	: Stub Appliance CPU
+physical id	: 0
+siblings	: 4
+core id		: 1
+cpu cores	: 2
+EOF
+elif [[ "$all" == *"cat /proc/meminfo"* ]]; then
+  # 16 GiB = 16 * 1024 * 1024 kB
+  echo "MemTotal:       16777216 kB"
+  echo "MemFree:        8000000 kB"
+else
+  echo "stub-ssh-output"
+fi

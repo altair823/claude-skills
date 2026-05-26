@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# verify-specs <pve-host-id>
+#   Compare the operator-declared `hardware:` block on a proxmox-host
+#   inventory entry against what the live PVE API reports. Read-only.
+#
+# Exit codes:
+#   0  no drift (or no hardware block declared — informational)
+#   1  drift detected (declared ≠ live, or declared item missing on host)
+#   2  usage error / wrong kind
+#   (other) propagated from inv/pve transport
+#
+# Field mapping (declared → PVE API):
+#   cpu.sockets   ← /nodes/{id}/status → cpuinfo.sockets
+#   cpu.cores     ← /nodes/{id}/status → cpuinfo.cores    (total physical)
+#   cpu.threads   ← /nodes/{id}/status → cpuinfo.cpus     (total logical)
+#   cpu.model     informational only (PVE returns free-form vendor string)
+#   memory.total_gib       ← /nodes/{id}/status → memory.total (bytes/1024^3)
+#   memory.reserved_gib    operator policy — never verified, always passes
+#   storages[].name+type   ← /nodes/{id}/storage → {storage,type}
+#   storages[].size_gib    ← /nodes/{id}/storage → total (bytes/1024^3) ±5%
+#   nics[].name            ← /nodes/{id}/network → iface (exists only)
+#   nics[].speed_gbps      informational (PVE API does not expose link speed)
+#   passthrough[].id       ← /nodes/{id}/hardware/pci → vendor:device_id
+#                           (matches on lowercased "vvvv:dddd" present in list)
+set -euo pipefail
+source "$(dirname "$0")/_lib.sh"
+HERE="$(dirname "$0")"
+
+target="${1:-}"
+[[ -n "$target" ]] || { echo "usage: _verify_specs <pve-host-id>" >&2; exit 2; }
+
+inv="$("$HERE/inv" get "$target")" || exit $?
+kind="$(jq -r .kind <<<"$inv")"
+[[ "$kind" == "proxmox-host" ]] \
+  || { echo "verify-specs: target '$target' kind=$kind (proxmox-host only)" >&2; exit 2; }
+
+declared="$(jq '.hardware // null' <<<"$inv")"
+if [[ "$declared" == "null" ]]; then
+  echo "verify-specs $target: no 'hardware:' block declared — nothing to compare."
+  echo "  (declare a hardware block in inventory to enable drift detection;"
+  echo "   see inventory/fleet.example.yaml for the schema.)"
+  exit 0
+fi
+
+# Live snapshots. /hardware/pci needs Sys.Audit on root@pam — skip gracefully.
+node_status="$("$HERE/pve" "$target" api GET "/nodes/$target/status")"
+storage_json="$("$HERE/pve" "$target" api GET "/nodes/$target/storage")"
+network_json="$("$HERE/pve" "$target" api GET "/nodes/$target/network")"
+pci_json="$("$HERE/pve" "$target" api GET "/nodes/$target/hardware/pci" 2>/dev/null || echo '{"data":[]}')"
+
+drifts=0
+missing=0
+
+bytes_to_gib() { # bytes -> GiB rounded to 1 decimal (jq float)
+  jq -n --argjson b "${1:-0}" '($b/1073741824) | (.*10|round/10)'
+}
+
+ok()       { printf "  \033[32mOK\033[0m       %s\n" "$*"; }
+drift()    { printf "  \033[33mDRIFT\033[0m    %s\n" "$*"; drifts=$((drifts+1)); }
+absent()   { printf "  \033[31mMISSING\033[0m  %s\n" "$*"; missing=$((missing+1)); }
+info()     { printf "  \033[90minfo\033[0m     %s\n" "$*"; }
+
+echo "verify-specs $target — declared vs live PVE API:"
+echo
+
+# ── CPU ──────────────────────────────────────────────────────────────────────
+echo "CPU:"
+cpu_d="$(jq '.cpu // {}' <<<"$declared")"
+cpu_l="$(jq '.data.cpuinfo // {}' <<<"$node_status")"
+for f in sockets cores; do
+  d="$(jq -r --arg f "$f" '.[$f] // "—"' <<<"$cpu_d")"
+  l="$(jq -r --arg f "$f" '.[$f] // "—"' <<<"$cpu_l")"
+  if [[ "$d" == "—" ]]; then info "$f: not declared (live=$l)"
+  elif [[ "$d" == "$l" ]]; then ok "$f declared=$d live=$l"
+  else drift "$f declared=$d live=$l"; fi
+done
+# threads: declared.threads ↔ live.cpus
+d="$(jq -r '.threads // "—"' <<<"$cpu_d")"
+l="$(jq -r '.cpus // "—"' <<<"$cpu_l")"
+if [[ "$d" == "—" ]]; then info "threads: not declared (live cpus=$l)"
+elif [[ "$d" == "$l" ]]; then ok "threads declared=$d live(cpus)=$l"
+else drift "threads declared=$d live(cpus)=$l"; fi
+# model: informational
+md="$(jq -r '.model // "—"' <<<"$cpu_d")"
+ml="$(jq -r '.model // "—"' <<<"$cpu_l")"
+info "model declared=\"$md\" live=\"$ml\" (informational, not compared)"
+echo
+
+# ── Memory ───────────────────────────────────────────────────────────────────
+echo "Memory:"
+mem_d_gib="$(jq -r '.memory.total_gib // "—"' <<<"$declared")"
+mem_l_bytes="$(jq -r '.data.memory.total // 0' <<<"$node_status")"
+mem_l_gib="$(bytes_to_gib "$mem_l_bytes")"
+if [[ "$mem_d_gib" == "—" ]]; then
+  info "total_gib: not declared (live=$mem_l_gib GiB)"
+else
+  delta="$(jq -n --argjson d "$mem_d_gib" --argjson l "$mem_l_gib" '($d-$l)|fabs')"
+  within="$(jq -n --argjson x "$delta" 'if $x <= 1 then "y" else "n" end')"
+  if [[ "$within" == '"y"' ]]; then
+    ok "total_gib declared=$mem_d_gib live=$mem_l_gib (Δ=${delta}, ≤1 GiB tolerance)"
+  else
+    drift "total_gib declared=$mem_d_gib live=$mem_l_gib (Δ=${delta})"
+  fi
+fi
+mem_reserved="$(jq -r '.memory.reserved_gib // "—"' <<<"$declared")"
+[[ "$mem_reserved" != "—" ]] && info "reserved_gib=$mem_reserved (policy — not API-verifiable)"
+echo
+
+# ── Storage pools ────────────────────────────────────────────────────────────
+echo "Storage pools:"
+storages_d="$(jq '.storages // []' <<<"$declared")"
+sd_len="$(jq 'length' <<<"$storages_d")"
+if [[ "$sd_len" -eq 0 ]]; then
+  info "no storages declared (skipped; live pools available via /nodes/$target/storage)"
+else
+  for i in $(seq 0 $((sd_len - 1))); do
+    name="$(jq -r --arg i "$i" '.[$i|tonumber].name' <<<"$storages_d")"
+    type_d="$(jq -r --arg i "$i" '.[$i|tonumber].type // "—"' <<<"$storages_d")"
+    sz_d_gib="$(jq -r --arg i "$i" '
+      .[$i|tonumber] |
+      if .size_tib then (.size_tib*1024) elif .size_gib then .size_gib else "—" end' <<<"$storages_d")"
+    live="$(jq --arg n "$name" '.data[]? | select(.storage==$n)' <<<"$storage_json")"
+    if [[ -z "$live" ]]; then
+      absent "pool '$name' declared but not enabled on node"
+      continue
+    fi
+    type_l="$(jq -r '.type // "—"' <<<"$live")"
+    sz_l_bytes="$(jq -r '.total // 0' <<<"$live")"
+    sz_l_gib="$(bytes_to_gib "$sz_l_bytes")"
+    if [[ "$type_d" != "—" && "$type_d" != "$type_l" ]]; then
+      drift "pool '$name' type declared=$type_d live=$type_l"
+    fi
+    if [[ "$sz_d_gib" != "—" ]]; then
+      delta_pct="$(jq -n --argjson d "$sz_d_gib" --argjson l "$sz_l_gib" \
+        'if $l>0 then (($d-$l)/$l*100|fabs) else 0 end')"
+      within="$(jq -n --argjson x "$delta_pct" 'if $x <= 5 then "y" else "n" end')"
+      if [[ "$within" == '"y"' ]]; then
+        ok "pool '$name' type=$type_l size=${sz_l_gib}GiB (declared ${sz_d_gib}GiB, Δ=${delta_pct}%, ≤5%)"
+      else
+        drift "pool '$name' size declared=${sz_d_gib}GiB live=${sz_l_gib}GiB (Δ=${delta_pct}%)"
+      fi
+    else
+      ok "pool '$name' present (type=$type_l size=${sz_l_gib}GiB — size not declared)"
+    fi
+  done
+fi
+echo
+
+# ── NICs ─────────────────────────────────────────────────────────────────────
+echo "NICs:"
+nics_d="$(jq '.nics // []' <<<"$declared")"
+nd_len="$(jq 'length' <<<"$nics_d")"
+if [[ "$nd_len" -eq 0 ]]; then
+  info "no NICs declared (skipped)"
+else
+  for i in $(seq 0 $((nd_len - 1))); do
+    name="$(jq -r --arg i "$i" '.[$i|tonumber].name' <<<"$nics_d")"
+    speed="$(jq -r --arg i "$i" '.[$i|tonumber].speed_gbps // "—"' <<<"$nics_d")"
+    if jq -e --arg n "$name" 'any(.data[]?; .iface==$n)' >/dev/null <<<"$network_json"; then
+      if [[ "$speed" != "—" ]]; then
+        ok "$name present on node (declared speed=${speed}Gbps — informational, API does not expose link speed)"
+      else
+        ok "$name present on node"
+      fi
+    else
+      absent "NIC '$name' declared but not found on node"
+    fi
+  done
+fi
+echo
+
+# ── PCI passthrough ──────────────────────────────────────────────────────────
+echo "Passthrough (PCI):"
+pt_d="$(jq '.passthrough // []' <<<"$declared")"
+pt_len="$(jq 'length' <<<"$pt_d")"
+if [[ "$pt_len" -eq 0 ]]; then
+  info "no passthrough declared (skipped)"
+else
+  # Build a lowercase "vendor:device" index from /hardware/pci. PVE returns
+  # vendor/device as 0x-prefixed hex; normalize.
+  pci_ids="$(jq -r '
+    [.data[]? |
+      (.vendor // "" | tostring | ascii_downcase | sub("^0x";"")) as $v |
+      (.device // "" | tostring | ascii_downcase | sub("^0x";"")) as $d |
+      if ($v != "" and $d != "") then "\($v):\($d)" else empty end
+    ] | unique | .[]' <<<"$pci_json")"
+  for i in $(seq 0 $((pt_len - 1))); do
+    id_raw="$(jq -r --arg i "$i" '.[$i|tonumber].id // ""' <<<"$pt_d")"
+    kind_d="$(jq -r --arg i "$i" '.[$i|tonumber].kind // "—"' <<<"$pt_d")"
+    bound="$(jq -r --arg i "$i" '.[$i|tonumber].bound_to // "—"' <<<"$pt_d")"
+    id_lc="$(tr 'A-Z' 'a-z' <<<"$id_raw")"
+    if [[ -z "$id_lc" ]]; then
+      info "entry #$i has no .id (skipped — declare \"vvvv:dddd\" to verify)"
+      continue
+    fi
+    if grep -qxF "$id_lc" <<<"$pci_ids"; then
+      ok "$id_raw ($kind_d) present on node${bound:+, bound_to=$bound}"
+    elif [[ -z "$pci_ids" ]]; then
+      info "$id_raw ($kind_d) — /hardware/pci returned no devices (insufficient privilege?); skipping"
+    else
+      absent "$id_raw ($kind_d) declared but not found in /hardware/pci"
+    fi
+  done
+fi
+
+echo
+total=$((drifts + missing))
+if [[ $total -eq 0 ]]; then
+  echo "Result: 0 drift, 0 missing — declared spec matches live."
+  exit 0
+else
+  echo "Result: $drifts drift, $missing missing — review and update inventory or host."
+  exit 1
+fi

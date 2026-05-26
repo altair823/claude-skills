@@ -2,7 +2,11 @@
 # Offline Proxmox 스텁. task-aware:
 #  - GET .../tasks/<upid>/status      → 즉시 stopped/OK (폴링 성공 경로)
 #  - POST/DELETE 비동기 변형 엔드포인트 → UPID 문자열 반환
-#  - 그 외(GET /nodes, status, vm-config, clone 외 read) → running 블롭
+#  - GET /nodes/<id>/status           → verify-specs cpuinfo+memory 블롭
+#  - GET /nodes/<id>/storage          → verify-specs storage pool 목록
+#  - GET /nodes/<id>/network          → verify-specs NIC iface 목록
+#  - GET /nodes/<id>/hardware/pci     → verify-specs PCI 디바이스 목록
+#  - 그 외(GET /nodes, vm-config, clone 외 read) → running 블롭
 args="$*"
 method="GET"
 case "$args" in *" -X "*) method="$(sed -E 's/.* -X ([A-Z]+).*/\1/' <<<"$args")";; esac
@@ -17,6 +21,25 @@ elif [[ "$method" == "POST" || "$method" == "DELETE" ]] && \
        [[ "$url" == *"/qemu/"* && "$method" == "DELETE" ]] || \
        [[ "$url" == *"/lxc/"*  && "$method" == "DELETE" ]]; }; then
   echo '{"data":"UPID:stub:0000FFFF:00000000:00000000:stubtype:0:root@pam:"}'
+elif [[ "$method" == "GET" && "$url" == *"/nodes/"*"/status" && "$url" != *"/qemu/"* && "$url" != *"/lxc/"* ]]; then
+  # verify-specs: node status carries cpuinfo + memory. Values mirror
+  # tests/fixtures/fleet.yaml pve-01.hardware so the default run is no-drift.
+  # memory.total = 128 * 1024^3 = 137438953472
+  echo '{"data":{"cpuinfo":{"model":"Stub CPU","sockets":1,"cores":8,"cpus":16},"memory":{"total":137438953472}}}'
+elif [[ "$method" == "GET" && "$url" == *"/nodes/"*"/storage" ]]; then
+  # local-zfs total = 2 * 1024^4 = 2199023255552
+  echo '{"data":[{"storage":"local-zfs","type":"zfs","total":2199023255552,"used":0,"avail":2199023255552}]}'
+elif [[ "$method" == "GET" && "$url" == *"/nodes/"*"/network" ]]; then
+  echo '{"data":[{"iface":"vmbr0","type":"bridge"},{"iface":"eno1","type":"eth"}]}'
+elif [[ "$method" == "GET" && "$url" == *"/nodes/"*"/hardware/pci" ]]; then
+  # PVE returns vendor/device as 0x-prefixed hex strings.
+  echo '{"data":[{"vendor":"0x10de","device":"0x2206","class":"0x030000","id":"0000:01:00.0"}]}'
+elif [[ "$method" == "GET" && "$url" == *"/nodes/"*"/qemu/"*"/config" ]]; then
+  # hwsync VM: cores=4 sockets=1 memory=8192MB + 1 disk + 1 net + 1 hostpci
+  echo '{"data":{"sockets":1,"cores":4,"memory":8192,"ostype":"l26","scsi0":"local-lvm:vm-100-disk-0,size=32G,backup=0","net0":"virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0","hostpci0":"0000:01:00.0,pcie=1"}}'
+elif [[ "$method" == "GET" && "$url" == *"/nodes/"*"/lxc/"*"/config" ]]; then
+  # hwsync LXC: cores=2 memory=2048MB + rootfs + mp0 + net0
+  echo '{"data":{"cores":2,"memory":2048,"swap":512,"arch":"amd64","ostype":"ubuntu","hostname":"stub-lxc","rootfs":"local-zfs:subvol-201-disk-0,size=8G","mp0":"local-zfs:subvol-201-disk-1,mp=/data,size=100G","net0":"name=eth0,bridge=vmbr0,hwaddr=AA:BB:CC:DD:EE:00"}}'
 else
   echo '{"data":{"status":"running","vmid":100,"name":"stub-vm"}}'
 fi

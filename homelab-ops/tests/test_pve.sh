@@ -10,7 +10,9 @@ out="$(bin/pve pve-01 api GET /nodes)"
 assert_contains "$out" '"status"' "pve api returns json"
 
 st="$(bin/pve pve-01 status)"
-assert_contains "$st" "running" "pve status convenience works"
+# /nodes/<id>/status returns the node status blob (cpuinfo+memory). The exact
+# stub payload is shared with the verify-specs test — assert on a stable field.
+assert_contains "$st" "cpuinfo" "pve status convenience works"
 
 # no token injected: pve must refuse (exit 3)
 assert_status 3 'env -u PVE_TOKEN bin/pve pve-01 status' "pve without PVE_TOKEN exits 3"
