@@ -144,7 +144,7 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
   `disk-attach`/`disk-detach`/`disk-grow`(host-ssh)는 노드에서 동기 실행
   (`qm set`/`qm guest exec`)이라 task 폴링이 아니라 명령 exit 를 감사한다.
 
-Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터 migration, or IaC (Phase 2, not yet). (PDM 경유 노드 간 `remote-migrate` 는 지원 — 독립 노드 대상.) k8s 는 클러스터 단위 `kubectl` 만 지원 — 클러스터 자체의 lifecycle(생성/삭제/노드 추가)은 범위 밖.
+Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터 migration. **선언형 IaC(신규 게스트 수명주기·호스트 설정)는 별도 `homelab-iac` 스킬(OpenTofu + bpg/proxmox)이 담당** — 본 스킬은 day-2 운영(start/stop/snapshot/backup/exec/kubectl 등)을 계속 책임진다. (PDM 경유 노드 간 `remote-migrate` 는 지원 — 독립 노드 대상.) k8s 는 클러스터 단위 `kubectl` 만 지원 — 클러스터 자체의 lifecycle(생성/삭제/노드 추가)은 범위 밖.
 
 ## Hard rules (non-negotiable — destructive mistakes must be hard, every action reconstructable)
 1. **No guard bypass.** Every state change runs as `"$HL/bin/guard" <action> <target> [--approve]`. `bin/pve` and `bin/ssh-run` are read/transport layers — never invoke them to mutate state.
@@ -153,7 +153,7 @@ Not for: non-Proxmox virt, intra-cluster HA·live-migration·로컬 클러스터
 4. **Destructive needs eyes.** destructive (and prod-caution) ops print a DRY-RUN + impact and exit 10. Show that to the user, get explicit approval, THEN re-run with `--approve`. A `critical`-tagged target escalates one grade — **but read-only safe ops (`status`/`metrics`/`get`/`list`/`inventory`) are NEVER escalated**: observability of critical hosts must not require `--approve` (the rule makes destructive mistakes hard, not looking impossible).
 5. **No log gaps.** `logs/audit.jsonl` is append-only; full per-op output is in `logs/runs/<session>/<op>.log` (secrets masked). Never edit, truncate, or skip them. Operational state is local to the operator and gitignored — back it up out-of-band if you need tamper-evidence.
 6. **Credentials are references, resolved by bitwarden-ops.** Inventory holds `bw://` refs only. Resolution is delegated to the bitwarden-ops skill via `bw-exec` (env injection, in-memory); homelab-ops defines no `bw` behavior. Never write a secret to disk or echo it unmasked.
-7. **Provisioning is Phase 1.** Use `"$HL/bin/guard" provision` only. No Terraform/Ansible until Phase 2; the `guard provision` interface stays stable when the backend is swapped.
+7. **Provisioning split (2026-06).** 선언형 프로비저닝은 이제 `homelab-iac` 스킬(OpenTofu)이 담당한다. `"$HL/bin/guard" provision`(명령형 클론)은 당분간 유지되나 **deprecated 예정** — 신규 게스트는 `homelab-iac` 를 우선 사용하라. guard provision 의 인터페이스는 제거 전까지 안정.
 
 ## Forensics
 After any incident: `"$HL/bin/forensics" timeline <session-id>` reconstructs the ordered op sequence (surfacing `exit=` codes); `"$HL/bin/forensics" session|target <id>` filters records; `"$HL/bin/forensics" runlog <session>/<op>.log` shows the masked full output incl. the pre-op state snapshot. Each audit record carries the resolved inventory snapshot, grade, approver, dry-run hash, and exit code.
