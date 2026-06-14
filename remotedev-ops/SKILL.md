@@ -1,6 +1,6 @@
 ---
 name: remotedev-ops
-description: Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds, or reclaim devbox disk space. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` / `remotedev-doctor` inspect; `remotedev-gc` deletes remote artifacts already pulled back; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system.
+description: "Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds, or reclaim devbox disk space. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` / `remotedev-doctor` inspect; `remotedev-gc` deletes remote artifacts already pulled back; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system."
 ---
 
 # remotedev-ops
