@@ -1,6 +1,6 @@
 ---
 name: homelab-ops
-description: "[DEPRECATED 2026-06-14 for day-2 → use the homelab-ansible skill (bin/fleet); only kubectl remains here.] Use ONLY for kubectl against k8s-cluster targets. Day-2 fleet ops (status/service/logs/pkg/exec/reboot, start/stop/restart/snapshot/backup, disk-attach/detach/grow, GPU passthrough, PDM remote-migrate, forensics) have MOVED to homelab-ansible. provision/destroy → homelab-iac; verify-specs/hwsync → dropped. Legacy day-2 verbs below still function (guard/inv/forensics code retained for compatibility + audit history) but homelab-ansible is preferred for everything except kubectl. Read inventory with this skill's bin/inv; perform ANY state change ONLY through bin/guard, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are bw:// references; resolution is delegated to the bitwarden-ops skill via bw-exec, never reimplemented here and never on disk."
+description: "[DEPRECATED 2026-06-14 for day-2 → use homelab-ansible (bin/fleet); only kubectl remains here.] Use ONLY for kubectl against k8s-cluster targets. Legacy guard/inv/forensics remain for compatibility and audit history. provision/destroy → homelab-iac. For any state change, use bin/guard; it grades actions, enforces dry-run/approval, injects credentials via bitwarden-ops bw-exec, and logs operations."
 ---
 
 # homelab-ops
