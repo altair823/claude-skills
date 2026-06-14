@@ -1,6 +1,6 @@
 ---
 name: homelab-ops
-description: Use when the user wants to inspect or operate their homelab fleet (independent Proxmox hosts, their VMs/LXC, standalone appliances like Victoria Metrics / NAS, and k8s clusters running on the VMs) — list/status/metrics, start/stop/restart/snapshot, destroy, backup, disk-attach/detach, disk-grow, PDM remote-migrate, kubectl against k8s-cluster targets, or Phase-1 provisioning (clone). Read inventory with this skill's `bin/inv`; perform ANY state change ONLY through `bin/guard`, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are `bw://` references; resolution is delegated to the bitwarden-ops skill via `bw-exec`, never reimplemented here and never on disk.
+description: "[DEPRECATED 2026-06-14 for day-2 → use the homelab-ansible skill (bin/fleet); only kubectl remains here.] Use ONLY for kubectl against k8s-cluster targets. Day-2 fleet ops (status/service/logs/pkg/exec/reboot, start/stop/restart/snapshot/backup, disk-attach/detach/grow, GPU passthrough, PDM remote-migrate, forensics) have MOVED to homelab-ansible. provision/destroy → homelab-iac; verify-specs/hwsync → dropped. Legacy day-2 verbs below still function (guard/inv/forensics code retained for compatibility + audit history) but homelab-ansible is preferred for everything except kubectl. Read inventory with this skill's bin/inv; perform ANY state change ONLY through bin/guard, which grades the action (safe/caution/destructive), gates on the presence of the injected transport credential, dry-runs + requires explicit approval for destructive/prod ops, and forensically logs every operation. Credentials are bw:// references; resolution is delegated to the bitwarden-ops skill via bw-exec, never reimplemented here and never on disk."
 ---
 
 # homelab-ops
@@ -102,6 +102,28 @@ absent refuses to start (exit 3) and prints the exact `bw-exec` line to use.
 >   `guard --plan` 은 `HL_SSH_PASS` 를, `ssh-run` 은 `sshpass -e` 를 쓴다.
 >   (StrictHostKeyChecking=yes 유지 — 패스워드 호스트도 첫 접속 전 host key 가
 >   known_hosts 에 미리 등록돼 있어야 한다.)
+
+## ⚠️ DEPRECATED (2026-06-14) — day-2 는 homelab-ansible 로 이관됨
+
+이 스킬의 **day-2/수명주기 운영은 `homelab-ansible` 스킬(`bin/fleet`)로 이관**되었다.
+신규 작업은 homelab-ansible 을 사용하라. 본 스킬은 **kubectl 전용**으로 축소되었고, 향후
+별도 k8s 스킬로 분리될 때 정리된다.
+
+| homelab-ops | 대체 |
+|---|---|
+| status/service/logs/pkg-update/pkg-install/reboot/exec | `fleet <verb>` (homelab-ansible) |
+| start/stop/restart/snapshot/snap-*/backup/gpu-* | `fleet <verb>` (homelab-ansible) |
+| disk-attach/disk-detach/disk-grow | `fleet disk-*` (homelab-ansible) |
+| remote-migrate | `fleet remote-migrate` (homelab-ansible; PDM REST 네이티브) |
+| forensics 조회 | `homelab-ansible/bin/forensics` |
+| **kubectl** | **여기 유지**(미이관 — 추후 별도 k8s 스킬) |
+| provision | 폐기 → homelab-iac(OpenTofu) |
+| destroy | 폐기 → homelab-iac 또는 `fleet exec <node> -- --via pve ...` |
+| verify-specs / hwsync | 폐기 → 선언적 drift 는 homelab-iac/tofu state 영역 |
+
+인벤토리 SSOT 도 homelab-ansible `hosts.yml` 로 이동했다. 본 스킬의 `fleet.yaml` 은 **freeze**
+(kubectl 의 k8s-cluster 엔트리 때문에 잠정 유지). 아래 "When to use" 의 day-2 항목은 위 표대로
+homelab-ansible 을 우선 사용하되, 코드(guard/inv/forensics)는 호환·감사 보존을 위해 남겨둔다.
 
 ## When to use
 - "What's on the fleet / status / metrics?" → `"$HL/bin/inv" list|get|resolve <id>`, `"$HL/bin/guard" status <id>`
