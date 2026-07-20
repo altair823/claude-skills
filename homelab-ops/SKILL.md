@@ -5,6 +5,9 @@ description: "[DEPRECATED 2026-06-14 for day-2 → use homelab-ansible (bin/flee
 
 # homelab-ops
 
+> ⚠️ **DEPRECATED (2026-07): 기존 타깃 대부분 폐기됨 (homelab Phase 3b 마이그레이션).**
+> prod/argocd k3s 클러스터 소멸(Bitwarden `kubeconfig-prod`/`kubeconfig-argocd`도 죽음), OpenStack·구 pdm(.0.46, 지금 node-02)도 소멸. **현행 유일 k8s 클러스터=`single-01`**(`~/.kube/config` 기본 컨텍스트, 또는 bw `kubeconfig-single-01/notes`). kubectl 쓰려면 k8s-cluster 인벤토리를 single-01로 정의. 상세=`~/projects/migration/plans/phase3b-ledger.md`.
+
 Fleet ops toolkit for a heterogeneous homelab. Core design tension: **strong guard on destructive actions ↔ enough authority for day-2 automation**, with every operation forensically reconstructable. Deps: `bash`, `jq`, `python3`+PyYAML, `curl`, `ssh`/`ssh-agent`, `sshpass` (password 인증 호스트에서만). Credential resolution is delegated to the **bitwarden-ops** skill (`bw-exec`); homelab-ops itself never calls `bw`.
 
 ## Resolve this skill's tools first
