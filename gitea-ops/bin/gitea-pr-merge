@@ -1,0 +1,112 @@
+#!/bin/sh
+# Gitea PR을 머지한다. 사용자가 명시적으로 머지를 요청했을 때만 쓴다.
+#
+# Usage:
+#   gitea-pr-merge <PR#> [--style merge|rebase|squash] [--delete-branch]
+#                  [--ignore-missing-ci] [-r owner/repo] [-u URL]
+#
+# 머지 전에 PR이 열려 있고 draft가 아니며 mergeable인지, head 커밋의 CI가
+# 없거나 success인지, 변경 요청 리뷰가 남아 있지 않은지 확인한다. 하나라도
+# 어긋나면 이유를 출력하고 1로 끝낸다. 재시도는 하지 않는다. 이미 머지된 PR이면
+# URL만 출력하고 0으로 끝낸다.
+# --delete-branch를 주면 머지 후 Gitea가 원격 head 브랜치를 삭제한다.
+# --ignore-missing-ci: 워크플로 파일이 있는데 CI 상태가 0건이어도 머지한다.
+#   PR에서는 돌지 않는 워크플로(태그 push 전용 등)임을 확인했을 때만 쓴다.
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+
+PR=""
+STYLE="merge"
+DELETE_BRANCH="false"
+IGNORE_MISSING_CI="false"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --style) STYLE="$2"; shift 2 ;;
+        --delete-branch) DELETE_BRANCH="true"; shift ;;
+        --ignore-missing-ci) IGNORE_MISSING_CI="true"; shift ;;
+        -r|--repo) GITEA_REPO="$2"; export GITEA_REPO; shift 2 ;;
+        -u|--url)  GITEA_URL="$2"; export GITEA_URL; shift 2 ;;
+        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+        -*) die "알 수 없는 flag: $1" ;;
+        *)
+            [ -z "$PR" ] || die "예기치 않은 인자: $1"
+            PR="$1"; shift ;;
+    esac
+done
+
+[ -n "$PR" ] || die "PR# 인자 필요"
+case "$PR" in *[!0-9]*) die "PR#는 숫자여야 함: $PR" ;; esac
+case "$STYLE" in
+    merge|rebase|squash) ;;
+    *) die "--style 값 오류: $STYLE (merge|rebase|squash 중 선택)" ;;
+esac
+require_author_login
+
+pr_json="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR")"
+err_msg="$(printf '%s' "$pr_json" | jq -r '.message // empty' 2>/dev/null || true)"
+[ -z "$err_msg" ] || die "PR #$PR 조회 실패: $err_msg"
+
+url="$(printf '%s' "$pr_json" | jq -r '.html_url // empty')"
+state="$(printf '%s' "$pr_json" | jq -r '.state // empty')"
+merged="$(printf '%s' "$pr_json" | jq -r '.merged // false')"
+draft="$(printf '%s' "$pr_json" | jq -r '.draft // false')"
+mergeable="$(printf '%s' "$pr_json" | jq -r '.mergeable // false')"
+head_sha="$(printf '%s' "$pr_json" | jq -r '.head.sha // empty')"
+
+if [ "$merged" = "true" ]; then
+    printf '[gitea-pr-merge] PR #%s: 이미 머지됨\n' "$PR" >&2
+    printf '%s\n' "$url"
+    exit 0
+fi
+[ "$state" = "open" ] || die "PR #$PR 머지 안 함: 열려 있지 않음 (state=$state): $url"
+[ "$draft" != "true" ] || die "PR #$PR 머지 안 함: draft 상태: $url"
+[ "$mergeable" = "true" ] \
+    || die "PR #$PR 머지 안 함: mergeable=$mergeable (base와 충돌하거나 Gitea가 아직 검사 중): $url"
+[ -n "$head_sha" ] || die "PR #$PR head SHA를 알 수 없음"
+
+ci_json="$(tea_api GET "/repos/{owner}/{repo}/commits/$head_sha/status")"
+ci_count="$(printf '%s' "$ci_json" | jq -r '.total_count // 0')"
+ci_state="none"
+[ "$ci_count" = "0" ] || ci_state="$(printf '%s' "$ci_json" | jq -r '.state // "pending"')"
+# 워크플로 파일이 있는데 상태가 0건이면 push 직후라 CI가 아직 등록되지 않은 것이다.
+if [ "$ci_count" = "0" ] && [ "$IGNORE_MISSING_CI" = "false" ]; then
+    for d in .gitea/workflows .github/workflows; do
+        if tea_api GET "/repos/{owner}/{repo}/contents/$d?ref=$head_sha" 2>/dev/null \
+            | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+            die "PR #$PR 머지 안 함: $d 가 있는데 CI 상태가 아직 없음. 방금 push했다면 30초쯤 뒤 다시 실행한다. 이 PR에서는 돌지 않는 워크플로임을 확인했다면 --ignore-missing-ci를 붙인다: $url"
+        fi
+    done
+fi
+case "$ci_state" in
+    none|success) ;;
+    pending) die "PR #$PR 머지 안 함: CI 진행 중. 'gitea-pr-status $PR --wait-ci'로 끝날 때까지 기다린 뒤 다시 실행: $url" ;;
+    *) die "PR #$PR 머지 안 함: CI 상태 $ci_state: $url" ;;
+esac
+
+# 리뷰어마다 가장 최근의 APPROVED/REQUEST_CHANGES 리뷰를 보고, 변경 요청이 남아 있으면 머지하지 않는다.
+# 조회에 실패하면(배열이 아니면) 확인할 수 없으므로 머지하지 않는다.
+reviews="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR/reviews?limit=50")"
+printf '%s' "$reviews" | jq -e 'type == "array"' >/dev/null 2>&1 \
+    || die "PR #$PR 머지 안 함: 리뷰 목록을 조회하지 못함: $(printf '%s' "$reviews" | head -c 200)"
+blockers="$(printf '%s' "$reviews" | jq -r '
+    [ .[] | select(.state == "APPROVED" or .state == "REQUEST_CHANGES") ]
+    | group_by(.user.login) | map(max_by(.submitted_at))
+    | map(select(.state == "REQUEST_CHANGES" and (.dismissed | not)) | .user.login)
+    | join(", ")')"
+[ -z "$blockers" ] || die "PR #$PR 머지 안 함: 변경 요청(REQUEST_CHANGES) 리뷰가 남아 있음 ($blockers): $url"
+
+# head_commit_id: CI를 확인한 커밋과 다른 커밋이 그 사이 push됐다면 Gitea가 머지를 거부한다.
+body_json="$(jq -cn --arg do "$STYLE" --arg sha "$head_sha" --argjson del "$DELETE_BRANCH" \
+    '{Do:$do, head_commit_id:$sha, delete_branch_after_merge:$del}')"
+resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/pulls/$PR/merge")"
+err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"
+[ -z "$err_msg" ] || die "PR #$PR 머지 실패: $err_msg"
+
+# 성공 응답은 본문이 비어 있으므로 PR을 다시 조회해 결과를 확인한다.
+merged="$(tea_api GET "/repos/{owner}/{repo}/pulls/$PR" | jq -r '.merged // false')"
+[ "$merged" = "true" ] || die "PR #$PR: 머지 요청 후에도 머지되지 않음. 응답: $resp"
+
+printf '[gitea-pr-merge] PR #%s 머지 완료 (방식: %s)\n' "$PR" "$STYLE" >&2
+printf '%s\n' "$url"

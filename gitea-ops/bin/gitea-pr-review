@@ -50,9 +50,6 @@ done
 
 [ -n "$PR" ] || die "PR# 인자 필요"
 [ -n "$EVENT" ] || die "--event 인자 필요"
-require_reviewer_login
-TEA_LOGIN="$GITEA_LOGIN_REVIEWER"
-export TEA_LOGIN
 
 case "$EVENT" in
     APPROVE)         API_EVENT="APPROVED" ;;
@@ -92,6 +89,11 @@ if [ -n "${INLINE_JSON:-}" ]; then
         ] | length' 2>/dev/null || echo 1)"
     [ "$bad" = "0" ] || die "inline JSON 오류: 각 항목에 path/body/new_position 또는 old_position 필요"
 fi
+
+# 인자 검사가 모두 끝난 뒤에 로그인을 확인한다 (로그인 등록은 네트워크를 쓴다).
+require_reviewer_login
+TEA_LOGIN="$GITEA_LOGIN_REVIEWER"
+export TEA_LOGIN
 
 if [ -n "${INLINE_JSON:-}" ]; then
     body_json="$(jq -cn \

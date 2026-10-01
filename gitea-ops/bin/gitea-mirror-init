@@ -49,6 +49,7 @@ done
 # --skip-create 일 때는 visibility/description 가 의미 없음 (기존 repo 유지);
 # 그래도 사용자가 의도 명시할 수 있게 visibility 필수는 유지 — 단지 무시될 뿐.
 [ -n "$VISIBILITY" ] || die "--public 또는 --private 필수"
+[ -z "$TOKEN_FILE_OPT" ] || [ -r "$TOKEN_FILE_OPT" ] || die "token 파일 읽을 수 없음: $TOKEN_FILE_OPT"
 
 require_author_login
 require_gh_auth
@@ -86,7 +87,6 @@ fi
 if [ -n "$TOKEN_OPT" ]; then
     GH_TOKEN="$TOKEN_OPT"
 elif [ -n "$TOKEN_FILE_OPT" ]; then
-    [ -r "$TOKEN_FILE_OPT" ] || die "token 파일 읽을 수 없음: $TOKEN_FILE_OPT"
     GH_TOKEN="$(cat "$TOKEN_FILE_OPT")"
 else
     GH_TOKEN="$(load_github_mirror_token)" || die \
@@ -120,13 +120,13 @@ fi
 # 2. Gitea push mirror 등록
 gh_user="${GH_REPO%/*}"
 gh_clone_url="https://github.com/${GH_REPO}.git"
-body_json="$(jq -cn \
+# 토큰은 jq의 argv(--arg) 대신 환경변수로 넘긴다. argv는 ps에 보인다.
+body_json="$(GH_MIRROR_PASS="$GH_TOKEN" jq -cn \
     --arg url "$gh_clone_url" \
     --arg user "$gh_user" \
-    --arg pass "$GH_TOKEN" \
     --arg interval "$INTERVAL" \
     --argjson soc "$SYNC_ON_COMMIT" \
-    '{remote_address:$url, remote_username:$user, remote_password:$pass, interval:$interval, sync_on_commit:$soc}')"
+    '{remote_address:$url, remote_username:$user, remote_password:env.GH_MIRROR_PASS, interval:$interval, sync_on_commit:$soc}')"
 
 resp="$(printf '%s' "$body_json" | tea_api_json POST "/repos/{owner}/{repo}/push_mirrors")"
 err_msg="$(printf '%s' "$resp" | jq -r '.message // empty' 2>/dev/null || true)"

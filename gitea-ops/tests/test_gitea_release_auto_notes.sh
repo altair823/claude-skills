@@ -90,4 +90,14 @@ case "$sent_notes" in *"## 변경사항"*) echo "FAIL: empty PR section leaked" 
 assert_contains "$sent_notes" "manual note only" "user notes preserved"
 teardown
 
+# --- 없는 asset은 로그인, release 생성 전에 거부 ---
+setup
+install_curl_stub
+if "$BIN/gitea-release" v0.1.2 --asset "$TEST_TMP/no-such-asset" 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "asset 파일 없음" "missing asset rejected"
+assert_eq "$(call_count)" "0" "no API call before asset check"
+teardown
+
 echo OK

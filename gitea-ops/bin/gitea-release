@@ -77,6 +77,12 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$TAG" ] || die "TAG 인자 필요"
+# 파일 인자는 release를 만들기 전에 확인한다.
+[ -z "$NOTES_FILE" ] || [ -r "$NOTES_FILE" ] || die "notes 파일 읽을 수 없음: $NOTES_FILE"
+[ -z "$SIGN_KEY" ] || [ -r "$SIGN_KEY" ] || die "서명 키 파일 읽을 수 없음: $SIGN_KEY"
+printf '%s' "$ASSETS" | while IFS= read -r asset; do
+    [ -z "$asset" ] || [ -r "$asset" ] || die "asset 파일 없음: $asset"
+done
 require_author_login
 require_cmd sha256sum
 [ -n "$SIGN_KEY" ] && require_cmd minisign

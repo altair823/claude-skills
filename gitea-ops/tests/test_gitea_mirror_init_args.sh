@@ -37,4 +37,12 @@ case "$(cat "$TEST_TMP/err")" in
 esac
 teardown
 
+# --- 읽을 수 없는 --token-file은 로그인, gh 확인보다 먼저 거부 ---
+setup
+if "$BIN/gitea-mirror-init" --private --token-file "$TEST_TMP/no-such-file" 2>"$TEST_TMP/err"; then
+    echo FAIL: expected non-zero >&2; exit 1
+fi
+assert_file_contains "$TEST_TMP/err" "token 파일 읽을 수 없음" "token file checked before login"
+teardown
+
 echo OK

@@ -1,0 +1,116 @@
+#!/bin/sh
+# Gitea 저장소를 만든다. 이미 있으면 만들지 않고 URL만 출력한다.
+#
+# Usage:
+#   gitea-repo-create <이름> [--org ORG | --user] [--public] [--description TEXT]
+#
+# 기본은 비공개, 소유자는 $GITEA_DEFAULT_ORG(없으면 altair823-org) 조직이다.
+# --user를 주면 관리자 토큰 계정의 개인 저장소로 만든다.
+# 호스트는 $GITEA_URL, 없으면 tea 로그인 gitea-ops-author의 URL을 쓴다.
+# 토큰은 $GITEA_ADMIN_TOKEN_REF(기본 bw://GITEA_ADMIN_TOKEN/notes)를
+# bitwarden-ops bw-get으로 읽는다. author 토큰에는 저장소 생성 권한이 없다.
+# 출력: 웹 URL, clone URL (각 한 줄)
+
+set -eu
+. "$(dirname "$0")/_common.sh"
+
+NAME=""
+ORG="${GITEA_DEFAULT_ORG:-altair823-org}"
+USER_REPO="false"
+ORG_GIVEN="false"
+PRIVATE="true"
+DESCRIPTION=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --org) ORG="$2"; ORG_GIVEN="true"; shift 2 ;;
+        --user) USER_REPO="true"; shift ;;
+        --public) PRIVATE="false"; shift ;;
+        --description) DESCRIPTION="$2"; shift 2 ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        -*) die "알 수 없는 flag: $1" ;;
+        *)
+            [ -z "$NAME" ] || die "예기치 않은 인자: $1"
+            NAME="$1"; shift ;;
+    esac
+done
+
+[ -n "$NAME" ] || die "저장소 이름 인자 필요"
+case "$NAME" in
+    *[!A-Za-z0-9._-]*|.*) die "저장소 이름에는 영문, 숫자, '.', '_', '-'만 쓸 수 있음: $NAME" ;;
+esac
+[ "$USER_REPO" = "false" ] || [ "$ORG_GIVEN" = "false" ] || die "--org와 --user는 함께 쓸 수 없음"
+case "$ORG" in
+    ''|*[!A-Za-z0-9._-]*) die "조직 이름 오류: $ORG" ;;
+esac
+require_cmd curl jq
+
+if [ -n "${GITEA_URL:-}" ]; then
+    HOST="$GITEA_URL"
+else
+    require_cmd tea
+    HOST="$(tea logins ls --output csv 2>/dev/null \
+        | awk -F, -v n="$GITEA_LOGIN_AUTHOR" 'NR>1 && $1==n { print $2; exit }')"
+    [ -n "$HOST" ] || die "Gitea 호스트를 알 수 없음. GITEA_URL을 주거나 tea 로그인 '$GITEA_LOGIN_AUTHOR'을 등록할 것"
+fi
+HOST="${HOST%/}"
+
+BW_BIN="$(dirname "$(readlink -f "$0")")/../../bitwarden-ops/bin"
+[ -x "$BW_BIN/bw-get" ] || die "bitwarden-ops bw-get 없음: $BW_BIN/bw-get"
+raw="$("$BW_BIN/bw-get" "${GITEA_ADMIN_TOKEN_REF:-bw://GITEA_ADMIN_TOKEN/notes}")" \
+    || die "관리자 토큰을 Bitwarden에서 읽지 못함 (bitwarden-ops bw-status로 금고 상태 확인)"
+TOKEN="$(printf '%s' "$raw" | tr -d '[:space:]')"
+unset raw
+[ -n "$TOKEN" ] || die "관리자 토큰 값이 비어 있음"
+
+# 토큰은 argv에 넣지 않고 curl -H @-로 stdin에서 넘긴다 (printf는 셸 내장 명령).
+# 출력: 응답 본문, 줄바꿈, HTTP 상태 코드.
+api() {
+    m="$1"; p="$2"; shift 2
+    printf 'Authorization: token %s\n' "$TOKEN" \
+        | curl -sS -X "$m" -H @- -H 'Content-Type: application/json' \
+            -w '\n%{http_code}' "$@" "$HOST/api/v1$p"
+}
+
+# api를 불러 $code(HTTP 상태)와 $body(응답 본문)를 설정한다.
+call() {
+    resp="$(api "$@")" || die "Gitea 접속 실패: $HOST"
+    code="${resp##*
+}"
+    body="${resp%
+*}"
+}
+
+print_urls() {
+    printf '%s' "$1" | jq -r '.html_url, .clone_url'
+}
+
+if [ "$USER_REPO" = "true" ]; then
+    call GET /user
+    OWNER="$(printf '%s' "$body" | jq -r '.login // empty' 2>/dev/null || true)"
+    [ -n "$OWNER" ] || die "토큰 계정 조회 실패 (HTTP $code)"
+    create_path="/user/repos"
+else
+    OWNER="$ORG"
+    create_path="/orgs/$ORG/repos"
+fi
+
+call GET "/repos/$OWNER/$NAME"
+case "$code" in
+    200)
+        printf '[gitea-repo-create] 이미 있음: %s/%s\n' "$OWNER" "$NAME" >&2
+        print_urls "$body"
+        exit 0 ;;
+    404) ;;
+    *) die "저장소 조회 실패 (HTTP $code): $(printf '%s' "$body" | jq -r '.message // empty' 2>/dev/null || true)" ;;
+esac
+
+data="$(jq -cn --arg name "$NAME" --arg desc "$DESCRIPTION" --argjson private "$PRIVATE" \
+    '{name:$name, description:$desc, private:$private}')"
+call POST "$create_path" --data "$data"
+[ "$code" = "201" ] \
+    || die "저장소 생성 실패 (HTTP $code): $(printf '%s' "$body" | jq -r '.message // empty' 2>/dev/null || true)"
+
+printf '[gitea-repo-create] 만듦: %s/%s (%s)\n' "$OWNER" "$NAME" \
+    "$([ "$PRIVATE" = "true" ] && echo 비공개 || echo 공개)" >&2
+print_urls "$body"
