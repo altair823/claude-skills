@@ -1,6 +1,6 @@
 ---
 name: scad
-description: OpenSCAD로 3D 프린팅용 파트를 만들고 헤드리스 렌더로 스스로 검증한다. 3D 모델, 프린트, STL, 3MF, 브래킷, 홀더, 케이스, 지그, 어댑터, 마운트 같은 물리 부품 제작 요청에 사용.
+description: 3D 프린터로 뽑을 부품(브래킷, 홀더, 케이스, 지그, 어댑터, 마운트 등)을 만들거나 고칠 때, 또는 STL, 3MF, OpenSCAD(.scad) 파일을 다룰 때 사용.
 ---
 
 # scad — 3D 프린팅 파트 제작
@@ -11,7 +11,7 @@ DISPLAY 없으면 세그폴트하고 0바이트 PNG 를 남기므로 **쓰지 �
 ## 명령
 
 ```bash
-~/.claude/skills/scad/render.sh part.scad
+${CLAUDE_SKILL_DIR}/render.sh part.scad
 # → renders/part.stl  part.3mf  part_iso.png  _front  _right  _bottom  _section.png  part.json
 ```
 
@@ -78,7 +78,7 @@ show() part();
 
 ## 공차
 
-`refs/fdm.md` 를 읽는다. 끼워 맞춤·구멍 지름·오버행이 걸리는 파트를 만들 때는 **먼저** 읽는다.
+`${CLAUDE_SKILL_DIR}/refs/fdm.md` 를 읽는다. 끼워 맞춤·구멍 지름·오버행이 걸리는 파트를 만들 때는 **먼저** 읽는다.
 
 ## 이 스킬을 벗어나야 할 때
 
