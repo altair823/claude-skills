@@ -41,9 +41,44 @@ parse_ref() {
     REF_ITEM="$p"; REF_FIELD=""
   fi
   [[ -n "$REF_ITEM" ]] || die "참조에 item 이 비어 있음: $ref"
-  if [[ -z "$REF_FIELD" ]]; then REF_KIND=password
-  elif [[ "$REF_FIELD" == notes ]]; then REF_KIND=notes
-  else REF_KIND=field; fi
+  # username, password, notes는 예약어다. username과 password는 로그인 값이 있으면 그것을,
+  # 비어 있으면 같은 이름의 사용자 정의 필드를 쓴다(bw-get).
+  case "$REF_FIELD" in
+    ""|password) REF_KIND=password ;;
+    notes)       REF_KIND=notes ;;
+    username)    REF_KIND=username ;;
+    *)           REF_KIND=field ;;
+  esac
+}
+
+# 항목 JSON에서 종류 이름(kind)과 쓸 수 있는 참조 이름 목록(refs)을 구하는 jq 정의.
+# 이름만 다루고 값은 출력하지 않는다. bw-get 오류 메시지와 bw-ls가 함께 쓴다.
+BWO_JQ_DEFS='
+def kind: {"1":"login","2":"note","3":"card","4":"identity","5":"ssh"}[.type|tostring] // "type\(.type)";
+def refs: [ (if (.login.username // "") != "" then "username" else empty end),
+            (if (.login.password // "") != "" then "password" else empty end),
+            (if (.notes // "") != "" then "notes" else empty end),
+            (.fields[]?.name) ];
+'
+
+# bw_call <실패 메시지> <bw 인자...>: bw를 실행하고 stdout을 그대로 내보낸다.
+# 읽기 명령 전용이다. 실패하면 같은 명령을 한 번 더 실행하므로 create나 edit에 쓰면 두 번 실행된다.
+# 실패하면 원인을 알기 위해 같은 명령을 한 번 더 실행해 stderr만 받는다(stdout은 버린다).
+# 잠긴 금고나 만료된 세션은 exit 3, 검색 결과가 여럿이면 그 사실을, 나머지는 주어진 메시지를 출력한다.
+# 사용: out="$(bw_call "<메시지>" get item X)" || exit $?
+bw_call() {
+  local msg="$1" err; shift
+  # 세션 키는 export된 BW_SESSION 환경변수로 bw에 넘긴다. --session 인자로 주면 ps에 보인다.
+  # --nointeraction: 세션이 만료되었을 때 bw가 마스터 비밀번호를 묻지 않고 실패하게 한다.
+  bw "$@" --nointeraction 2>/dev/null && return 0
+  err="$(bw "$@" --nointeraction 2>&1 >/dev/null || true)"
+  case "$err" in
+    *[Ll]ocked*|*"not logged in"*)
+      BW_EXIT=3 die "locked vault: 세션이 만료되었거나 금고가 잠겨 있습니다. 사용자가 본인 터미널에서 'bw-unlock'을 실행해야 합니다." ;;
+    *"More than one"*)
+      die "검색 결과가 여러 항목입니다. bw-ls로 정확한 항목 이름을 확인하세요." ;;
+  esac
+  die "$msg"
 }
 
 # Last-line-of-defense masker for accidental stream contamination.

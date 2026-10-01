@@ -11,6 +11,8 @@ JSON
 
 # Value reaches the child via env only.
 assert_eq "tok-123" "$(BW_SESSION=x bash bin/bw-exec API=bw://site/api -- printenv API)" "env injected"
+assert_eq "u:pw-secret" "$(BW_SESSION=x bash bin/bw-exec U=bw://site/username P=bw://site/password -- sh -c 'echo "$U:$P"')" "username/password refs injected"
+assert_status 1 'BW_SESSION=x bash bin/bw-exec X=bw://nope -- true' "missing item → error, command not run"
 out="$(BW_SESSION=x bash bin/bw-exec API=bw://site/api -- sh -c 'echo done')"
 assert_eq "done" "$out" "cmd runs"
 

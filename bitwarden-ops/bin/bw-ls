@@ -6,11 +6,11 @@ require_cmd bw jq
 search="${1:-}"
 require_session
 
-if [[ -n "$search" ]]; then
-  items="$(bw list items --search "$search" --session "$BW_SESSION" 2>/dev/null)" || items="[]"
-else
-  items="$(bw list items --session "$BW_SESSION" 2>/dev/null)" || items="[]"
-fi
+args=(list items)
+[[ -z "$search" ]] || args+=(--search "$search")
+items="$(bw_call "bw list 실패. 네트워크를 확인한 뒤 다시 시도하세요." "${args[@]}")" || exit $?
 
-# Names only. Never .value / .login.password / .notes.
-jq -r '.[] | .name, (.fields[]? | "  ." + .name)' <<<"$items"
+# 한 줄에 항목 하나: 이름<TAB>종류<TAB>쓸 수 있는 참조(쉼표 구분, 없으면 -).
+# 이름만 출력한다. .value, .login.password, .notes 값은 절대 출력하지 않는다.
+printf '%s' "$items" | jq -r "$BWO_JQ_DEFS"'
+  .[] | [.name, kind, (refs | join(",") | if . == "" then "-" else . end)] | @tsv'

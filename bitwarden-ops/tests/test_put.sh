@@ -64,6 +64,10 @@ assert_status 1 "BW_SESSION=x bash bin/bw-put 'bw://ssh-h4' --from-file '$KEYF'"
 BW_SESSION=x bash bin/bw-put 'bw://ssh-h4' --from-file "$KEYF" --replace >/dev/null
 assert_eq "v2" "$(BW_SESSION=x bash bin/bw-get 'bw://ssh-h4')" "--from-file --replace overwrites"
 
+# 11) /username is not writable.
+printf 'someone' > "$SECRET"
+assert_status 1 "BW_SESSION=x bash bin/bw-put 'bw://acct/username'" "/username write refused"
+
 # 6) Locked vault.
 assert_status 3 "env -u BW_SESSION bash bin/bw-put 'bw://acct'" "locked vault → exit 3"
 

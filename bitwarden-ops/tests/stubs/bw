@@ -6,11 +6,20 @@ set -euo pipefail
 DB="${BW_STUB_DB:?BW_STUB_DB not set}"
 [[ -f "$DB" ]] || echo '[]' > "$DB"
 cmd="${1:-}"; shift || true
-# Drop `--session VALUE` wherever it appears.
+# 세션 키는 BW_SESSION 환경변수로만 받는다. --session 인자는 ps에 보이므로 실패시킨다.
 args=(); while [[ $# -gt 0 ]]; do
-  case "$1" in --session) shift 2 || shift;; *) args+=("$1"); shift;; esac
+  case "$1" in
+    --session) echo "bw-stub: --session in argv (visible in ps); pass BW_SESSION via env" >&2; exit 97 ;;
+    --nointeraction) shift ;;
+    *) args+=("$1"); shift ;;
+  esac
 done
 set -- ${args[@]+"${args[@]}"}
+
+# BW_STUB_STATUS=locked: 만료된 세션처럼 금고를 읽는 명령이 실패한다.
+if [[ "${BW_STUB_STATUS:-}" == locked ]]; then
+  case "$cmd" in get|list|sync) echo "Vault is locked." >&2; exit 1 ;; esac
+fi
 
 case "$cmd" in
   status) echo "{\"status\":\"${BW_STUB_STATUS:-unlocked}\"}" ;;
@@ -25,7 +34,10 @@ case "$cmd" in
     case "$sub" in
       template)
         echo '{"organizationId":null,"folderId":null,"type":1,"name":"","notes":null,"favorite":false,"fields":[],"login":{"username":null,"password":null},"secureNote":null}' ;;
-      item)     jq -e --arg n "$name" '.[]|select(.name==$n or .id==$n)' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
+      item)
+        n="$(jq --arg n "$name" '[.[]|select(.name==$n or .id==$n)]|length' "$DB")"
+        [[ "$n" -le 1 ]] || { echo "More than one result was found." >&2; exit 1; }
+        jq -e --arg n "$name" '.[]|select(.name==$n or .id==$n)' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
       password) jq -er --arg n "$name" '.[]|select(.name==$n)|.login.password // empty' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
       notes)    jq -er --arg n "$name" '.[]|select(.name==$n)|.notes // empty' "$DB" 2>/dev/null || { echo "Not found." >&2; exit 1; } ;;
       *) echo "bw-stub: unknown get '$sub'" >&2; exit 1 ;;

@@ -16,6 +16,7 @@ done
 [[ -n "$ref" ]] || die "usage: bw-put bw://<item>[/<field>] [--type password|field|note] [--replace] [--from-file PATH]"
 require_session
 parse_ref "$ref"
+[[ "$REF_KIND" != username ]] || die "bw-put은 사용자 이름(/username)을 등록하지 않습니다. Bitwarden 앱에서 직접 입력하세요."
 
 # Default type from the ref shape unless explicitly given.
 if [[ -z "$type" ]]; then
@@ -24,10 +25,10 @@ fi
 case "$type" in password|field|note) ;; *) die "잘못된 --type: $type" ;; esac
 
 # Sync first so a stale local cache cannot clobber server state.
-bw sync --session "$BW_SESSION" >/dev/null 2>&1 \
+bw sync >/dev/null 2>&1 \
   || die "bw sync 실패 — 네트워크 확인 후 재시도 (stale 캐시 쓰기 방지)"
 
-item_json="$(bw get item "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null || true)"
+item_json="$(bw get item "$REF_ITEM" 2>/dev/null || true)"
 cur=""
 if [[ -n "$item_json" ]]; then
   case "$type" in
@@ -67,7 +68,7 @@ secret="$(_read_secret)"
 [[ -n "$secret" ]] || die "빈 값은 등록하지 않음 — 재시도"
 
 if [[ -z "$item_json" ]]; then
-  tpl="$(bw get template item --session "$BW_SESSION")"
+  tpl="$(bw get template item)"
   case "$type" in
     password) obj="$(jq -n --argjson t "$tpl" --arg n "$REF_ITEM" --arg v "$secret" \
                  '$t + {type:1,name:$n,login:{username:null,password:$v}}')" ;;
@@ -76,7 +77,7 @@ if [[ -z "$item_json" ]]; then
     field)    obj="$(jq -n --argjson t "$tpl" --arg n "$REF_ITEM" --arg f "$REF_FIELD" --arg v "$secret" \
                  '$t + {type:1,name:$n,login:{username:null,password:null},fields:[{name:$f,value:$v,type:1}]}')" ;;
   esac
-  printf '%s' "$obj" | bw encode | bw create item --session "$BW_SESSION" >/dev/null \
+  printf '%s' "$obj" | bw encode | bw create item >/dev/null \
     || die "bw create 실패: $ref"
   echo "created: $ref"
 else
@@ -89,7 +90,7 @@ else
                   then (.fields |= map(if .name==$f then .value=$v else . end))
                   else .fields=((.fields // []) + [{name:$f,value:$v,type:1}]) end' <<<"$item_json")" ;;
   esac
-  printf '%s' "$new" | bw encode | bw edit item "$id" --session "$BW_SESSION" >/dev/null \
+  printf '%s' "$new" | bw encode | bw edit item "$id" >/dev/null \
     || die "bw edit 실패: $ref"
   echo "updated: $ref"
 fi

@@ -19,6 +19,8 @@ trap 'rm -f bin/_probe' EXIT
 assert_eq "i||password" "$(BW_SESSION=x bash bin/_probe parse 'bw://i')" "ref item-only → password"
 assert_eq "i|api|field" "$(BW_SESSION=x bash bin/_probe parse 'bw://i/api')" "ref item/field → field"
 assert_eq "i|notes|notes" "$(BW_SESSION=x bash bin/_probe parse 'bw://i/notes')" "ref notes → notes"
+assert_eq "i|username|username" "$(BW_SESSION=x bash bin/_probe parse 'bw://i/username')" "ref username → username"
+assert_eq "i|password|password" "$(BW_SESSION=x bash bin/_probe parse 'bw://i/password')" "ref /password → password"
 assert_status 1 'BW_SESSION=x bash bin/_probe parse plainstring' "non-bw:// ref rejected"
 assert_status 3 'env -u BW_SESSION bash bin/_probe session' "locked vault → exit 3"
 assert_eq "session-ok" "$(BW_SESSION=x bash bin/_probe session)" "BW_SESSION set → ok"

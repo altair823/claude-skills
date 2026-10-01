@@ -6,30 +6,34 @@ require_cmd bw jq
 ssh=0
 [[ "${1:-}" == "--ssh" ]] && { ssh=1; shift; }
 ref="${1:-}"
-[[ -n "$ref" ]] || die "usage: bw-get [--ssh] bw://<item>[/<field>]"
+[[ -n "$ref" ]] || die "usage: bw-get [--ssh] bw://<item>[/username|/password|/notes|/<field>]"
 require_session
 parse_ref "$ref"
+# --ssh는 notes에 저장한 SSH 개인 키를 읽는다.
+[[ $ssh -eq 1 ]] && REF_KIND=notes
 
-if [[ $ssh -eq 1 ]]; then
-  bw get notes "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null \
-    || die "bw: ssh 키(notes) 해결 실패 — item 없음?: $REF_ITEM"
-  exit 0
+# 항목을 한 번 읽고 필요한 값을 jq로 고른다. 항목 JSON은 이 프로세스 메모리에만 있고,
+# jq에는 파이프로 넘긴다(here-string은 bash 버전에 따라 임시 파일을 쓴다).
+item="$(bw_call "항목이 없습니다: '$REF_ITEM'. 방금 등록했다면 bw-sync 후 다시 시도하세요." \
+  get item "$REF_ITEM")" || exit $?
+pick() { printf '%s' "$item" | jq "$@"; }
+
+kind="$(pick -r "$BWO_JQ_DEFS kind")"
+if [[ "$REF_KIND" == password && "$kind" == note ]]; then
+  die "'$REF_ITEM'은 보안 메모 항목입니다. 'bw://$REF_ITEM/notes'를 쓰세요."
 fi
 
 case "$REF_KIND" in
-  password)
-    bw get password "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null \
-      || die "bw: 해결 실패 — item 없음?: $ref" ;;
-  notes)
-    bw get notes "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null \
-      || die "bw: notes 해결 실패 — item 없음?: $REF_ITEM" ;;
-  field)
-    item="$(bw get item "$REF_ITEM" --session "$BW_SESSION" 2>/dev/null)" \
-      || die "bw: item 없음: $REF_ITEM"
-    # -j: raw output, no trailing newline — stay byte-consistent with the
-    # password/notes paths (which forward `bw get` verbatim). -e is kept so a
-    # missing field still exits non-zero and triggers die. first() returns only
-    # the first match so duplicate same-name fields can't silently concatenate.
-    jq -ej --arg f "$REF_FIELD" 'first(.fields[]? | select(.name==$f) | .value)' <<<"$item" \
-      || die "bw: 필드 없음: '$REF_FIELD' (item '$REF_ITEM' 에)" ;;
+  # 로그인 값이 비어 있으면 같은 이름의 사용자 정의 필드를 쓴다(예약어가 생기기 전의 참조 호환).
+  password) path='((.login.password // "") | select(. != "")) // first(.fields[]? | select(.name==$f) | .value)' ;;
+  username) path='((.login.username // "") | select(. != "")) // first(.fields[]? | select(.name==$f) | .value)' ;;
+  notes)    path='.notes' ;;
+  field)    path='first(.fields[]? | select(.name==$f) | .value)' ;;
 esac
+# -j: 끝에 개행을 붙이지 않는다(파이프로 받은 `bw get password` 출력과 같은 바이트).
+# 값이 없거나 빈 문자열이면 출력이 없고 -e 때문에 0이 아닌 코드로 끝난다.
+pick -ej --arg f "$REF_FIELD" "$path | strings | select(. != \"\")" && exit 0
+
+name="$REF_KIND"; [[ "$REF_KIND" != field ]] || name="$REF_FIELD"
+refs="$(pick -r "$BWO_JQ_DEFS refs | join(\", \")")"
+die "'$REF_ITEM' 항목($kind)에는 $name 값이 없습니다. 쓸 수 있는 참조: ${refs:-없음}"
