@@ -8,7 +8,7 @@ install_docker_stub() {
 #!/bin/sh
 log="${DOCKER_LOG:?DOCKER_LOG unset}"
 stdin_data=""
-if [ ! -t 0 ]; then
+if [ "$1" = "login" ] && [ ! -t 0 ]; then
     stdin_data="$(cat)"
 fi
 printf 'argv:%s\nstdin:%s\nDOCKER_CONFIG:%s\nDOCKER_HOST:%s\n---\n' \

@@ -1,74 +1,50 @@
 ---
 name: harbor-ops
-description: Use when the user wants to interact with a private Harbor container registry — browse (projects / repos / tags / scan summaries), create or delete projects, push a local image, or delete / promote tags. Read-only ops live in `harbor-ls`; write ops live in `harbor-project`, `harbor-login`, `harbor-push`, `harbor-tag`. All commands share a multi-profile config and use stored robot-account credentials. `harbor-push` runs in an isolated DOCKER_CONFIG so the user's `~/.docker/config.json` is never modified. Auto-detects project from Dockerfile / docker-compose / k8s manifests in cwd.
+description: Use when the user wants to browse a private Harbor container registry (projects, repositories, tags, scan results), create or delete a Harbor project, push a local image to Harbor, or delete or copy an image tag. Not for Docker Hub, GHCR, or ECR.
 ---
 
 # harbor-ops
 
-Harbor private registry CLI. Read: `harbor-ls`. Write: `harbor-project`, `harbor-login`, `harbor-push`, `harbor-tag`. Deps: `bash >= 4.3`, `curl`, `jq` (+ `numfmt` for sizes; `docker` for login/push).
+Harbor private registry CLI. Read: `harbor-ls`. Write: `harbor-project`, `harbor-login`,
+`harbor-push`, `harbor-tag`. All of them live in `${CLAUDE_SKILL_DIR}/bin/` and are not on
+PATH; call them by the full paths below. Deps: `bash >= 4.3`, `curl`, `jq` (+ `numfmt` for sizes,
+`docker` for login/push).
 
-## When to use
+## Config
 
-- "What projects/repos/tags are on Harbor?" → `harbor-ls projects|repos|tags`
-- "Did the scan pass?" → `harbor-ls scan <project>/<repo>:<tag>`
-- "Create/delete a project" → `harbor-project create|delete <name>`
-- "Push image to Harbor" → `harbor-push <local> <project>/<repo>:<tag>`
-- "Delete/promote a tag" → `harbor-tag delete|copy ...`
-
-Do NOT use for non-Harbor registries (Docker Hub/GHCR/ECR have different APIs).
-
-## Pre-flight check
-
-Before the first authenticated call: deps (`curl jq` + `docker` for login/push) + config file is UTF-8 no BOM + mode 0600. The config is shell-sourced — a BOM corrupts the first variable name and silently breaks auth.
-
-**PowerShell pitfall**: default `>` / `Out-File` writes UTF-16 LE BOM. Use `Set-Content -Encoding utf8NoBOM` or `[IO.File]::WriteAllText()`.
-
-## Setup
-
-1. Generate a CLI Secret in Harbor: *User Profile → CLI Secret → Generate*.
-   For CI, use a robot account secret instead.
-
-2. Create `~/.config/harbor-ops/config` (mode `0600`):
-
-   ```
-   HARBOR_DEFAULT_PROFILE=prod
-
-   prod_HARBOR_URL=https://harbor.example.com
-   prod_HARBOR_USER=alice
-   prod_HARBOR_SECRET=<cli-secret-or-robot-secret>
-
-   # Optional: more profiles
-   staging_HARBOR_URL=https://harbor-staging.example.com
-   staging_HARBOR_USER=alice
-   staging_HARBOR_SECRET_FILE=~/.config/harbor-ops/secrets/staging
-   ```
-
-   `chmod 600 ~/.config/harbor-ops/config`. **Never commit** — secrets inline. For dotfile sync use the `_HARBOR_SECRET_FILE` variant + exclude the secret file from version control.
-
-   **Quote `$` values**: robot accounts (`robot$<name>`) and many secrets contain `$`. Bash expands unquoted `$foo` and silently corrupts the credential. Always single-quote: `prod_HARBOR_USER='robot$readonly'`, `prod_HARBOR_SECRET='abc$xyz'`.
-
-3. Symlink the skill into Claude Code's skills dir:
-
-   ```sh
-   ln -sfn ~/claude-skills/harbor-ops ~/.claude/skills/harbor-ops
-   ```
-
-### Windows
-
-Git Bash 2.x (bash 4.4+) / WSL2 OK. NTFS ignores `chmod` — mode-0600 best-effort on native Git Bash; rely on user-directory ACLs.
-
-## Binaries
-
-### `harbor-ls` (read)
+`~/.config/harbor-ops/config` (mode 0600, shell-sourced). Recommended form: Bitwarden
+references, so the file holds no secret.
 
 ```
-harbor-ls projects                          List all projects
-harbor-ls repos    [<project>]              List repos in a project
-harbor-ls tags     <project>/<repo>         List tags / artifacts
-harbor-ls scan     <project>/<repo>:<tag>   Severity-count scan summary
+HARBOR_DEFAULT_PROFILE=home
+home_HARBOR_URL=https://harbor.altair823.xyz
+home_HARBOR_USER_REF=bw://harbor.altair823.xyz/username
+home_HARBOR_SECRET_REF=bw://harbor.altair823.xyz
 ```
 
-Common flags:
+- `_REF` values are read with the bitwarden-ops skill's `bw-get` (the sibling
+  `bitwarden-ops` directory in the same repository; override with `HARBOR_BW_GET=<path>`).
+  Values stay in process memory only.
+- Precedence within a profile:
+  - user: `<profile>_HARBOR_USER` > `<profile>_HARBOR_USER_REF`
+  - secret: `<profile>_HARBOR_SECRET` > `<profile>_HARBOR_SECRET_FILE` > `<profile>_HARBOR_SECRET_REF`
+- Profile: `--profile` > `HARBOR_PROFILE` env > `HARBOR_DEFAULT_PROFILE` > the only profile.
+- `Bitwarden이 잠겨 있습니다` means the vault is locked. Ask the user to run the
+  bitwarden-ops `bw-unlock` in their terminal, then retry. Do not work around it with raw
+  `bw` calls or a manual `docker login`.
+- Setting up a profile without Bitwarden (inline secret, secret file, robot account with
+  `$`, Windows): read `${CLAUDE_SKILL_DIR}/refs/config.md`.
+
+## Commands
+
+### Read: `harbor-ls`
+
+```
+${CLAUDE_SKILL_DIR}/bin/harbor-ls projects                          List all projects
+${CLAUDE_SKILL_DIR}/bin/harbor-ls repos    [<project>]              List repos in a project
+${CLAUDE_SKILL_DIR}/bin/harbor-ls tags     <project>/<repo>         List tags / artifacts
+${CLAUDE_SKILL_DIR}/bin/harbor-ls scan     <project>/<repo>:<tag>   Severity-count scan summary
+```
 
 | Flag | Effect |
 |---|---|
@@ -79,78 +55,70 @@ Common flags:
 | `--no-detect` | Disable manifest-based project detection |
 | `--debug` | Verbose stderr logging |
 
-### `harbor-project` (write)
+### Write: `harbor-project`
 
 ```
-harbor-project create <name> [--public] [--yes]
-harbor-project delete <name> [--yes]
-harbor-project set-public <name> <true|false>
+${CLAUDE_SKILL_DIR}/bin/harbor-project create <name> [--public] [--yes]
+${CLAUDE_SKILL_DIR}/bin/harbor-project delete <name> [--yes]
+${CLAUDE_SKILL_DIR}/bin/harbor-project set-public <name> <true|false>
 ```
 
-`create` defaults to private. `delete` requires confirmation (`--yes` or
-an interactive tty). Project names must match Harbor's rule: lowercase
-`[a-z0-9._-]`, 1–63 chars.
+`create` defaults to private. `delete` requires confirmation (`--yes` or an interactive
+tty). Project names: lowercase `[a-z0-9._-]`, 1 to 63 chars.
 
-### `harbor-login` (write)
-
-```
-harbor-login [--profile <name>]
-```
-
-Persistent `docker login` to the active Harbor host. Modifies `~/.docker/config.json` — only for long-lived sessions. Use `harbor-push` for one-shot (it leaves user docker config untouched).
-
-### `harbor-push` (write)
+### Write: `harbor-push`
 
 ```
-harbor-push <local-image> <project>/<repo>:<tag> [--profile <name>]
+${CLAUDE_SKILL_DIR}/bin/harbor-push <local-image> <project>/<repo>:<tag> [--profile <name>]
 ```
 
-Tags `<local-image>` for the active Harbor host and pushes. Sets `DOCKER_CONFIG` to a fresh tmpdir for the call duration — login state discarded on exit, user's `~/.docker/config.json` untouched.
+Tags `<local-image>` for the active Harbor host and pushes it. Logs in with a fresh
+`DOCKER_CONFIG` tmpdir that is deleted on exit, so `~/.docker/config.json` is never
+touched. The active docker context's endpoint (rootless or remote daemon) is kept.
 
-### `harbor-tag` (write)
+### Write: `harbor-login`
 
 ```
-harbor-tag delete <project>/<repo>:<tag> [--yes]
-harbor-tag copy   <src-project>/<src-repo>:<src-tag> <dst-project>/<dst-repo>:<dst-tag>
+${CLAUDE_SKILL_DIR}/bin/harbor-login [--profile <name>]
 ```
 
-`delete` removes the tag pointer (the underlying artifact survives if other
-tags reference it). `copy` uses Harbor's `POST /artifacts?from=...` to
-promote across projects/repos without re-uploading any blob.
+Persistent `docker login` to the active Harbor host. It modifies `~/.docker/config.json`,
+so use it only for long-lived sessions. Prefer `harbor-push` for one-shot pushes.
+
+### Write: `harbor-tag`
+
+```
+${CLAUDE_SKILL_DIR}/bin/harbor-tag delete <project>/<repo>:<tag> [--yes]
+${CLAUDE_SKILL_DIR}/bin/harbor-tag copy   <src-project>/<src-repo>:<src-tag> <dst-project>/<dst-repo>:<dst-tag>
+```
+
+`delete` removes the tag pointer (the artifact survives if other tags reference it).
+`copy` uses Harbor's `POST /artifacts?from=...` to promote across projects or repos
+without re-uploading blobs.
 
 ### Project auto-detection
 
-When `<project>` (or `<project>/<repo>`) is omitted, walks cwd → git root / `$HOME` scanning `Dockerfile`, `docker-compose.{yml,yaml}`, `compose.{yml,yaml}`, `*.{yml,yaml}` (with `image:` key), lexicographic. First reference matching `<active-host>/<project>/<repo>(:<tag>)?` wins.
+When `<project>` (or `<project>/<repo>`) is omitted, the tools walk from cwd up to the git
+root (or `$HOME`) scanning `Dockerfile`, `docker-compose.{yml,yaml}`,
+`compose.{yml,yaml}`, and `*.{yml,yaml}` with an `image:` key, in lexicographic order.
+The first reference matching `<active-host>/<project>/<repo>(:<tag>)?` wins.
 
-### Examples
-
-Browse:
-
-```sh
-harbor-ls projects
-harbor-ls projects --filter 'team-*'
-harbor-ls repos myproj
-harbor-ls tags myproj/api --limit 5
-harbor-ls tags myproj/api --filter 'v1.*'
-harbor-ls scan myproj/api:v1.2.0
-```
-
-Push a fresh nginx image into a new project:
+## Examples
 
 ```sh
-docker pull nginx:1.27-alpine
-harbor-project create playground
-harbor-push nginx:1.27-alpine playground/nginx:v1
-harbor-ls tags playground/nginx
-```
+${CLAUDE_SKILL_DIR}/bin/harbor-ls projects --filter 'team-*'
+${CLAUDE_SKILL_DIR}/bin/harbor-ls tags myproj/api --limit 5
+${CLAUDE_SKILL_DIR}/bin/harbor-ls scan myproj/api:v1.2.0
 
-Promote between projects + clean up the source tag:
+# Push a local image
+${CLAUDE_SKILL_DIR}/bin/harbor-push nginx:1.27-alpine playground/nginx:v1
 
-```sh
-harbor-tag copy staging/api:v1.2.0 prod/api:v1.2.0
-harbor-tag delete staging/api:v1.2.0 --yes
+# Promote between projects, then remove the source tag
+${CLAUDE_SKILL_DIR}/bin/harbor-tag copy staging/api:v1.2.0 prod/api:v1.2.0
+${CLAUDE_SKILL_DIR}/bin/harbor-tag delete staging/api:v1.2.0 --yes
 ```
 
 ## Exit codes
 
-`0` success / `1` API error (network, 4xx non-auth, 5xx, malformed) / `2` config or auth error / `3` project auto-detect failed / `4` invalid argument.
+`0` success / `1` API error (network, 4xx non-auth, 5xx, malformed) / `2` config, auth,
+or locked Bitwarden / `3` project auto-detect failed / `4` invalid argument.

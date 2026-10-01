@@ -2,10 +2,31 @@
 # harbor-ops shared library. Sourced by bin/harbor-ls. Not executable on its own.
 set -euo pipefail
 
+# Print the value of a bw:// reference using bitwarden-ops' bw-get. The caller
+# keeps it in a shell variable only (process memory, never disk or argv).
+# bw-get location: $HARBOR_BW_GET, else ../../bitwarden-ops/bin/bw-get relative
+# to the real path of this file (the two skills live in the same repository).
+# Exits 2 when bw-get is missing, the vault is locked, or the ref cannot be read.
+_bw_ref() {
+    local ref="$1" bwget rc=0
+    bwget="${HARBOR_BW_GET:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../bitwarden-ops/bin/bw-get}"
+    if [ ! -x "$bwget" ]; then
+        echo "bitwarden-ops bw-get not found: $bwget (set HARBOR_BW_GET to its path)" >&2
+        exit 2
+    fi
+    "$bwget" "$ref" || rc=$?
+    case "$rc" in
+        0) ;;
+        3) echo "Bitwarden이 잠겨 있습니다. 사용자에게 bw-unlock 실행을 요청하세요. (참조: $ref)" >&2; exit 2 ;;
+        *) echo "failed to resolve Bitwarden reference: $ref (see the bitwarden-ops message above)" >&2; exit 2 ;;
+    esac
+}
+
 # Load config and resolve the active profile.
 # Args: optionally --profile <name>.
 # Honors HARBOR_PROFILE env. Sets globals: HARBOR_URL, HARBOR_USER,
 # HARBOR_SECRET, HARBOR_PROFILE_NAME.
+# Precedence: user = USER > USER_REF; secret = SECRET > SECRET_FILE > SECRET_REF.
 # Exits 2 on any error with a message naming the missing piece.
 load_profile() {
     local cfg="$HOME/.config/harbor-ops/config"
@@ -63,16 +84,21 @@ load_profile() {
     local user_var="${profile}_HARBOR_USER"
     local secret_var="${profile}_HARBOR_SECRET"
     local secret_file_var="${profile}_HARBOR_SECRET_FILE"
+    local user_ref_var="${profile}_HARBOR_USER_REF"
+    local secret_ref_var="${profile}_HARBOR_SECRET_REF"
 
     HARBOR_URL="${!url_var:-}"
-    HARBOR_USER="${!user_var:-}"
     HARBOR_PROFILE_NAME="$profile"
 
     if [ -z "$HARBOR_URL" ]; then
         echo "missing ${url_var} in config" >&2; exit 2
     fi
-    if [ -z "$HARBOR_USER" ]; then
-        echo "missing ${user_var} in config" >&2; exit 2
+    if [ -n "${!user_var:-}" ]; then
+        HARBOR_USER="${!user_var}"
+    elif [ -n "${!user_ref_var:-}" ]; then
+        HARBOR_USER="$(_bw_ref "${!user_ref_var}")" || exit $?
+    else
+        echo "missing ${user_var} or ${user_ref_var} in config" >&2; exit 2
     fi
 
     if [ -n "${!secret_var:-}" ]; then
@@ -97,8 +123,10 @@ load_profile() {
                 ;;
         esac
         HARBOR_SECRET="$(cat "$sf")"
+    elif [ -n "${!secret_ref_var:-}" ]; then
+        HARBOR_SECRET="$(_bw_ref "${!secret_ref_var}")" || exit $?
     else
-        echo "missing ${secret_var} or ${secret_file_var} in config" >&2; exit 2
+        echo "missing ${secret_var}, ${secret_file_var} or ${secret_ref_var} in config" >&2; exit 2
     fi
 
     export HARBOR_URL HARBOR_USER HARBOR_SECRET HARBOR_PROFILE_NAME
@@ -140,7 +168,7 @@ _harbor_request() {
         -D "$hdrs_file"
         -w '%{http_code}'
         -X "$method"
-        -H "Authorization: $(auth_header)"
+        -H @-
         -H "Accept: application/json"
     )
     if [ -n "$body" ]; then
@@ -149,7 +177,8 @@ _harbor_request() {
     curl_args+=( "$url" )
 
     set +e
-    code="$(curl "${curl_args[@]}")"
+    # Authorization 헤더는 stdin(-H @-)으로 넘긴다. argv에 넣으면 ps에 비밀번호가 보인다.
+    code="$(printf 'Authorization: %s\n' "$(auth_header)" | curl "${curl_args[@]}")"
     rc=$?
     set -e
 

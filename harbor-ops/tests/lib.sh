@@ -53,7 +53,7 @@ setup() {
 
     # Isolate from ambient env that the dispatcher would honor.
     unset HARBOR_PROFILE HARBOR_DEFAULT_PROFILE HARBOR_DEBUG HARBOR_NO_DETECT
-    unset HARBOR_URL HARBOR_USER HARBOR_SECRET HARBOR_PROFILE_NAME
+    unset HARBOR_URL HARBOR_USER HARBOR_SECRET HARBOR_PROFILE_NAME HARBOR_BW_GET
 
     export PATH="$STUB_DIR:$PATH"
 }
@@ -101,7 +101,9 @@ for a in "$@"; do
         --data-binary|-d|--data) body="$a" ;;
         -H)
             case "$a" in
-                Authorization:*) auth_header="$a" ;;
+                # argv로 온 인증 헤더는 ps에 보이므로 표시해 두고 테스트가 잡는다.
+                Authorization:*) auth_header="ARGV:$a" ;;
+                @-) auth_header="$(grep -m1 '^Authorization:' || true)" ;;
             esac
             ;;
     esac

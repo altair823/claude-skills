@@ -23,6 +23,7 @@ assert_eq "$out" '[{"name":"p1"}]' "200 returns body"
 expected_b64="$(printf 'alice:secret-1' | base64 -w0 2>/dev/null || printf 'alice:secret-1' | base64)"
 call="$(nth_call 1)"
 assert_contains "$call" "Authorization: Basic $expected_b64" "auth header set"
+assert_not_contains "$call" "ARGV:" "auth header not passed via argv (visible in ps)"
 
 # --- 401 → exit 2, message names auth ---
 teardown; setup; trap teardown EXIT
