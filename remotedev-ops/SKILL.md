@@ -1,6 +1,6 @@
 ---
 name: remotedev-ops
-description: "Use when the user wants a local repo to build on the dev server (devbox) instead of the laptop — set up / tear down transparent remote builds, or reclaim devbox disk space. `remotedev-install` wires a PATH-first shim once per machine; `remotedev-init` configures a repo (detect build system, write .remotedev, swap Gradle/Maven launchers, hide from git); `remotedev-status` / `remotedev-verify` / `remotedev-doctor` inspect; `remotedev-gc` deletes remote artifacts already pulled back; `remotedev-disable` / `remotedev-uninstall` fully reverse. Offline-safe: no host → local build. Auto-detects repo root and build system."
+description: Use when the user wants a local repo to build on the dev server (devbox) instead of this machine, wants to turn remote builds on or off for a repo or machine, asks why a remote build failed or fell back to local, or wants to free devbox disk space.
 ---
 
 # remotedev-ops
@@ -14,18 +14,18 @@ coreutils, `flock` (best-effort).
 
 ## Commands
 
-Run scripts by path from this skill's `bin/`.
+Scripts are not on PATH. Call them by the full path shown below.
 
 | When the user wants to… | Run |
 |---|---|
-| Enable remote builds on this machine (once) | `bin/remotedev-install` |
-| Set this repo up for remote builds | `bin/remotedev-init [HOST] [--force]` (HOST default `devbox`) |
-| See what's configured | `bin/remotedev-status` |
-| Confirm the server pipeline works | `bin/remotedev-verify` |
-| Check the build artifact will run locally | `bin/remotedev-doctor [--brief]` |
-| Reclaim devbox disk space | `bin/remotedev-gc [--dry-run]` |
-| Turn this repo back to local | `bin/remotedev-disable [--purge]` |
-| Remove the machine-wide layer | `bin/remotedev-uninstall` |
+| Enable remote builds on this machine (once) | `${CLAUDE_SKILL_DIR}/bin/remotedev-install` |
+| Set this repo up for remote builds | `${CLAUDE_SKILL_DIR}/bin/remotedev-init [HOST] [--force]` (HOST default `devbox`) |
+| See what's configured | `${CLAUDE_SKILL_DIR}/bin/remotedev-status` |
+| Confirm the server pipeline works | `${CLAUDE_SKILL_DIR}/bin/remotedev-verify` |
+| Check the build artifact will run locally | `${CLAUDE_SKILL_DIR}/bin/remotedev-doctor [--brief]` |
+| Reclaim devbox disk space | `${CLAUDE_SKILL_DIR}/bin/remotedev-gc [--dry-run]` |
+| Turn this repo back to local | `${CLAUDE_SKILL_DIR}/bin/remotedev-disable [--purge]` |
+| Remove the machine-wide layer | `${CLAUDE_SKILL_DIR}/bin/remotedev-uninstall` |
 
 ## Workflow
 
@@ -50,5 +50,5 @@ Run scripts by path from this skill's `bin/`.
   globs, binary name) written as comments to edit.
 - Re-running any verb is safe (idempotent). `init` refuses to overwrite an
   existing `.remotedev` without `--force`.
-- Tests: `tests/run.sh` (zero-dep, server-free). The `verify` / `gc`
+- Tests: `${CLAUDE_SKILL_DIR}/tests/run.sh` (zero-dep, server-free). The `verify` / `gc`
   roundtrips are gated behind `REMOTEDEV_TEST_HOST`.
