@@ -1,16 +1,16 @@
 ---
 name: paperboy-ops
-description: Use when the user wants to interact with paperboy — a private HTTP service that drives a BIXOLON SRP-350III thermal receipt printer (print text or raw ESC/POS, check printer/queue status, list/cancel print jobs, view metrics). The skill discovers endpoints from the live `/openapi.json` (so it stays correct as the API evolves) instead of hardcoding routes, then calls them via a generic authenticated client. Auto-loads URL + Basic Auth from `~/.config/paperboy-ops/config`.
+description: Use when the user wants to print something on the receipt printer (paperboy, BIXOLON SRP-350III thermal printer), check printer or print-queue health, list or cancel print jobs, or read paperboy metrics.
 ---
 
 # paperboy-ops
 
-Three tools:
-- `paperboy-spec` — inspect live OpenAPI (paths/ops/schemas).
-- `paperboy-api` — auth'd HTTP client (`METHOD PATH`).
-- `paperboy-estimate` — local line/cm estimator (paper-saving gate).
+Three tools, all under `${CLAUDE_SKILL_DIR}/bin/` (not on PATH; always call them by the full path shown here):
+- `${CLAUDE_SKILL_DIR}/bin/paperboy-spec` — inspect live OpenAPI (paths/ops/schemas).
+- `${CLAUDE_SKILL_DIR}/bin/paperboy-api` — auth'd HTTP client (`METHOD PATH`).
+- `${CLAUDE_SKILL_DIR}/bin/paperboy-estimate` — local line/cm estimator (paper-saving gate).
 
-`paperboy-spec` / `paperboy-api` read `~/.config/paperboy-ops/config` for URL + Basic Auth (+ optional metrics creds, paths, CA). `paperboy-estimate` is local-only.
+`${CLAUDE_SKILL_DIR}/bin/paperboy-spec` / `${CLAUDE_SKILL_DIR}/bin/paperboy-api` read `~/.config/paperboy-ops/config` for URL + Basic Auth (+ optional metrics creds, paths, CA). `${CLAUDE_SKILL_DIR}/bin/paperboy-estimate` is local-only.
 
 **The API is evolving.** Do NOT call endpoints from memory — always start by reading the live spec.
 
@@ -20,10 +20,10 @@ Three tools:
 discover → read schema → call → poll if async
 ```
 
-1. `paperboy-spec paths` — list every `METHOD PATH` the server currently exposes.
-2. `paperboy-spec op <METHOD> <PATH>` — read the chosen operation's request body, parameters, and response shapes.
-3. `paperboy-spec schema <Name>` — dereference any `$ref` you saw under `op` (e.g. `TextPayload`, `JobAccepted`).
-4. `paperboy-api <METHOD> <PATH> [--json …] [--idem-auto]` — fire the call.
+1. `${CLAUDE_SKILL_DIR}/bin/paperboy-spec paths` — list every `METHOD PATH` the server currently exposes.
+2. `${CLAUDE_SKILL_DIR}/bin/paperboy-spec op <METHOD> <PATH>` — read the chosen operation's request body, parameters, and response shapes.
+3. `${CLAUDE_SKILL_DIR}/bin/paperboy-spec schema <Name>` — dereference any `$ref` you saw under `op` (e.g. `TextPayload`, `JobAccepted`).
+4. `${CLAUDE_SKILL_DIR}/bin/paperboy-api <METHOD> <PATH> [--json …] [--idem-auto]` — fire the call.
 5. For async print/control endpoints, poll `GET /jobs/{id}` until `status` is terminal (`succeeded` or any `failed_*`).
 
 ## When to use
@@ -41,7 +41,7 @@ Do NOT use for other thermal printer projects, ESC/POS test rigs, or anything th
 The printer is a B&W thermal unit. Every line eats paper. Before sending any
 **text-bearing payload** (a JSON body whose human-readable content lives in a
 field like `text`, `body`, `content`, or `markdown`), Claude MUST walk the
-checklist below, then call `paperboy-estimate` to verify length.
+checklist below, then call `${CLAUDE_SKILL_DIR}/bin/paperboy-estimate` to verify length.
 
 Raw payloads (`/print/raw` and any future endpoint that ships base64/binary)
 are exempt — the caller is byte-aware by definition.
@@ -67,7 +67,7 @@ with dividers — paper separation can carry intent.
 After composing, run on the text field:
 
 ```sh
-echo "$TEXT" | paperboy-estimate --size "$W,$H" --feed-lines "$N"
+echo "$TEXT" | ${CLAUDE_SKILL_DIR}/bin/paperboy-estimate --size "$W,$H" --feed-lines "$N"
 ```
 
 JSON output: `physical_lines`, `approx_cm`, `over_threshold`, `threshold`. Exit `0` under threshold (default 15), `1` over, `2` charset failure (with `--check-charset`).
@@ -104,31 +104,25 @@ PAPERBOY_INSECURE=1                     # last resort: curl -k
 
 Quote any value containing `$` so the shell doesn't expand it. **Never commit this file.**
 
-Symlink so Claude Code finds the skill:
-
-```sh
-ln -sfn ~/claude-skills/paperboy-ops ~/.claude/skills/paperboy-ops
-```
-
 ## paperboy-spec
 
 | Command | What it does |
 |---|---|
-| `paperboy-spec` | Print the full openapi.json |
-| `paperboy-spec paths` | List `METHOD path summary` rows |
-| `paperboy-spec paths --filter <ere>` | Same, regex-filtered |
-| `paperboy-spec op <METHOD> <PATH>` | Show one operation's params / requestBody / responses |
-| `paperboy-spec schema <Name>` | Dereference one component schema |
-| `paperboy-spec schemas` | List all schema names |
-| `paperboy-spec swagger` | Print the Swagger UI URL (open in browser) |
-| `paperboy-spec refresh` | Force re-fetch (bypass 5-min cache) |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec` | Print the full openapi.json |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec paths` | List `METHOD path summary` rows |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec paths --filter <ere>` | Same, regex-filtered |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec op <METHOD> <PATH>` | Show one operation's params / requestBody / responses |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec schema <Name>` | Dereference one component schema |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec schemas` | List all schema names |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec swagger` | Print the Swagger UI URL (open in browser) |
+| `${CLAUDE_SKILL_DIR}/bin/paperboy-spec refresh` | Force re-fetch (bypass 5-min cache) |
 
-Cached at `~/.cache/paperboy-ops/openapi.json` for 5 minutes. After the user redeploys paperboy with new endpoints, run `paperboy-spec refresh`.
+Cached at `~/.cache/paperboy-ops/openapi.json` for 5 minutes. After the user redeploys paperboy with new endpoints, run `${CLAUDE_SKILL_DIR}/bin/paperboy-spec refresh`.
 
 ## paperboy-api
 
 ```
-paperboy-api <METHOD> <PATH> [options]
+${CLAUDE_SKILL_DIR}/bin/paperboy-api <METHOD> <PATH> [options]
 ```
 
 Body (mutually exclusive): `--json '<inline>'` / `--json-file <path>` / `--json-stdin` (or trailing `@-`).
@@ -140,9 +134,9 @@ Auth: `--auth main` (default) or `--auth metrics` (for `/metrics`). Misc: `--raw
 ## Worked example — text print + verify
 
 ```sh
-paperboy-spec op POST /print/text                         # discover route + body
-paperboy-spec schema TextPayload                          # required: text; opt: align/bold/size/cut/feed_lines
-paperboy-api GET /readyz                                  # printer health
+${CLAUDE_SKILL_DIR}/bin/paperboy-spec op POST /print/text                         # discover route + body
+${CLAUDE_SKILL_DIR}/bin/paperboy-spec schema TextPayload                          # required: text; opt: align/bold/size/cut/feed_lines
+${CLAUDE_SKILL_DIR}/bin/paperboy-api GET /readyz                                  # printer health
 
 TEXT='[영수증]
 커피      4500
@@ -150,15 +144,15 @@ TEXT='[영수증]
 ─────────────
 합계     10500'
 
-echo "$TEXT" | paperboy-estimate --size 1,1 --feed-lines 0  # exit 1 = preview + ask user first
+echo "$TEXT" | ${CLAUDE_SKILL_DIR}/bin/paperboy-estimate --size 1,1 --feed-lines 0  # exit 1 = preview + ask user first
 
-JOB=$(paperboy-api POST /print/text --idem-auto \
+JOB=$(${CLAUDE_SKILL_DIR}/bin/paperboy-api POST /print/text --idem-auto \
   --json "$(jq -n --arg t "$TEXT" '{text:$t,align:0,size:[1,1],cut:true,feed_lines:0}')" \
   | jq -r .job_id)
 
 # Poll until terminal: succeeded | failed_* | cancelled
 while :; do
-  s=$(paperboy-api GET "/jobs/$JOB" --raw | jq -r .status)
+  s=$(${CLAUDE_SKILL_DIR}/bin/paperboy-api GET "/jobs/$JOB" --raw | jq -r .status)
   case "$s" in succeeded|failed_*|cancelled) echo "$s"; break ;; esac
   sleep 1
 done
@@ -171,7 +165,7 @@ UTF-8 in, server handles EUC-KR — send Korean text as-is.
 ```sh
 # init + text + 8-line feed (cutter offset) + partial cut
 B64=$(printf '\x1b\x40hello raw\x0a\x1b\x64\x08\x1d\x56\x00' | base64)
-paperboy-api POST /print/raw --idem-auto --json "{\"data_b64\":\"$B64\"}"
+${CLAUDE_SKILL_DIR}/bin/paperboy-api POST /print/raw --idem-auto --json "{\"data_b64\":\"$B64\"}"
 ```
 
 Capped at 64 KiB, server does no ESC/POS validation.
@@ -189,24 +183,26 @@ Server accepts `Idempotency-Key` on enqueue endpoints. Absent → paperboy hashe
 
 | Goal | Call |
 |---|---|
-| Health (no auth) | `paperboy-api GET /healthz` |
-| Ready + USB + online | `paperboy-api GET /readyz` |
-| Live printer + queue snapshot | `paperboy-api GET /status` |
-| Full debug dump | `paperboy-api GET /debug/info` |
-| Recent failed jobs | `paperboy-api GET '/jobs?status=failed_paper_out&limit=10'` |
-| Cancel queued job | `paperboy-api DELETE /jobs/<id>` |
-| Manual cut | `paperboy-api POST /control/cut --json '{}' --idem-auto` |
-| Prometheus scrape | `paperboy-api GET /metrics --auth metrics --raw` |
+| Health (no auth) | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET /healthz` |
+| Ready + USB + online | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET /readyz` |
+| Live printer + queue snapshot | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET /status` |
+| Full debug dump | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET /debug/info` |
+| Recent jobs, compact | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET '/jobs?limit=20' \| jq -c '.[] \| {id,status,kind,created_at,reason}'` |
+| Recent failed jobs | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET '/jobs?status=failed_paper_out&limit=10'` |
+| Cancel queued job | `${CLAUDE_SKILL_DIR}/bin/paperboy-api DELETE /jobs/<id>` |
+| Manual cut | `${CLAUDE_SKILL_DIR}/bin/paperboy-api POST /control/cut --json '{}' --idem-auto` |
+| Prometheus scrape | `${CLAUDE_SKILL_DIR}/bin/paperboy-api GET /metrics --auth metrics --raw` |
 
 ## Common mistakes
 
 | Symptom | Fix |
 |---|---|
+| `GET /jobs` output is huge and gets truncated | Each job carries its full `payload_json`. Always pass `limit` and project fields with jq (see Common operations). The server has no date filter: filter with jq, e.g. `select(.created_at >= "2026-10-01")`. |
 | `401 Unauthorized` on `/metrics` | Use `--auth metrics`; the printer account is denied. |
 | `409 Conflict` on second print | Same Idempotency-Key, different body. Use `--idem-auto` or a fresh key. |
 | Quiet enqueue but printer never fires | Poll the job — `failed_paper_out` / `failed_cover_open` / `failed_offline` show up there, not in the enqueue response. |
-| Skill recipe references a path that 404s | The API evolved. Re-read `paperboy-spec paths` (and `paperboy-spec refresh` if you suspect a stale cache). |
-| `openapi response is not valid JSON` | Wrong `PAPERBOY_OPENAPI_PATH`, or auth blocking the endpoint. Check `paperboy-spec swagger` URL in a browser. |
+| Skill recipe references a path that 404s | The API evolved. Re-read `${CLAUDE_SKILL_DIR}/bin/paperboy-spec paths` (and `${CLAUDE_SKILL_DIR}/bin/paperboy-spec refresh` if you suspect a stale cache). |
+| `openapi response is not valid JSON` | Wrong `PAPERBOY_OPENAPI_PATH`, or auth blocking the endpoint. Check `${CLAUDE_SKILL_DIR}/bin/paperboy-spec swagger` URL in a browser. |
 | Robot/secret with `$` corrupts auth | Single-quote the value in the config file. |
 
 ## Exit codes
