@@ -6,7 +6,7 @@
 
 - [gitea-ops](gitea-ops/SKILL.md) — Gitea (릴리스 / PR / 이슈)를 REST API로 CLI에서 조작.
 - [harbor-ops](harbor-ops/SKILL.md) — 사설 Harbor 컨테이너 레지스트리(프로젝트 / repo / tag / 스캔 요약)를 REST API로 read-only 브라우즈.
-- [homelab-ops](homelab-ops/SKILL.md) — 홈서버 fleet(독립 Proxmox 호스트·VM/LXC·어플라이언스)를 guard 단일 chokepoint로 안전하게 운영·프로비저닝·포렌식.
+- [homelab-ops](homelab-ops/SKILL.md) — 은퇴(2026-07, OpenStack 폐기). kubectl 기록만 남아 있다. Proxmox 작업에는 아래 proxmox-ops를 쓴다.
 - [paperboy-ops](paperboy-ops/SKILL.md) — paperboy(영수증 프린터 HTTP 서비스)와 상호작용. 라이브 OpenAPI로 엔드포인트 탐색 후 generic 클라이언트로 호출.
 - [remotedev-ops](remotedev-ops/SKILL.md) — 로컬 repo를 devbox에서 원격 빌드하도록 세팅/해제. PATH shim 머신당 1회 설치 + repo당 .remotedev 구성. 오프라인 시 로컬 fallback. remotedev-gc로 회수 완료 산출물 정리(devbox 공간 회수).
 
@@ -17,6 +17,13 @@
   API 가 바뀌면 같이 바뀌어야 해서, 서버와 같은 저장소에 두고 한 커밋으로
   묶는다. 설치는 다른 스킬과 같다:
   `ln -sfn ~/projects/leaf/leaf-ops ~/.claude/skills/leaf-ops`
+- **proxmox-ops** — pve-inventory 저장소 안에 있다 (`~/projects/pve-inventory/skills/proxmox-ops`,
+  `gitea.altair823.xyz/altair823-org/pve-inventory`). 홈랩 Proxmox(pve-node-02)의 인벤토리를 읽고
+  agent 풀 안에서 게스트를 만들고 지우는 스킬이다. 인벤토리 형식과 `pve-api`가 서버 코드와 함께
+  바뀌므로 leaf-ops와 같은 이유로 서버 저장소에 둔다. 설치:
+  `git clone https://gitea.altair823.xyz/altair823-org/pve-inventory.git ~/projects/pve-inventory`
+  후 `ln -sfn ~/projects/pve-inventory/skills/proxmox-ops ~/.claude/skills/proxmox-ops`.
+  변경 작업에는 bitwarden-ops와 Bitwarden 항목 `pve-agent`가 필요하다.
 
 ## Layout
 
