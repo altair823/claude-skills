@@ -19,11 +19,13 @@
   `ln -sfn ~/projects/leaf/leaf-ops ~/.claude/skills/leaf-ops`
 - **proxmox-ops** — pve-inventory 저장소 안에 있다 (`~/projects/pve-inventory/skills/proxmox-ops`,
   `gitea.altair823.xyz/altair823-org/pve-inventory`). 홈랩 Proxmox(pve-node-02)의 인벤토리를 읽고
-  agent 풀 안에서 게스트를 만들고 지우는 스킬이다. 인벤토리 형식과 `pve-api`가 서버 코드와 함께
+  게스트를 만들고 바꾸는 스킬이다. 인벤토리 형식과 `pve-api`가 서버 코드와 함께
   바뀌므로 leaf-ops와 같은 이유로 서버 저장소에 둔다. 설치:
   `git clone https://gitea.altair823.xyz/altair823-org/pve-inventory.git ~/projects/pve-inventory`
   후 `ln -sfn ~/projects/pve-inventory/skills/proxmox-ops ~/.claude/skills/proxmox-ops`.
-  변경 작업에는 bitwarden-ops와 Bitwarden 항목 `pve-agent`가 필요하다.
+  인벤토리는 암호화되어 있어서 읽을 때도 bitwarden-ops(항목 `pve-inventory`의 `read-key`)와
+  `/usr/bin/python3`의 cryptography 모듈(`apt install python3-cryptography`)이 필요하다.
+  변경 작업에는 Bitwarden 항목 `pve-agent`가 필요하다.
 
 ## Layout
 
