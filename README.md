@@ -1,5 +1,7 @@
 # claude-skills
 
+> 2026-10-03부터 이 저장소는 보관(archive) 상태다. 쓰고 있는 스킬은 [altair-skills](https://gitea.altair823.xyz/altair823-org/altair-skills) 플러그인 저장소로 이동했다. remotedev-ops와 homelab-ops는 이동하지 않았고 이 저장소에만 남는다.
+
 개인용 Claude Code 스킬 모음. 각 하위 디렉토리는 `SKILL.md`와 보조 스크립트로 구성된 독립 스킬이야.
 
 ## Skills
